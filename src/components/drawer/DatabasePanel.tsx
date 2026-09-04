@@ -218,7 +218,7 @@ export function DatabasePanel() {
         toast('info', 'The database has no tables.');
         return;
       }
-      importTables(converted.tables, converted.relationships, importMode);
+      importTables(converted.tables, converted.relationships, importMode, converted.customTypes);
         toast('success', `Imported ${converted.tables.length} tables from ${res.serverVersion.split(' ').slice(0, 2).join(' ')}.`);
       if (converted.warnings.length) toast('info', converted.warnings.slice(0, 3).join(' '));
     } catch (e) {

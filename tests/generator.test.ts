@@ -138,6 +138,46 @@ describe('generateSchema', () => {
   });
 });
 
+describe('custom types', () => {
+  it('emits CREATE TYPE for enum and composite types on PostgreSQL and references them by name', () => {
+    const d = diagramFrom(`CREATE TABLE t (id INT PRIMARY KEY, status TEXT, home TEXT);`, 'postgresql');
+    d.customTypes.push(
+      { id: 'ct1', name: 'mood', kind: 'enum', values: ['sad', 'happy'] },
+      { id: 'ct2', name: 'address', kind: 'composite', fields: [{ id: 'f1', name: 'street', type: 'TEXT' }, { id: 'f2', name: 'city', type: 'VARCHAR(80)' }] },
+    );
+    d.tables[0].columns.find((c) => c.name === 'status')!.type = 'mood';
+    d.tables[0].columns.find((c) => c.name === 'home')!.type = 'address';
+    const out = generateSchema(d);
+    expect(out.warnings).toEqual([]);
+    expect(out.script).toContain("CREATE TYPE mood AS ENUM ('sad', 'happy');");
+    expect(out.script).toContain('CREATE TYPE address AS (street TEXT, city VARCHAR(80));');
+    expect(out.script).toContain('status mood');
+    expect(out.script).toContain('home address');
+    expect(out.script.indexOf('CREATE TYPE mood')).toBeLessThan(out.script.indexOf('CREATE TABLE t'));
+
+    const drops = generateDropStatements(d);
+    expect(drops).toContain('DROP TYPE IF EXISTS mood;');
+    expect(drops).toContain('DROP TYPE IF EXISTS address;');
+  });
+
+  it('falls back on MariaDB: enums inline, composites become JSON, with a warning', () => {
+    const d = diagramFrom(`CREATE TABLE t (id INT PRIMARY KEY, status TEXT, home TEXT);`, 'postgresql');
+    d.dialect = 'mariadb';
+    d.customTypes.push(
+      { id: 'ct1', name: 'mood', kind: 'enum', values: ['sad', 'happy'] },
+      { id: 'ct2', name: 'address', kind: 'composite', fields: [{ id: 'f1', name: 'street', type: 'TEXT' }] },
+    );
+    d.tables[0].columns.find((c) => c.name === 'status')!.type = 'mood';
+    d.tables[0].columns.find((c) => c.name === 'home')!.type = 'address';
+    const out = generateSchema(d);
+    expect(out.script).not.toContain('CREATE TYPE');
+    expect(out.script).toContain("status ENUM('sad','happy')");
+    expect(out.script).toContain('home JSON');
+    expect(out.warnings.some((w) => w.includes('MariaDB has no CREATE TYPE'))).toBe(true);
+    expect(out.warnings.some((w) => w.includes('composite type "address"'))).toBe(true);
+  });
+});
+
 describe('translateType', () => {
   it('maps common types both ways', () => {
     expect(translateType('SERIAL', 'postgresql', 'mariadb')).toBe('INT');

@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { PanelLeftClose, Plus, Search, StickyNote } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { paletteHue } from '@/lib/palette';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
 export function Sidebar() {
   const tables = useStore((s) => s.diagram.tables);
@@ -13,6 +14,7 @@ export function Sidebar() {
   const setSelection = useStore((s) => s.setSelection);
   const addTable = useStore((s) => s.addTable);
   const setSidebarOpen = useStore((s) => s.setSidebarOpen);
+  const resizePanel = useStore((s) => s.resizePanel);
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -76,6 +78,7 @@ export function Sidebar() {
           </>
         )}
       </div>
+      <ResizeHandle orientation="vertical" onResize={(delta) => resizePanel('sidebarW', delta)} />
     </aside>
   );
 }
