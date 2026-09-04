@@ -259,14 +259,29 @@ export function Canvas() {
   ]);
 
   const edges = useMemo<RelationEdgeType[]>(() => {
-    const out: RelationEdgeType[] = [];
-    for (const r of diagram.relationships) {
+    const prepared = diagram.relationships.map((r) => {
       const src = tableMap.get(r.sourceTableId);
       const tgt = tableMap.get(r.targetTableId);
-      if (!src || !tgt) continue;
+      if (!src || !tgt) return null;
       const sourceRow = r.sourceColumnIds.length ? src.columns.findIndex((c) => c.id === r.sourceColumnIds[0]) : -1;
       const targetRow = r.targetColumnIds.length ? tgt.columns.findIndex((c) => c.id === r.targetColumnIds[0]) : -1;
       const srcCol = src.columns.find((c) => c.id === r.sourceColumnIds[0]);
+      // Relationships sharing identical anchor points would otherwise render as fully overlapping curves.
+      const anchorKey = `${r.sourceTableId}#${sourceRow}->${r.targetTableId}#${targetRow}`;
+      return { r, src, sourceRow, targetRow, srcCol, anchorKey };
+    });
+    const anchorCounts = new Map<string, number>();
+    for (const p of prepared) {
+      if (!p) continue;
+      anchorCounts.set(p.anchorKey, (anchorCounts.get(p.anchorKey) ?? 0) + 1);
+    }
+    const anchorSeen = new Map<string, number>();
+    const out: RelationEdgeType[] = [];
+    for (const p of prepared) {
+      if (!p) continue;
+      const { r, src, sourceRow, targetRow, srcCol, anchorKey } = p;
+      const siblingIndex = anchorSeen.get(anchorKey) ?? 0;
+      anchorSeen.set(anchorKey, siblingIndex + 1);
       out.push({
         id: r.id,
         type: 'relation',
@@ -282,6 +297,8 @@ export function Canvas() {
           traced: traceRels.has(r.id),
           attached: selectedTableId !== null && (r.sourceTableId === selectedTableId || r.targetTableId === selectedTableId),
           optional: r.kind === 'fk' && Boolean(srcCol?.nullable),
+          siblingIndex,
+          siblingCount: anchorCounts.get(anchorKey) ?? 1,
         },
       });
     }
