@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Code2, Copy, GitBranch, Link2, Plus, Trash2 } from 'lucide-react';
 import type { Column, Index, Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
+import { flowDerivations } from '@/lib/derivation';
 import { PALETTE, paletteHue } from '@/lib/palette';
 import { TYPE_SUGGESTIONS } from '@/lib/sql/dialect';
 import { generateTableSql } from '@/lib/sql/generator';
@@ -242,6 +243,7 @@ export function TableEditor({ table }: { table: Table }) {
               <span className="grow" style={{ fontWeight: 600 }}>
                 {other}
               </span>
+              {flowDerivations(r).length > 0 && <span className="badge badge--flow">{flowDerivations(r).length} derived</span>}
               {r.query && <span className="badge badge--accent">SQL</span>}
             </button>
           );

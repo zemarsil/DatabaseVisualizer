@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { ArrowRight, Copy, Crosshair, Route, X } from 'lucide-react';
 import { useStore } from '@/store/useStore';
+import { flowDerivations } from '@/lib/derivation';
 import { buildJoinQuery } from '@/lib/trace';
 
 export function TracePanel() {
@@ -97,6 +98,11 @@ export function TracePanel() {
                     {r.kind === 'fk' ? 'FK' : 'flow'}
                   </button>
                   {r.kind === 'fk' ? pairs.join(' AND ') : `${h.from.name} → ${h.to.name}${r.name ? ` (${r.name})` : ''}`}
+                  {flowDerivations(r).length > 0 && (
+                    <span className="badge badge--flow" style={{ marginLeft: 6 }}>
+                      {flowDerivations(r).length} derived
+                    </span>
+                  )}
                   {r.query && <span className="badge badge--accent" style={{ marginLeft: 6 }}>tagged query</span>}
                 </li>
               );
