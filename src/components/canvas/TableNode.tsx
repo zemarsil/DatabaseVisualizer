@@ -1,12 +1,14 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import { KeyRound, Link2 } from 'lucide-react';
+import { Braces, KeyRound, Link2 } from 'lucide-react';
 import type { Table } from '@shared/types';
 import { paletteHue } from '@/lib/palette';
 
 export interface TableNodeData extends Record<string, unknown> {
   table: Table;
   fkColumnIds: string[];
+  /** Columns holding another table serialized inside them. */
+  embedColumnIds: string[];
   dimmed: boolean;
   traceRole: 'from' | 'to' | 'via' | null;
   picking: boolean;
@@ -17,8 +19,9 @@ export type TableNodeType = Node<TableNodeData, 'table'>;
 export const HEADER_HANDLE_SUFFIX = '|hdr';
 
 function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
-  const { table, fkColumnIds, dimmed, traceRole, picking } = data;
+  const { table, fkColumnIds, embedColumnIds, dimmed, traceRole, picking } = data;
   const fkSet = new Set(fkColumnIds);
+  const embedSet = new Set(embedColumnIds);
   const classes = ['table-node'];
   if (selected) classes.push('table-node--selected');
   if (traceRole) classes.push('table-node--trace');
@@ -38,18 +41,25 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
           position={Position.Right}
           id={`${table.id}${HEADER_HANDLE_SUFFIX}`}
           className="flow-handle"
-          title="Drag to another table to add a data-flow link"
+          title="Drag to another table to link the two tables (a data flow by default; change the kind in the inspector)"
         />
       </div>
       <div className="table-node__rows">
         {table.columns.length === 0 && <div className="table-node__empty">no columns yet</div>}
         {table.columns.map((c) => {
           const isFk = fkSet.has(c.id);
+          const isEmbed = !c.primaryKey && !isFk && embedSet.has(c.id);
           return (
-            <div key={c.id} className={`table-node__row${c.primaryKey ? ' table-node__row--pk' : ''}`} title={c.comment || undefined}>
+            <div
+              key={c.id}
+              className={`table-node__row${c.primaryKey ? ' table-node__row--pk' : ''}`}
+              title={c.comment || undefined}
+              /* Read by the canvas so a right-click on this row opens the column menu. */
+              data-column-id={c.id}
+            >
               <Handle type="source" position={Position.Left} id={`${c.id}|l`} className="col-handle col-handle--left" />
-              <span className={`col-icon${c.primaryKey ? ' col-icon--pk' : isFk ? ' col-icon--fk' : ''}`}>
-                {c.primaryKey ? <KeyRound /> : isFk ? <Link2 /> : null}
+              <span className={`col-icon${c.primaryKey ? ' col-icon--pk' : isFk ? ' col-icon--fk' : isEmbed ? ' col-icon--embed' : ''}`}>
+                {c.primaryKey ? <KeyRound /> : isFk ? <Link2 /> : isEmbed ? <Braces /> : null}
               </span>
               <span className="col-name">{c.name}</span>
               <span className="col-type">{c.type}</span>

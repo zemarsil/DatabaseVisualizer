@@ -17,6 +17,7 @@ import {
 } from '@xyflow/react';
 import { Crosshair, X } from 'lucide-react';
 import { useStore } from '@/store/useStore';
+import { openContextMenu } from '@/components/ui/ContextMenu';
 import type { SelectionChange } from '@/lib/selection';
 import { paletteHue } from '@/lib/palette';
 import { GROUP_STICKINESS, groupAtPoint, groupBounds, inflate, rectCenter, rectContains, tableRect, type Rect } from '@/lib/groups';
@@ -135,6 +136,16 @@ export function Canvas() {
     }
     return m;
   }, [diagram.relationships]);
+  const embedColumnsByTable = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const r of diagram.relationships) {
+      if (r.kind !== 'embed' || !r.sourceColumnIds[0]) continue;
+      const arr = m.get(r.sourceTableId) ?? [];
+      arr.push(r.sourceColumnIds[0]);
+      m.set(r.sourceTableId, arr);
+    }
+    return m;
+  }, [diagram.relationships]);
 
   /* ---------- group regions ---------- */
 
@@ -181,7 +192,14 @@ export function Canvas() {
         id: t.id,
         type: 'table',
         position: t.position,
-        data: { table: t, fkColumnIds: fkColumnsByTable.get(t.id) ?? [], dimmed: tracing && !traceTables.has(t.id), traceRole: role, picking: trace.picking },
+        data: {
+          table: t,
+          fkColumnIds: fkColumnsByTable.get(t.id) ?? [],
+          embedColumnIds: embedColumnsByTable.get(t.id) ?? [],
+          dimmed: tracing && !traceTables.has(t.id),
+          traceRole: role,
+          picking: trace.picking,
+        },
         selected: selection.tableIds.includes(t.id),
         measured: nodeSizes[t.id],
       };
@@ -237,6 +255,7 @@ export function Canvas() {
     bounds,
     groupTableCounts,
     dropTargetId,
+    embedColumnsByTable,
   ]);
 
   const edges = useMemo<RelationEdgeType[]>(() => {
@@ -537,6 +556,62 @@ export function Canvas() {
     [trace.picking, trace.fromId, setTraceEndpoints, runTrace, selectGroup],
   );
 
+  /* ---------- right-click menus ---------- */
+
+  const onPaneContextMenu = useCallback(
+    (e: React.MouseEvent | MouseEvent) => {
+      openContextMenu(e, { type: 'pane', flowPosition: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
+    },
+    [screenToFlowPosition],
+  );
+
+  const onNodeContextMenu = useCallback(
+    (e: React.MouseEvent, node: Node) => {
+      // A region is a node too, but it is not a table: give it its own menu
+      // rather than letting it fall through and act on a table id that does
+      // not exist.
+      if (node.type === 'tablegroup') {
+        selectGroup(node.id);
+        openContextMenu(e, { type: 'group', groupId: node.id });
+        return;
+      }
+      // Right-clicking inside a group selection keeps it and acts on the group.
+      const isNote = node.type === 'note';
+      const groupSize = selection.tableIds.length + selection.noteIds.length;
+      if (groupSize > 1 && (isNote ? selection.noteIds : selection.tableIds).includes(node.id)) {
+        openContextMenu(e, { type: 'selection' });
+        return;
+      }
+      if (isNote) {
+        setSelection({ tableIds: [], relationshipId: null, noteIds: [node.id] });
+        openContextMenu(e, { type: 'note', noteId: node.id });
+        return;
+      }
+      setSelection({ tableIds: [node.id], relationshipId: null, noteIds: [] });
+      const columnId = (e.target as Element | null)?.closest?.('[data-column-id]')?.getAttribute('data-column-id') ?? undefined;
+      openContextMenu(e, { type: 'table', tableId: node.id, columnId });
+    },
+    [selection.tableIds, selection.noteIds, setSelection, selectGroup],
+  );
+
+  const onEdgeContextMenu = useCallback(
+    (e: React.MouseEvent, edge: Edge) => {
+      setSelection({ relationshipId: edge.id, tableIds: [], noteIds: [] });
+      openContextMenu(e, { type: 'relationship', relationshipId: edge.id });
+    },
+    [setSelection],
+  );
+
+  const onSelectionContextMenu = useCallback(
+    (e: React.MouseEvent, picked: Node[]) => {
+      const tableIds = picked.filter((n) => n.type === 'table').map((n) => n.id);
+      const noteIds = picked.filter((n) => n.type === 'note').map((n) => n.id);
+      if (tableIds.length || noteIds.length) setSelection({ tableIds, noteIds, relationshipId: null });
+      openContextMenu(e, { type: 'selection' });
+    },
+    [setSelection],
+  );
+
   const onPaneDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -590,6 +665,10 @@ export function Canvas() {
         isValidConnection={isValidConnection}
         onNodeClick={onNodeClick}
         onNodeDoubleClick={() => setInspectorOpen(true)}
+        onPaneContextMenu={onPaneContextMenu}
+        onNodeContextMenu={onNodeContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
+        onSelectionContextMenu={onSelectionContextMenu}
         onNodeDragStart={onNodeDragStart}
         onNodeDrag={onNodeDrag}
         onNodeDragStop={onNodeDragStop}

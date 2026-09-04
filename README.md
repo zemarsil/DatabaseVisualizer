@@ -2,7 +2,8 @@
 
 A locally hosted web app for designing relational schemas visually.
 
-- Draw tables and their connections on a pan/zoom canvas (crow's-foot foreign keys, dashed data-flow links).
+- Draw tables and their connections on a pan/zoom canvas: crow's-foot foreign keys plus three kinds the database cannot enforce — data flows, serialized copies, and plain dependencies.
+- Say how a connection *reads*: "orders **contains** order_items", "customers **has** addresses", "orders **uses** addresses". The verb is documentation, so it never changes the DDL.
 - Tag any connection with the query that moves data across it, so the diagram documents *how* one table feeds another, not just that they are related.
 - **Group** tables into a labelled region — handy when part of the diagram is a *different* database you only read from. Mark that group external and the generated script documents those tables instead of creating them.
 - Generate the `CREATE TABLE` script for **PostgreSQL** or **MariaDB** from the diagram, or paste DDL (including `pg_dump` / `mysqldump` output) and get the diagram back.
@@ -46,12 +47,15 @@ docker compose up --build
 | --- | --- |
 | Add a table | Double-click the canvas, press `T`, or use the **+ Table** button |
 | Select a group | `Shift` + drag a box over the canvas — every table and note it touches is selected; drag any of them (or the dashed box) to move the group, `Delete` removes it in one undo step |
+| Right-click anything | Every target has its own menu: the canvas (add a table or note right here, select all, detangle, undo, open a drawer), a table (rename, duplicate, colour, copy `CREATE TABLE`, trace, delete), a column row inside a table (toggle PK / NN / UQ / AI, add a column below, index it, reorder, delete), a connection (swap direction, convert between foreign key and data flow, copy the tagged query), a note, and the entries in the table list. Right-clicking inside a selected group acts on the whole group |
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks |
 | Foreign key | Hover a table and drag the handle beside a column onto a column of another table |
 | Group tables | Select them and press `G` (or the group button in the top bar). Drag a table into or out of a region to change what is in it; drag a region by its title bar to move everything inside it |
 | Mark a group as another database | Select the region, tick **These tables live in another database** in the inspector |
-| Data-flow link | Drag the orange handle in a table header onto another table, then paste the query into **Tagged query** |
-| Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script |
+| Any other connection | Drag the orange handle in a table header onto another table, then pick the kind in the inspector (data flow, serialized, dependency) |
+| Change how a connection reads | Select it; **Reads as** offers the verbs that fit its kind and previews the sentence in both directions |
+| Derived columns | On a data-flow edge, add one entry per target column: target column, aggregate, source expression, group-by keys, filter. The edge shows a `Σ` count and a per-column summary, and the script gets an `INSERT ... SELECT ... GROUP BY` skeleton built from it |
+| Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express |
 | See / copy DDL | Bottom drawer → **SQL** (whole schema or the selected table). The table inspector also has a preview |
 | Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group |
 | Switch dialect | Top bar selector; known column types are translated (`SERIAL` ↔ `INT AUTO_INCREMENT`, `TIMESTAMPTZ` ↔ `TIMESTAMP`, `JSONB` ↔ `JSON`, …). Undo reverts |
@@ -62,6 +66,43 @@ docker compose up --build
 | Docker & database | **Database** button → left column manages containers, right column tests a connection, runs the schema, or reads an existing schema |
 
 Press `?` in the app for the full shortcut list.
+
+## Connection types
+
+A connection has two independent halves. Its **kind** is what the database
+actually does, and it drives everything mechanical — DDL, joins, layout,
+drawing. Its **verb** is how the connection reads in English, and it only
+changes the words.
+
+| Kind | Drawn as | In the script | Means |
+| --- | --- | --- | --- |
+| Foreign key | solid, crow's foot | `FOREIGN KEY … REFERENCES …` | A constraint the database enforces |
+| Data flow | dashed, filled arrow | a comment | Rows in the target are built from the source by a job, rollup, or trigger |
+| Serialized | solid, filled diamond at the container | a comment | The target's rows live encoded inside one column of the source (JSONB, an array, a blob, a composite type) |
+| Dependency | dotted, open arrow | a comment | The source reads the target through a view, a job, or application code, with nothing enforcing it |
+
+Verbs are always stored source → target, so every one of them also gives you
+the reverse reading for free — which is where the rest of the vocabulary comes
+from:
+
+| You want to say | Pick | Reads back as |
+| --- | --- | --- |
+| `orders` **has** `order_items` | foreign key, *belongs to* (on the child) | order_items belongs to orders |
+| `orders` **contains** `order_items` | foreign key, *is part of* (on the child) | order_items is part of orders |
+| `orders` **uses** `currencies` | foreign key, *uses* | currencies used by orders |
+| `report` **uses** a table with no FK | dependency, *uses* | orders used by report |
+| `line_item` **serialized** into `orders` | serialized, *serializes* (on the container) | line_item serialized into orders |
+| `employees` **extends** `people` | foreign key, *extends* | people extended by employees |
+
+So "has", "contains" and "used by" are not separate connections — they are the
+same edge read from the other end, which is why the inspector shows you both
+sentences before you commit to a direction. "Serialized" is the one that has no
+foreign key behind it at all, so it gets a kind of its own; a dependency covers
+"uses" when nothing in the schema records it.
+
+Only foreign keys become `JOIN` conditions in a trace. The other kinds are
+still walked (a path can cross them) but appear as `CROSS JOIN` plus a comment
+saying why there is nothing to join on.
 
 ## Project layout
 
@@ -112,3 +153,7 @@ you want when you are reading someone else's database.
 ## Notes on the SQL support
 
 The parser is purpose-built for schema DDL rather than a full SQL grammar. It handles `CREATE TABLE` with column and table constraints in both dialects, `ALTER TABLE … ADD CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`, `COMMENT ON`, and `CREATE TYPE … AS ENUM`. Anything else is skipped with a warning, and a broken statement does not stop the rest of the script from importing. Generated columns, partitioning, and expression indexes are dropped with a warning because the model does not represent them.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

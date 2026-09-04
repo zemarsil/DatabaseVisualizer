@@ -1,6 +1,17 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Column, CustomType, Diagram, Dialect, Group, Index, Note, Relationship, Table } from '@shared/types';
+import {
+  normalizeVerb,
+  type Column,
+  type CustomType,
+  type Diagram,
+  type Dialect,
+  type Group,
+  type Index,
+  type Note,
+  type Relationship,
+  type Table,
+} from '@shared/types';
 import { layoutDiagram, type LayoutDirection } from '@/lib/layout';
 import {
   createColumn,
@@ -108,9 +119,11 @@ interface Actions {
   // tables
   addTable: (position?: { x: number; y: number }) => string;
   updateTable: (id: string, patch: Partial<Omit<Table, 'id' | 'columns' | 'indexes'>>) => void;
+  /** Recolour a group of tables and/or notes in one history step. */
+  colorElements: (ids: { tableIds?: string[]; noteIds?: string[] }, color: string) => void;
   deleteTables: (ids: string[]) => void;
   duplicateTable: (id: string) => void;
-  addColumn: (tableId: string, partial?: Partial<Column>) => string;
+  addColumn: (tableId: string, partial?: Partial<Column>, opts?: { after?: string }) => string;
   updateColumn: (tableId: string, columnId: string, patch: Partial<Omit<Column, 'id'>>) => void;
   deleteColumn: (tableId: string, columnId: string) => void;
   moveColumn: (tableId: string, columnId: string, delta: -1 | 1) => void;
@@ -143,6 +156,7 @@ interface Actions {
   // notes
   addNote: (position?: { x: number; y: number }) => string;
   updateNote: (id: string, patch: Partial<Omit<Note, 'id'>>) => void;
+  duplicateNote: (id: string) => void;
   deleteNote: (id: string) => void;
 
   // canvas
@@ -371,6 +385,15 @@ export const useStore = create<Store>()(
           const t = d.tables.find((x) => x.id === id);
           if (t) Object.assign(t, patch);
         }),
+      colorElements: ({ tableIds = [], noteIds = [] }, color) => {
+        if (!tableIds.length && !noteIds.length) return;
+        const tables = new Set(tableIds);
+        const notes = new Set(noteIds);
+        mutate((d) => {
+          for (const t of d.tables) if (tables.has(t.id)) t.color = color;
+          for (const n of d.notes) if (notes.has(n.id)) n.color = color;
+        });
+      },
       deleteTables: (ids) => removeElements({ tableIds: ids }),
       duplicateTable: (id) => {
         const d = get().diagram;
@@ -394,13 +417,17 @@ export const useStore = create<Store>()(
           s.selection = { ...emptySelection(), tableIds: [copy.id] };
         });
       },
-      addColumn: (tableId, partial) => {
+      addColumn: (tableId, partial, opts) => {
         const d = get().diagram;
         const t = d.tables.find((x) => x.id === tableId);
         if (!t) return '';
         const col = createColumn({ name: uniqueColumnName(t, partial?.name ?? 'column'), type: partial?.type ?? 'VARCHAR(255)', ...partial });
         mutate((dd) => {
-          dd.tables.find((x) => x.id === tableId)?.columns.push(col);
+          const table = dd.tables.find((x) => x.id === tableId);
+          if (!table) return;
+          const after = opts?.after ? table.columns.findIndex((c) => c.id === opts.after) : -1;
+          if (after >= 0) table.columns.splice(after + 1, 0, col);
+          else table.columns.push(col);
         });
         return col.id;
       },
@@ -514,7 +541,11 @@ export const useStore = create<Store>()(
       updateRelationship: (id, patch) =>
         mutate((d) => {
           const r = d.relationships.find((x) => x.id === id);
-          if (r) Object.assign(r, patch);
+          if (!r) return;
+          Object.assign(r, patch);
+          // Changing the kind can strand a verb that no longer applies (a "feeds"
+          // on a foreign key); drop it back to the new kind's default.
+          r.verb = normalizeVerb(r.kind, r.verb);
         }),
       deleteRelationship: (id) => removeElements({ relationshipIds: [id] }),
       swapRelationship: (id) =>
@@ -523,6 +554,12 @@ export const useStore = create<Store>()(
           if (!r) return;
           [r.sourceTableId, r.targetTableId] = [r.targetTableId, r.sourceTableId];
           [r.sourceColumnIds, r.targetColumnIds] = [r.targetColumnIds, r.sourceColumnIds];
+          // An embed's column belongs to the container. After a swap the container
+          // is the other table, so the old choice no longer means anything.
+          if (r.kind === 'embed') {
+            r.sourceColumnIds = [];
+            r.targetColumnIds = [];
+          }
         }),
 
       /* ---------------- groups ---------------- */
@@ -613,6 +650,17 @@ export const useStore = create<Store>()(
           const n = d.notes.find((x) => x.id === id);
           if (n) Object.assign(n, patch);
         }),
+      duplicateNote: (id) => {
+        const src = get().diagram.notes.find((n) => n.id === id);
+        if (!src) return;
+        const copy = createNote({ ...src, id: undefined, position: { x: src.position.x + 28, y: src.position.y + 28 } });
+        mutate((d) => {
+          d.notes.push(copy);
+        });
+        set((s) => {
+          s.selection = { ...emptySelection(), noteIds: [copy.id] };
+        });
+      },
       deleteNote: (id) => removeElements({ noteIds: [id] }),
 
       /* ---------------- canvas ---------------- */

@@ -1,6 +1,29 @@
 import dagre from '@dagrejs/dagre';
-import type { Diagram } from '@shared/types';
+import type { Diagram, Relationship, RelationshipKind } from '@shared/types';
 import { estimateNodeSize } from './geometry';
+
+/**
+ * Which end of a connection should be ranked first, and how hard dagre should
+ * try to keep the two tables apart in adjacent ranks.
+ *
+ * The rule is "whatever the other end depends on comes first": the referenced
+ * parent before its children, the upstream table before what is derived from
+ * it, the container before the shape serialized inside it, the provider before
+ * its consumer.
+ */
+const RANK_RULES: Record<RelationshipKind, { fromTarget: boolean; weight: number }> = {
+  fk: { fromTarget: true, weight: 2 },
+  flow: { fromTarget: false, weight: 1 },
+  embed: { fromTarget: false, weight: 2 },
+  dependency: { fromTarget: true, weight: 1 },
+};
+
+function rankEdge(r: Relationship): { from: string; to: string; weight: number } {
+  const rule = RANK_RULES[r.kind] ?? RANK_RULES.fk;
+  return rule.fromTarget
+    ? { from: r.targetTableId, to: r.sourceTableId, weight: rule.weight }
+    : { from: r.sourceTableId, to: r.targetTableId, weight: rule.weight };
+}
 
 export type LayoutDirection = 'LR' | 'TB';
 
@@ -13,11 +36,10 @@ export interface LayoutOptions {
 }
 
 /**
- * "Detangle": a layered (Sugiyama-style) layout. Tables are ranked so that
- * referenced tables sit to the left (or top) of the tables that reference
- * them, and dagre's crossing-minimisation orders each layer so that edges
- * cross as little as possible. Disconnected components are packed side by
- * side.
+ * "Detangle": a layered (Sugiyama-style) layout. Tables are ranked by the
+ * rules above — whatever the other end depends on comes first — and dagre's
+ * crossing-minimisation orders each layer so that edges cross as little as
+ * possible. Disconnected components are packed side by side.
  *
  * Grouped tables are handed to dagre as clusters, so a group's tables stay
  * together and no ungrouped table is dropped in the middle of a region.
@@ -56,11 +78,11 @@ export function layoutDiagram(diagram: Diagram, opts: LayoutOptions = {}): Recor
     for (const r of diagram.relationships) {
       if (r.sourceTableId === r.targetTableId) continue;
       if (!g.hasNode(r.sourceTableId) || !g.hasNode(r.targetTableId)) continue;
-      // Edge direction: parent (referenced) -> child (referencing), so parents rank first.
-      const key = `${r.targetTableId}->${r.sourceTableId}`;
+      const { from, to, weight } = rankEdge(r);
+      const key = `${from}->${to}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      g.setEdge(r.targetTableId, r.sourceTableId, { weight: r.kind === 'fk' ? 2 : 1 }, r.id);
+      g.setEdge(from, to, { weight }, r.id);
     }
 
     dagre.layout(g);

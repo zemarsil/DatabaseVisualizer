@@ -1,4 +1,17 @@
-import type { Column, CustomType, CustomTypeField, Diagram, Dialect, Group, Index, Note, Relationship, Table } from '@shared/types';
+import {
+  kindMeta,
+  type Column,
+  type CustomType,
+  type CustomTypeField,
+  type Derivation,
+  type Diagram,
+  type Dialect,
+  type Group,
+  type Index,
+  type Note,
+  type Relationship,
+  type Table,
+} from '@shared/types';
 import { newId } from './ids';
 import { colorForName } from './palette';
 
@@ -20,15 +33,17 @@ export function createColumn(partial: Partial<Column> & { name: string }): Colum
 }
 
 export function createTable(partial: Partial<Table> & { name: string }): Table {
+  // `id` is pulled out so callers cloning a table can pass `id: undefined` and
+  // still get a fresh id (a plain spread would overwrite it with undefined).
+  const { id, ...rest } = partial;
   return {
-    id: newId('tbl'),
+    id: id ?? newId('tbl'),
     columns: [],
     indexes: [],
     checks: [],
     position: { x: 0, y: 0 },
     color: colorForName(partial.name),
-    ...partial,
-    name: partial.name,
+    ...rest,
   };
 }
 
@@ -44,8 +59,23 @@ export function createGroup(partial: Partial<Group> = {}): Group {
   return { id: newId('grp'), name: 'New group', color: 'slate', external: false, position: { x: 0, y: 0 }, ...partial };
 }
 
+export function createDerivation(partial: Partial<Derivation> = {}): Derivation {
+  const { aggregate, ...rest } = partial;
+  return {
+    id: newId('drv'),
+    targetColumnId: '',
+    expression: '',
+    groupBy: [],
+    ...rest,
+    // null is accepted on the type ("no aggregate") but never stored, so a
+    // derivation round-trips through JSON unchanged.
+    ...(aggregate ? { aggregate } : {}),
+  };
+}
+
 export function createNote(partial: Partial<Note> = {}): Note {
-  return { id: newId('note'), text: 'New note', position: { x: 0, y: 0 }, width: 220, height: 120, color: 'yellow', ...partial };
+  const { id, ...rest } = partial;
+  return { id: id ?? newId('note'), text: 'New note', position: { x: 0, y: 0 }, width: 220, height: 120, color: 'yellow', ...rest };
 }
 
 export function createCustomTypeField(partial: Partial<CustomTypeField> & { name: string }): CustomTypeField {
@@ -127,6 +157,15 @@ export function foreignKeyColumnIds(d: Diagram, tableId: string): Set<string> {
   return ids;
 }
 
+/** Column ids of this table that hold another table serialized inside them. */
+export function embeddedColumnIds(d: Diagram, tableId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const r of d.relationships) {
+    if (r.kind === 'embed' && r.sourceTableId === tableId && r.sourceColumnIds[0]) ids.add(r.sourceColumnIds[0]);
+  }
+  return ids;
+}
+
 /** Remove dangling references after tables/columns are deleted. */
 export function pruneRelationships(d: Diagram): Diagram {
   const tables = new Set(d.tables.map((t) => t.id));
@@ -137,8 +176,12 @@ export function pruneRelationships(d: Diagram): Diagram {
       ...r,
       sourceColumnIds: r.sourceColumnIds.filter((id) => columns.has(id)),
       targetColumnIds: r.targetColumnIds.filter((id) => columns.has(id)),
+      // A derivation whose target column is gone has nothing left to populate.
+      ...(r.derivations ? { derivations: r.derivations.filter((dv) => columns.has(dv.targetColumnId)) } : {}),
     }))
-    .filter((r) => r.kind === 'flow' || (r.sourceColumnIds.length > 0 && r.targetColumnIds.length > 0));
+    // Only column-pair kinds (FKs) become meaningless without their columns; the
+    // documentation kinds are table-to-table and survive a column being dropped.
+    .filter((r) => !kindMeta(r.kind).needsColumnPairs || (r.sourceColumnIds.length > 0 && r.targetColumnIds.length > 0));
   const tablesOut = d.tables.map((t) => ({
     ...t,
     indexes: t.indexes.map((i) => ({ ...i, columnIds: i.columnIds.filter((id) => columns.has(id)) })).filter((i) => i.columnIds.length > 0),

@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
 import { X } from 'lucide-react';
 
@@ -10,14 +10,24 @@ export interface ConfirmOptions {
   danger?: boolean;
 }
 
+export interface PromptOptions {
+  title: string;
+  label?: string;
+  value?: string;
+  placeholder?: string;
+  confirmLabel?: string;
+}
+
 interface DialogState {
   confirm: (ConfirmOptions & { resolve: (ok: boolean) => void }) | null;
+  prompt: (PromptOptions & { resolve: (value: string | null) => void }) | null;
   help: boolean;
   setHelp: (open: boolean) => void;
 }
 
 export const useDialogStore = create<DialogState>((set) => ({
   confirm: null,
+  prompt: null,
   help: false,
   setHelp: (open) => set({ help: open }),
 }));
@@ -31,6 +41,21 @@ export function confirmDialog(opts: ConfirmOptions): Promise<boolean> {
         resolve: (ok) => {
           useDialogStore.setState({ confirm: null });
           resolve(ok);
+        },
+      },
+    });
+  });
+}
+
+/** Promise-based text prompt: `const name = await promptDialog({...})` (null when cancelled). */
+export function promptDialog(opts: PromptOptions): Promise<string | null> {
+  return new Promise((resolve) => {
+    useDialogStore.setState({
+      prompt: {
+        ...opts,
+        resolve: (value) => {
+          useDialogStore.setState({ prompt: null });
+          resolve(value);
         },
       },
     });
@@ -77,6 +102,14 @@ function HelpContent() {
         apart from the schema you are designing. Drag a table into or out of a region to change what is in it, and drag a region by its title bar to move
         everything inside it. Tick <em>These tables live in another database</em> in the inspector and the group turns external: the generated script documents
         those tables instead of creating them, and nothing runs against them when you apply the schema. Detangle keeps each group together.
+      </p>
+      <h4>Right-click</h4>
+      <p>
+        Everything on screen has its own menu. The canvas adds a table or a note exactly where you clicked (and holds undo, detangle, fit and the
+        drawers); a table header offers rename, duplicate, colour, <em>Copy CREATE TABLE</em>, trace and delete; a column row toggles PK / NN / UQ / AI,
+        inserts a column below it, indexes it or deletes it; a connection swaps its direction, converts between a foreign key and a data flow, or copies
+        its tagged query. Right-clicking inside a group you boxed with Shift + drag acts on all of it at once. Notes and the table list on the left have menus too, and
+        the arrow keys with <K k="Enter" /> drive whichever menu is open.
       </p>
       <h4>Working with SQL</h4>
       <p>
@@ -143,6 +176,8 @@ function HelpContent() {
           <K k="Delete" />
         </span>
         <span>Delete the selection</span>
+        <span>Right-click</span>
+        <span>Menu for whatever is under the pointer</span>
         <span>
           <K k="Esc" />
         </span>
@@ -156,8 +191,46 @@ function HelpContent() {
   );
 }
 
+function PromptModal({ prompt }: { prompt: PromptOptions & { resolve: (value: string | null) => void } }) {
+  const [value, setValue] = useState(prompt.value ?? '');
+  const submit = () => prompt.resolve(value);
+  return (
+    <Modal
+      title={prompt.title}
+      onClose={() => prompt.resolve(null)}
+      footer={
+        <>
+          <button className="btn" onClick={() => prompt.resolve(null)}>
+            Cancel
+          </button>
+          <button className="btn btn--primary" onClick={submit} disabled={!value.trim()}>
+            {prompt.confirmLabel ?? 'OK'}
+          </button>
+        </>
+      }
+    >
+      <div className="field">
+        {prompt.label && <span className="field__label">{prompt.label}</span>}
+        <input
+          className="input"
+          value={value}
+          placeholder={prompt.placeholder}
+          spellCheck={false}
+          autoFocus
+          onFocus={(e) => e.target.select()}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && value.trim()) submit();
+          }}
+        />
+      </div>
+    </Modal>
+  );
+}
+
 export function DialogHost() {
   const confirm = useDialogStore((s) => s.confirm);
+  const prompt = useDialogStore((s) => s.prompt);
   const help = useDialogStore((s) => s.help);
   const setHelp = useDialogStore((s) => s.setHelp);
   return (
@@ -180,6 +253,7 @@ export function DialogHost() {
           {confirm.message}
         </Modal>
       )}
+      {prompt && <PromptModal key={prompt.title} prompt={prompt} />}
       {help && (
         <Modal title="How to use Database Visualizer" onClose={() => setHelp(false)} wide>
           <HelpContent />
