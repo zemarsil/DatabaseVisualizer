@@ -70,8 +70,22 @@ src/lib/io.ts            .dbviz.json save/load
 src/store/useStore.ts    zustand store with undo/redo and autosave
 src/components/          React UI (canvas, inspector, drawer panels)
 server/                  Express API: Docker control, pg / MariaDB execution and introspection
+scripts/                 validate-dbviz.mjs: structural check for a hand-written diagram file
+docs/                    ADVISOR_OUTPUT_FORMAT.md + an example diagram
 tests/                   vitest unit tests for the SQL round-trip, tracing, layout and file format
 ```
+
+## Feeding it from another tool (or an AI advisor)
+
+[`docs/ADVISOR_OUTPUT_FORMAT.md`](docs/ADVISOR_OUTPUT_FORMAT.md) is a hand-off spec you can paste into a database advisor agent's instructions: it tells the agent when to emit plain DDL (for the **Import SQL** drawer) versus a full `.dbviz.json` (for **File → Open**), documents every field of the diagram file, and lists the rules that keep a hand-written file loadable. [`docs/examples/orders-rollup.dbviz.json`](docs/examples/orders-rollup.dbviz.json) is a complete example.
+
+Check a generated file before opening it:
+
+```bash
+node scripts/validate-dbviz.mjs recommendation.dbviz.json
+```
+
+It flags duplicate ids, dangling table/column references, mismatched foreign-key column lists, dialect/type mismatches, unknown colour keys and stacked table positions — all things the app loads without complaint but that produce a wrong diagram.
 
 ```bash
 npm test          # unit tests
