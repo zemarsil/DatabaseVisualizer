@@ -35,9 +35,9 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type RelationshipKind, type Table } from '@shared/types';
+import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type Table } from '@shared/types';
 import { flowDerivations } from '@/lib/derivation';
-import { customTypeByName } from '@/lib/model';
+import { customTypeByName, relationshipKindPatch } from '@/lib/model';
 import { emptySelection, selectionSize, type Selection } from '@/lib/selection';
 import { generateTableSql } from '@/lib/sql/generator';
 import type { Store } from '@/store/useStore';
@@ -428,23 +428,6 @@ function kindItems(r: Relationship, env: MenuEnv): MenuNode[] {
   const src = s.diagram.tables.find((t) => t.id === r.sourceTableId);
   const tgt = s.diagram.tables.find((t) => t.id === r.targetTableId);
   const canPair = Boolean(src?.columns.length && tgt?.columns.length);
-  const setKind = (kind: RelationshipKind) => {
-    if (kind === 'embed') {
-      s.updateRelationship(r.id, { kind, sourceColumnIds: r.sourceColumnIds.slice(0, 1), targetColumnIds: [] });
-      return;
-    }
-    if (kind !== 'fk' || !src || !tgt) {
-      s.updateRelationship(r.id, { kind });
-      return;
-    }
-    const sourceColumnIds = r.sourceColumnIds.filter(Boolean);
-    const targetColumnIds = r.targetColumnIds.filter(Boolean);
-    s.updateRelationship(r.id, {
-      kind,
-      sourceColumnIds: sourceColumnIds.length ? sourceColumnIds : [src.columns[0].id],
-      targetColumnIds: targetColumnIds.length ? targetColumnIds : [(tgt.columns.find((c) => c.primaryKey) ?? tgt.columns[0]).id],
-    });
-  };
   return [
     { kind: 'caption', id: 'kind-caption', text: 'Connection kind' },
     ...RELATIONSHIP_KINDS.map((k) => {
@@ -456,7 +439,7 @@ function kindItems(r: Relationship, env: MenuEnv): MenuNode[] {
         checked: r.kind === k.id,
         disabled: blocked,
         hint: blocked ? 'needs columns' : undefined,
-        run: () => setKind(k.id),
+        run: () => s.updateRelationship(r.id, relationshipKindPatch(s.diagram, r, k.id)),
       };
     }),
   ];
