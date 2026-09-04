@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import type { Diagram } from '../src/shared/types';
+import { RELATIONSHIP_KINDS, kindMeta, type Diagram } from '../src/shared/types';
 import { buildContextMenu, hasActions, type MenuAction, type MenuEnv, type MenuNode } from '../src/components/ui/contextMenuItems';
 import { sampleDiagram } from '../src/lib/sample';
 import type { Store } from '../src/store/useStore';
@@ -188,14 +188,38 @@ describe('custom types', () => {
 });
 
 describe('connection menu', () => {
-  it('turns a foreign key into a data flow', () => {
+  it('offers every connection kind and checks the current one', () => {
     const d = sampleDiagram();
     const fk = d.relationships.find((r) => r.kind === 'fk')!;
     const { env, actions } = makeEnv(d);
     const items = buildContextMenu({ type: 'relationship', relationshipId: fk.id }, env);
-    expect(action(items, 'convert').label).toBe('Turn into a data flow');
-    action(items, 'convert').run();
+    expect(RELATIONSHIP_KINDS.map((k) => action(items, `kind-${k.id}`).label)).toEqual(RELATIONSHIP_KINDS.map((k) => k.label));
+    expect(RELATIONSHIP_KINDS.filter((k) => action(items, `kind-${k.id}`).checked).map((k) => k.id)).toEqual(['fk']);
+    action(items, 'kind-flow').run();
     expect(actions.updateRelationship).toHaveBeenCalledWith(fk.id, { kind: 'flow' });
+  });
+
+  it('names the kind of a connection that is neither a foreign key nor a flow', () => {
+    const d = sampleDiagram();
+    for (const kind of ['embed', 'dependency'] as const) {
+      const r = d.relationships.find((x) => x.kind === kind)!;
+      const { env } = makeEnv(d);
+      const items = buildContextMenu({ type: 'relationship', relationshipId: r.id }, env);
+      expect(heading(items)).toMatchObject({ detail: kindMeta(kind).label });
+      expect(action(items, `kind-${kind}`).checked).toBe(true);
+    }
+  });
+
+  it('keeps only the serializing column when a connection becomes an embed', () => {
+    const d = sampleDiagram();
+    const fk = d.relationships.find((r) => r.kind === 'fk')!;
+    const { env, actions } = makeEnv(d);
+    action(buildContextMenu({ type: 'relationship', relationshipId: fk.id }, env), 'kind-embed').run();
+    expect(actions.updateRelationship).toHaveBeenCalledWith(fk.id, {
+      kind: 'embed',
+      sourceColumnIds: fk.sourceColumnIds.slice(0, 1),
+      targetColumnIds: [],
+    });
   });
 
   it('fills in column pairs when a data flow becomes a foreign key', () => {
@@ -207,7 +231,7 @@ describe('connection menu', () => {
     const tgt = d.tables.find((t) => t.id === flow.targetTableId)!;
     const { env, actions } = makeEnv(d);
     const items = buildContextMenu({ type: 'relationship', relationshipId: flow.id }, env);
-    action(items, 'convert').run();
+    action(items, 'kind-fk').run();
     expect(actions.updateRelationship).toHaveBeenCalledWith(flow.id, {
       kind: 'fk',
       sourceColumnIds: [src.columns[0].id],
