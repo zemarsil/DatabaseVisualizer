@@ -238,6 +238,7 @@ function MenuRow({ item, active, onHover }: { item: MenuNode; active: boolean; o
       </div>
     );
   }
+  if (item.kind === 'caption') return <div className="ctx-menu__caption">{item.text}</div>;
   if (item.kind === 'swatches') {
     return (
       <div className="ctx-menu__swatches" onMouseEnter={onHover}>

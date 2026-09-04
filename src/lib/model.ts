@@ -10,6 +10,7 @@ import {
   type Index,
   type Note,
   type Relationship,
+  type RelationshipKind,
   type Table,
 } from '@shared/types';
 import { newId } from './ids';
@@ -155,6 +156,31 @@ export function foreignKeyColumnIds(d: Diagram, tableId: string): Set<string> {
     if (r.kind === 'fk' && r.sourceTableId === tableId) r.sourceColumnIds.forEach((id) => ids.add(id));
   }
   return ids;
+}
+
+/**
+ * Patch that moves a relationship to another kind while keeping its columns
+ * meaningful: a foreign key needs a column pair, so one is filled in from the
+ * primary key when the connection had none, and a serialized copy is anchored
+ * to the single column that stores it, so everything else is dropped.
+ *
+ * Lives here rather than in either caller because the inspector's kind picker
+ * and the edge context menu both change a connection's kind, and two copies of
+ * these rules would drift.
+ */
+export function relationshipKindPatch(d: Diagram, r: Relationship, kind: RelationshipKind): Partial<Relationship> {
+  if (kind === 'embed') return { kind, sourceColumnIds: r.sourceColumnIds.slice(0, 1), targetColumnIds: [] };
+  if (kind !== 'fk') return { kind };
+  const src = tableById(d, r.sourceTableId);
+  const tgt = tableById(d, r.targetTableId);
+  if (!src?.columns.length || !tgt?.columns.length) return { kind };
+  const sourceColumnIds = r.sourceColumnIds.filter(Boolean);
+  const targetColumnIds = r.targetColumnIds.filter(Boolean);
+  return {
+    kind,
+    sourceColumnIds: sourceColumnIds.length ? sourceColumnIds : [src.columns[0].id],
+    targetColumnIds: targetColumnIds.length ? targetColumnIds : [(tgt.columns.find((c) => c.primaryKey) ?? tgt.columns[0]).id],
+  };
 }
 
 /** Column ids of this table that hold another table serialized inside them. */
