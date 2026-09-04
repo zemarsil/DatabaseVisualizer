@@ -12,13 +12,14 @@ function makeEnv(diagram: Diagram, over: Partial<Store> = {}) {
     addColumn: vi.fn(),
     addIndex: vi.fn(),
     updateTable: vi.fn(),
-    updateTables: vi.fn(),
+    colorElements: vi.fn(),
     updateColumn: vi.fn(),
     updateNote: vi.fn(),
     updateRelationship: vi.fn(),
     deleteColumn: vi.fn(),
     deleteNote: vi.fn(),
     deleteRelationship: vi.fn(),
+    removeElements: vi.fn(),
     duplicateTable: vi.fn(),
     duplicateNote: vi.fn(),
     swapRelationship: vi.fn(),
@@ -40,12 +41,12 @@ function makeEnv(diagram: Diagram, over: Partial<Store> = {}) {
     diagram,
     past: [],
     future: [],
-    selection: { tableIds: [], relationshipId: null, noteId: null },
+    selection: { tableIds: [], noteIds: [], relationshipId: null },
     trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
     ...actions,
     ...over,
   } as unknown as Store;
-  const env: MenuEnv = { store, copy: vi.fn(), renameTable: vi.fn(), removeTables: vi.fn() };
+  const env: MenuEnv = { store, copy: vi.fn(), renameTable: vi.fn(), remove: vi.fn() };
   return { env, store, actions };
 }
 
@@ -102,15 +103,49 @@ describe('table menu', () => {
   it('acts on the whole group when the clicked table is part of a multi-selection', () => {
     const d = sampleDiagram();
     const [a, b] = d.tables;
-    const { env, actions } = makeEnv(d, { selection: { tableIds: [a.id, b.id], relationshipId: null, noteId: null } });
+    const { env, actions } = makeEnv(d, { selection: { tableIds: [a.id, b.id], noteIds: [], relationshipId: null } });
     const items = buildContextMenu({ type: 'table', tableId: b.id }, env);
     expect(heading(items)).toMatchObject({ label: '2 tables selected' });
     expect(action(items, 'delete').label).toBe('Delete 2 tables');
     action(items, 'delete').run();
-    expect(env.removeTables).toHaveBeenCalledWith([a.id, b.id]);
+    expect(env.remove).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [] });
     const swatches = items.find((i) => i.kind === 'swatches')!;
     if (swatches.kind === 'swatches') swatches.pick('teal');
-    expect(actions.updateTables).toHaveBeenCalledWith([a.id, b.id], { color: 'teal' });
+    expect(actions.colorElements).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [] }, 'teal');
+  });
+
+  it('covers a mixed group of tables and notes, however it was right-clicked', () => {
+    const d = sampleDiagram();
+    const [a, b] = d.tables;
+    const note = d.notes[0];
+    const selection = { tableIds: [a.id, b.id], noteIds: [note.id], relationshipId: null };
+    const { env, actions } = makeEnv(d, { selection });
+    for (const target of [
+      { type: 'table' as const, tableId: a.id },
+      { type: 'note' as const, noteId: note.id },
+      { type: 'selection' as const },
+    ]) {
+      const items = buildContextMenu(target, env);
+      expect(heading(items)).toMatchObject({ label: '2 tables + 1 note selected' });
+      expect(action(items, 'delete').label).toBe('Delete 2 tables and 1 note');
+    }
+    const items = buildContextMenu({ type: 'selection' }, env);
+    action(items, 'delete').run();
+    expect(env.remove).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [note.id] });
+    const swatches = items.find((i) => i.kind === 'swatches')!;
+    if (swatches.kind === 'swatches') swatches.pick('pink');
+    expect(actions.colorElements).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [note.id] }, 'pink');
+  });
+
+  it('drops the table-only actions from a group of notes', () => {
+    const d = sampleDiagram();
+    const note = d.notes[0];
+    const extra = { ...note, id: 'note2' };
+    d.notes.push(extra);
+    const { env } = makeEnv(d, { selection: { tableIds: [], noteIds: [note.id, extra.id], relationshipId: null } });
+    const items = buildContextMenu({ type: 'note', noteId: note.id }, env);
+    expect(heading(items)).toMatchObject({ label: '2 notes selected' });
+    expect(ids(items)).toEqual(['clear', 'delete']);
   });
 });
 

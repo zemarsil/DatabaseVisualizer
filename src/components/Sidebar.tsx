@@ -56,7 +56,7 @@ export function Sidebar() {
                 if (!e.shiftKey) focusTable(t.id);
               }}
               onContextMenu={(e) => {
-                if (!selection.tableIds.includes(t.id)) setSelection({ tableIds: [t.id], relationshipId: null, noteId: null });
+                if (!selection.tableIds.includes(t.id)) setSelection({ tableIds: [t.id], relationshipId: null, noteIds: [] });
                 openContextMenu(e, { type: 'table', tableId: t.id });
               }}
               title={t.comment || t.name}
@@ -73,10 +73,10 @@ export function Sidebar() {
             {notes.map((n) => (
               <button
                 key={n.id}
-                className={`sidebar__item${selection.noteId === n.id ? ' sidebar__item--active' : ''}`}
-                onClick={() => setSelection({ noteId: n.id, tableIds: [], relationshipId: null })}
+                className={`sidebar__item${selection.noteIds.includes(n.id) ? ' sidebar__item--active' : ''}`}
+                onClick={() => setSelection({ noteIds: [n.id], tableIds: [], relationshipId: null })}
                 onContextMenu={(e) => {
-                  setSelection({ noteId: n.id, tableIds: [], relationshipId: null });
+                  if (!selection.noteIds.includes(n.id)) setSelection({ noteIds: [n.id], tableIds: [], relationshipId: null });
                   openContextMenu(e, { type: 'note', noteId: n.id });
                 }}
               >

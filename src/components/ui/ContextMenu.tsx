@@ -8,7 +8,7 @@ import { create } from 'zustand';
 import { Check } from 'lucide-react';
 import { PALETTE } from '@/lib/palette';
 import { useStore } from '@/store/useStore';
-import { buildContextMenu, hasActions, type ContextTarget, type MenuEnv, type MenuNode } from './contextMenuItems';
+import { buildContextMenu, describeElements, hasActions, type ContextTarget, type MenuEnv, type MenuNode } from './contextMenuItems';
 import { confirmDialog, promptDialog } from './Modal';
 
 interface OpenMenu {
@@ -83,19 +83,23 @@ function ContextMenuView({ menu }: { menu: OpenMenu }) {
           if (next && next !== table.name) s.updateTable(tableId, { name: next });
         });
       },
-      removeTables: (ids) => {
-        const touched = s.diagram.relationships.filter((r) => ids.includes(r.sourceTableId) || ids.includes(r.targetTableId)).length;
+      remove: ({ tableIds = [], noteIds = [] }) => {
+        const touched = s.diagram.relationships.filter((r) => tableIds.includes(r.sourceTableId) || tableIds.includes(r.targetTableId)).length;
         if (!touched) {
-          s.deleteTables(ids);
+          s.removeElements({ tableIds, noteIds });
           return;
         }
-        const what = ids.length === 1 ? `"${s.diagram.tables.find((t) => t.id === ids[0])?.name ?? 'this table'}"` : `${ids.length} tables`;
+        const count = tableIds.length + noteIds.length;
+        const what =
+          tableIds.length === 1 && !noteIds.length
+            ? `"${s.diagram.tables.find((t) => t.id === tableIds[0])?.name ?? 'this table'}"`
+            : describeElements({ tableIds, noteIds });
         void confirmDialog({
           title: `Delete ${what}?`,
-          message: `${touched} connection${touched === 1 ? '' : 's'} touching ${ids.length === 1 ? 'it' : 'them'} will be removed too.`,
+          message: `${touched} connection${touched === 1 ? '' : 's'} touching ${count === 1 ? 'it' : 'them'} will be removed too.`,
           confirmLabel: 'Delete',
           danger: true,
-        }).then((ok) => ok && s.deleteTables(ids));
+        }).then((ok) => ok && s.removeElements({ tableIds, noteIds }));
       },
     };
   }, [store]);

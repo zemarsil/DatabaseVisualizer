@@ -101,7 +101,7 @@ function HelpContent() {
         Everything on screen has its own menu. The canvas adds a table or a note exactly where you clicked (and holds undo, detangle, fit and the
         drawers); a table header offers rename, duplicate, colour, <em>Copy CREATE TABLE</em>, trace and delete; a column row toggles PK / NN / UQ / AI,
         inserts a column below it, indexes it or deletes it; a connection swaps its direction, converts between a foreign key and a data flow, or copies
-        its tagged query. Right-clicking one of several selected tables acts on the whole group. Notes and the table list on the left have menus too, and
+        its tagged query. Right-clicking inside a group you boxed with Shift + drag acts on all of it at once. Notes and the table list on the left have menus too, and
         the arrow keys with <K k="Enter" /> drive whichever menu is open.
       </p>
       <h4>Working with SQL</h4>
@@ -156,7 +156,11 @@ function HelpContent() {
         <span>
           <K k="Shift" /> + click
         </span>
-        <span>Select several tables (then Trace connects the first two)</span>
+        <span>Add a table or note to the selection (then Trace connects the first two tables)</span>
+        <span>
+          <K k="Shift" /> + drag
+        </span>
+        <span>Draw a box to select everything it touches, then drag the group to move it</span>
         <span>
           <K k="Delete" />
         </span>

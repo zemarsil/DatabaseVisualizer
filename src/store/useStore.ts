@@ -18,17 +18,14 @@ import {
 import { translateType } from '@/lib/sql/dialect';
 import { findPath, type TraceResult } from '@/lib/trace';
 import { parseDiagramFile, serializeDiagram } from '@/lib/io';
+import { applyEdgeSelectionChanges, applyNodeSelectionChanges, emptySelection, type Selection, type SelectionChange } from '@/lib/selection';
 import { sampleDiagram } from '@/lib/sample';
 import { newId } from '@/lib/ids';
 
 export type Theme = 'dark' | 'light';
 export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'types';
 
-export interface Selection {
-  tableIds: string[];
-  relationshipId: string | null;
-  noteId: string | null;
-}
+export type { Selection };
 
 export interface TraceState {
   fromId: string | null;
@@ -107,8 +104,8 @@ interface Actions {
   // tables
   addTable: (position?: { x: number; y: number }) => string;
   updateTable: (id: string, patch: Partial<Omit<Table, 'id' | 'columns' | 'indexes'>>) => void;
-  /** Same patch applied to several tables in one history step. */
-  updateTables: (ids: string[], patch: Partial<Omit<Table, 'id' | 'columns' | 'indexes'>>) => void;
+  /** Recolour a group of tables and/or notes in one history step. */
+  colorElements: (ids: { tableIds?: string[]; noteIds?: string[] }, color: string) => void;
   deleteTables: (ids: string[]) => void;
   duplicateTable: (id: string) => void;
   addColumn: (tableId: string, partial?: Partial<Column>, opts?: { after?: string }) => string;
@@ -139,6 +136,8 @@ interface Actions {
   deleteNote: (id: string) => void;
 
   // canvas
+  /** Deletes tables, notes and relationships together, as a single undo step. */
+  removeElements: (ids: { tableIds?: string[]; noteIds?: string[]; relationshipIds?: string[] }) => void;
   moveItems: (moves: { id: string; position: { x: number; y: number } }[]) => void;
   beginDrag: () => void;
   endDrag: () => void;
@@ -153,6 +152,10 @@ interface Actions {
   setSelection: (sel: Partial<Selection>) => void;
   selectTable: (id: string, additive?: boolean) => void;
   clearSelection: () => void;
+  /** Replays React Flow node select/deselect deltas onto the live selection. */
+  applyNodeSelection: (changes: SelectionChange[], isNote: (id: string) => boolean) => void;
+  /** Replays React Flow edge select/deselect deltas onto the live selection. */
+  applyEdgeSelection: (changes: SelectionChange[]) => void;
 
   // trace
   setTraceEndpoints: (fromId: string | null, toId: string | null) => void;
@@ -233,12 +236,38 @@ export const useStore = create<Store>()(
       s.trace.searched = false;
     };
 
+    const removeElements: Actions['removeElements'] = ({ tableIds = [], noteIds = [], relationshipIds = [] }) => {
+      const tables = new Set(tableIds);
+      const notes = new Set(noteIds);
+      const rels = new Set(relationshipIds);
+      if (!tables.size && !notes.size && !rels.size) return;
+      mutate((d) => {
+        if (tables.size) d.tables = d.tables.filter((t) => !tables.has(t.id));
+        if (notes.size) d.notes = d.notes.filter((n) => !notes.has(n.id));
+        if (rels.size) d.relationships = d.relationships.filter((r) => !rels.has(r.id));
+        if (tables.size) {
+          // Drop the relationships and index entries left dangling by the removed tables.
+          const pruned = pruneRelationships(d);
+          d.relationships = pruned.relationships;
+          d.tables = pruned.tables;
+        }
+      });
+      set((s) => {
+        if (tables.size) s.selection.tableIds = s.selection.tableIds.filter((x) => !tables.has(x));
+        if (notes.size) s.selection.noteIds = s.selection.noteIds.filter((x) => !notes.has(x));
+        if (s.selection.relationshipId && rels.has(s.selection.relationshipId)) s.selection.relationshipId = null;
+        if (s.trace.fromId && tables.has(s.trace.fromId)) s.trace.fromId = null;
+        if (s.trace.toId && tables.has(s.trace.toId)) s.trace.toId = null;
+        if (tables.size || rels.size) invalidateTrace(s);
+      });
+    };
+
     return {
       diagram: loadInitialDiagram(),
       past: [],
       future: [],
       nodeSizes: {},
-      selection: { tableIds: [], relationshipId: null, noteId: null },
+      selection: emptySelection(),
       trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
       theme: loadTheme(),
       drawer: { open: false, tab: 'sql' },
@@ -280,7 +309,7 @@ export const useStore = create<Store>()(
           s.diagram = d;
           s.past = [];
           s.future = [];
-          s.selection = { tableIds: [], relationshipId: null, noteId: null };
+          s.selection = emptySelection();
           s.trace = { fromId: null, toId: null, result: null, searched: false, picking: false };
           s.nodeSizes = {};
           s.dirty = false;
@@ -310,7 +339,7 @@ export const useStore = create<Store>()(
           dd.tables.push(t);
         });
         set((s) => {
-          s.selection = { tableIds: [t.id], relationshipId: null, noteId: null };
+          s.selection = { ...emptySelection(), tableIds: [t.id] };
           s.inspectorOpen = true;
         });
         return t.id;
@@ -320,29 +349,16 @@ export const useStore = create<Store>()(
           const t = d.tables.find((x) => x.id === id);
           if (t) Object.assign(t, patch);
         }),
-      updateTables: (ids, patch) => {
-        if (!ids.length) return;
-        const idSet = new Set(ids);
+      colorElements: ({ tableIds = [], noteIds = [] }, color) => {
+        if (!tableIds.length && !noteIds.length) return;
+        const tables = new Set(tableIds);
+        const notes = new Set(noteIds);
         mutate((d) => {
-          for (const t of d.tables) if (idSet.has(t.id)) Object.assign(t, patch);
+          for (const t of d.tables) if (tables.has(t.id)) t.color = color;
+          for (const n of d.notes) if (notes.has(n.id)) n.color = color;
         });
       },
-      deleteTables: (ids) => {
-        if (!ids.length) return;
-        const idSet = new Set(ids);
-        mutate((d) => {
-          d.tables = d.tables.filter((t) => !idSet.has(t.id));
-          const pruned = pruneRelationships(d);
-          d.relationships = pruned.relationships;
-          d.tables = pruned.tables;
-        });
-        set((s) => {
-          s.selection.tableIds = s.selection.tableIds.filter((x) => !idSet.has(x));
-          if (s.trace.fromId && idSet.has(s.trace.fromId)) s.trace.fromId = null;
-          if (s.trace.toId && idSet.has(s.trace.toId)) s.trace.toId = null;
-          invalidateTrace(s);
-        });
-      },
+      deleteTables: (ids) => removeElements({ tableIds: ids }),
       duplicateTable: (id) => {
         const d = get().diagram;
         const src = d.tables.find((t) => t.id === id);
@@ -362,7 +378,7 @@ export const useStore = create<Store>()(
           dd.tables.push(copy);
         });
         set((s) => {
-          s.selection = { tableIds: [copy.id], relationshipId: null, noteId: null };
+          s.selection = { ...emptySelection(), tableIds: [copy.id] };
         });
       },
       addColumn: (tableId, partial, opts) => {
@@ -480,7 +496,7 @@ export const useStore = create<Store>()(
           d.relationships.push(r);
         });
         set((s) => {
-          s.selection = { tableIds: [], relationshipId: r.id, noteId: null };
+          s.selection = { ...emptySelection(), relationshipId: r.id };
           s.inspectorOpen = true;
           invalidateTrace(s);
         });
@@ -491,15 +507,7 @@ export const useStore = create<Store>()(
           const r = d.relationships.find((x) => x.id === id);
           if (r) Object.assign(r, patch);
         }),
-      deleteRelationship: (id) => {
-        mutate((d) => {
-          d.relationships = d.relationships.filter((x) => x.id !== id);
-        });
-        set((s) => {
-          if (s.selection.relationshipId === id) s.selection.relationshipId = null;
-          invalidateTrace(s);
-        });
-      },
+      deleteRelationship: (id) => removeElements({ relationshipIds: [id] }),
       swapRelationship: (id) =>
         mutate((d) => {
           const r = d.relationships.find((x) => x.id === id);
@@ -515,7 +523,7 @@ export const useStore = create<Store>()(
           d.notes.push(n);
         });
         set((s) => {
-          s.selection = { tableIds: [], relationshipId: null, noteId: n.id };
+          s.selection = { ...emptySelection(), noteIds: [n.id] };
         });
         return n.id;
       },
@@ -532,19 +540,13 @@ export const useStore = create<Store>()(
           d.notes.push(copy);
         });
         set((s) => {
-          s.selection = { tableIds: [], relationshipId: null, noteId: copy.id };
+          s.selection = { ...emptySelection(), noteIds: [copy.id] };
         });
       },
-      deleteNote: (id) => {
-        mutate((d) => {
-          d.notes = d.notes.filter((x) => x.id !== id);
-        });
-        set((s) => {
-          if (s.selection.noteId === id) s.selection.noteId = null;
-        });
-      },
+      deleteNote: (id) => removeElements({ noteIds: [id] }),
 
       /* ---------------- canvas ---------------- */
+      removeElements,
       moveItems: (moves) =>
         mutate(
           (d) => {
@@ -613,7 +615,7 @@ export const useStore = create<Store>()(
           }
         });
         set((s) => {
-          s.selection = { tableIds: [], relationshipId: null, noteId: null };
+          s.selection = emptySelection();
           invalidateTrace(s);
           s.fitViewNonce++;
         });
@@ -633,13 +635,26 @@ export const useStore = create<Store>()(
             s.selection.tableIds = [id];
           }
           s.selection.relationshipId = null;
-          s.selection.noteId = null;
+          s.selection.noteIds = [];
           s.inspectorOpen = true;
         }),
       clearSelection: () =>
         set((s) => {
-          s.selection = { tableIds: [], relationshipId: null, noteId: null };
+          s.selection = emptySelection();
         }),
+      /*
+       * These read get().selection rather than a value captured at render time: React Flow can
+       * fire several selection updates (pointer move plus auto-pan) before React re-renders, and
+       * replaying a delta onto a stale selection silently drops nodes the box already picked up.
+       */
+      applyNodeSelection: (changes, isNote) => {
+        const next = applyNodeSelectionChanges(get().selection, changes, isNote);
+        if (next) set((s) => void (s.selection = next));
+      },
+      applyEdgeSelection: (changes) => {
+        const next = applyEdgeSelectionChanges(get().selection, changes);
+        if (next) set((s) => void (s.selection = next));
+      },
 
       /* ---------------- trace ---------------- */
       setTraceEndpoints: (fromId, toId) =>
@@ -745,8 +760,8 @@ useStore.subscribe((state, prev) => {
 
 /* ---------------- selectors ---------------- */
 export const selectSelectedTable = (s: Store): Table | undefined =>
-  s.selection.tableIds.length === 1 ? s.diagram.tables.find((t) => t.id === s.selection.tableIds[0]) : undefined;
+  s.selection.tableIds.length === 1 && s.selection.noteIds.length === 0 ? s.diagram.tables.find((t) => t.id === s.selection.tableIds[0]) : undefined;
 export const selectSelectedRelationship = (s: Store): Relationship | undefined =>
   s.selection.relationshipId ? s.diagram.relationships.find((r) => r.id === s.selection.relationshipId) : undefined;
 export const selectSelectedNote = (s: Store): Note | undefined =>
-  s.selection.noteId ? s.diagram.notes.find((n) => n.id === s.selection.noteId) : undefined;
+  s.selection.noteIds.length === 1 && s.selection.tableIds.length === 0 ? s.diagram.notes.find((n) => n.id === s.selection.noteIds[0]) : undefined;

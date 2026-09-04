@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import type { Column, Relationship, Table } from '@shared/types';
 import { customTypeByName } from '@/lib/model';
+import { emptySelection, selectionSize, type Selection } from '@/lib/selection';
 import { generateTableSql } from '@/lib/sql/generator';
 import type { Store } from '@/store/useStore';
 
@@ -94,14 +95,20 @@ export interface MenuEnv {
   copy: (text: string, message: string) => void;
   /** Ask for a new name and apply it. */
   renameTable: (tableId: string) => void;
-  /** Delete tables, confirming first when connections would go with them. */
-  removeTables: (ids: string[]) => void;
+  /** Delete tables and/or notes, confirming first when connections would go with them. */
+  remove: (ids: { tableIds?: string[]; noteIds?: string[] }) => void;
 }
 
 const sep = (id: string): MenuSeparator => ({ kind: 'separator', id });
 
 function plural(n: number, one: string, many = `${one}s`): string {
   return `${n} ${n === 1 ? one : many}`;
+}
+
+/** "2 tables and 1 note" — shared by the group menu and its confirm dialog. */
+export function describeElements({ tableIds = [], noteIds = [] }: { tableIds?: string[]; noteIds?: string[] }, joiner = ' and '): string {
+  const parts = [tableIds.length && plural(tableIds.length, 'table'), noteIds.length && plural(noteIds.length, 'note')].filter(Boolean) as string[];
+  return parts.join(joiner);
 }
 
 /** Tables on the other end of any connection touching `tableId`. */
@@ -115,8 +122,15 @@ function connectedTableIds(store: Store, tableId: string): string[] {
   return [...ids];
 }
 
-function selectOnly(store: Store, patch: { tableIds?: string[]; relationshipId?: string | null; noteId?: string | null }): void {
-  store.setSelection({ tableIds: [], relationshipId: null, noteId: null, ...patch });
+function selectOnly(store: Store, patch: Partial<Selection>): void {
+  store.setSelection({ ...emptySelection(), ...patch });
+}
+
+/** True when the clicked node is part of a group selection, so the menu should act on the group. */
+function inGroup(store: Store, kind: 'table' | 'note', id: string): boolean {
+  const sel = store.selection;
+  if (selectionSize(sel) < 2) return false;
+  return kind === 'note' ? sel.noteIds.includes(id) : sel.tableIds.includes(id);
 }
 
 /* ------------------------------------------------------------------ */
@@ -264,7 +278,7 @@ function tableMenu(table: Table, env: MenuEnv): MenuNode[] {
     },
     traceItem(table, env),
     sep('s4'),
-    { kind: 'action', id: 'delete', label: 'Delete table', icon: Trash2, danger: true, hint: 'Del', run: () => env.removeTables([table.id]) },
+    { kind: 'action', id: 'delete', label: 'Delete table', icon: Trash2, danger: true, hint: 'Del', run: () => env.remove({ tableIds: [table.id] }) },
   ];
 }
 
@@ -327,26 +341,40 @@ function columnMenu(table: Table, column: Column, env: MenuEnv): MenuNode[] {
 
 function selectionMenu(env: MenuEnv): MenuNode[] {
   const s = env.store;
-  const ids = s.selection.tableIds;
-  const names = ids.map((id) => s.diagram.tables.find((t) => t.id === id)?.name ?? '?');
+  const { tableIds, noteIds } = s.selection;
+  const tableNames = tableIds.map((id) => s.diagram.tables.find((t) => t.id === id)?.name ?? '?');
+  const noteNames = noteIds.map((id) => s.diagram.notes.find((n) => n.id === id)?.text.split('\n')[0] || 'Empty note');
+  // Same phrasing the inspector uses for a mixed group, e.g. "2 tables + 1 note".
   return [
-    { kind: 'heading', id: 'head', label: `${plural(ids.length, 'table')} selected`, detail: names.join(', ') },
-    {
-      kind: 'action',
-      id: 'trace',
-      label: `Trace ${names[0]} → ${names[1]}`,
-      icon: Route,
-      run: () => {
-        s.setTraceEndpoints(ids[0], ids[1]);
-        s.runTrace();
-      },
-    },
-    { kind: 'action', id: 'detangle', label: 'Detangle layout', icon: Shuffle, hint: 'L', run: () => s.applyLayout() },
-    sep('s1'),
-    { kind: 'swatches', id: 'color', label: 'Color for all', value: null, pick: (key) => s.updateTables(ids, { color: key }) },
+    { kind: 'heading', id: 'head', label: `${describeElements(s.selection, ' + ')} selected`, detail: [...tableNames, ...noteNames].join(', ') },
+    ...(tableIds.length > 1
+      ? [
+          {
+            kind: 'action' as const,
+            id: 'trace',
+            label: `Trace ${tableNames[0]} → ${tableNames[1]}`,
+            icon: Route,
+            run: () => {
+              s.setTraceEndpoints(tableIds[0], tableIds[1]);
+              s.runTrace();
+            },
+          },
+          { kind: 'action' as const, id: 'detangle', label: 'Detangle layout', icon: Shuffle, hint: 'L', run: () => s.applyLayout() },
+          sep('s1'),
+        ]
+      : []),
+    { kind: 'swatches', id: 'color', label: 'Color for all', value: null, pick: (key) => s.colorElements({ tableIds, noteIds }, key) },
     sep('s2'),
     { kind: 'action', id: 'clear', label: 'Clear selection', icon: X, hint: 'Esc', run: () => s.clearSelection() },
-    { kind: 'action', id: 'delete', label: `Delete ${plural(ids.length, 'table')}`, icon: Trash2, danger: true, hint: 'Del', run: () => env.removeTables(ids) },
+    {
+      kind: 'action',
+      id: 'delete',
+      label: `Delete ${describeElements(s.selection)}`,
+      icon: Trash2,
+      danger: true,
+      hint: 'Del',
+      run: () => env.remove({ tableIds, noteIds }),
+    },
   ];
 }
 
@@ -367,7 +395,7 @@ function noteMenu(noteId: string, env: MenuEnv): MenuNode[] {
       label: 'Edit text',
       icon: Pencil,
       run: () => {
-        selectOnly(s, { noteId: note.id });
+        selectOnly(s, { noteIds: [note.id] });
         s.setInspectorOpen(true);
       },
     },
@@ -466,19 +494,22 @@ export function buildContextMenu(target: ContextTarget, env: MenuEnv): MenuNode[
     case 'table': {
       const table = s.diagram.tables.find((t) => t.id === target.tableId);
       if (!table) return [];
-      // Right-clicking one of several selected tables acts on the whole group.
-      if (s.selection.tableIds.length > 1 && s.selection.tableIds.includes(table.id)) return selectionMenu(env);
+      // Right-clicking inside a group selection acts on the whole group.
+      if (inGroup(s, 'table', table.id)) return selectionMenu(env);
       const column = target.columnId ? table.columns.find((c) => c.id === target.columnId) : undefined;
       return column ? columnMenu(table, column, env) : tableMenu(table, env);
     }
     case 'selection': {
-      const ids = s.selection.tableIds;
-      if (ids.length > 1) return selectionMenu(env);
-      const table = ids.length === 1 ? s.diagram.tables.find((t) => t.id === ids[0]) : undefined;
-      return table ? tableMenu(table, env) : [];
+      const { tableIds, noteIds } = s.selection;
+      if (selectionSize(s.selection) > 1) return selectionMenu(env);
+      if (tableIds.length === 1) {
+        const table = s.diagram.tables.find((t) => t.id === tableIds[0]);
+        return table ? tableMenu(table, env) : [];
+      }
+      return noteIds.length === 1 ? noteMenu(noteIds[0], env) : [];
     }
     case 'note':
-      return noteMenu(target.noteId, env);
+      return inGroup(s, 'note', target.noteId) ? selectionMenu(env) : noteMenu(target.noteId, env);
     case 'relationship':
       return relationshipMenu(target.relationshipId, env);
   }
