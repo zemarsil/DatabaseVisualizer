@@ -245,7 +245,7 @@ export function TableEditor({ table }: { table: Table }) {
           const outgoing = r.sourceTableId === table.id;
           const other = tableName(outgoing ? r.targetTableId : r.sourceTableId);
           return (
-            <button key={r.id} className="rel-item" onClick={() => setSelection({ relationshipId: r.id, tableIds: [], noteId: null })}>
+            <button key={r.id} className="rel-item" onClick={() => setSelection({ relationshipId: r.id, tableIds: [], noteIds: [] })}>
               {r.kind === 'fk' ? <Link2 style={{ color: 'var(--accent)' }} /> : <GitBranch style={{ color: 'var(--flow)' }} />}
               <span className="rel-item__arrow">{outgoing ? (r.kind === 'fk' ? 'references' : 'feeds') : r.kind === 'fk' ? 'referenced by' : 'fed by'}</span>
               <span className="grow" style={{ fontWeight: 600 }}>
