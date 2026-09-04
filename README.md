@@ -48,8 +48,9 @@ docker compose up --build
 | Right-click anything | Every target has its own menu: the canvas (add a table or note right here, select all, detangle, undo, open a drawer), a table (rename, duplicate, colour, copy `CREATE TABLE`, trace, delete), a column row inside a table (toggle PK / NN / UQ / AI, add a column below, index it, reorder, delete), a connection (swap direction, convert between foreign key and data flow, copy the tagged query), a note, and the entries in the table list. Right-clicking inside a selected group acts on the whole group |
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks |
 | Foreign key | Hover a table and drag the handle beside a column onto a column of another table |
-| Data-flow link | Drag the orange handle in a table header onto another table, then paste the query into **Tagged query** |
-| Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script |
+| Data-flow link | Drag the orange handle in a table header onto another table, then describe it with **Derived columns** and/or **Tagged query** |
+| Derived columns | On a data-flow edge, add one entry per target column: target column, aggregate, source expression, group-by keys, filter. The edge shows a `Σ` count and a per-column summary, and the script gets an `INSERT ... SELECT ... GROUP BY` skeleton built from it |
+| Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express |
 | See / copy DDL | Bottom drawer → **SQL** (whole schema or the selected table). The table inspector also has a preview |
 | Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace |
 | Switch dialect | Top bar selector; known column types are translated (`SERIAL` ↔ `INT AUTO_INCREMENT`, `TIMESTAMPTZ` ↔ `TIMESTAMP`, `JSONB` ↔ `JSON`, …). Undo reverts |
@@ -83,3 +84,7 @@ npm run typecheck # client + server
 ## Notes on the SQL support
 
 The parser is purpose-built for schema DDL rather than a full SQL grammar. It handles `CREATE TABLE` with column and table constraints in both dialects, `ALTER TABLE … ADD CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`, `COMMENT ON`, and `CREATE TYPE … AS ENUM`. Anything else is skipped with a warning, and a broken statement does not stop the rest of the script from importing. Generated columns, partitioning, and expression indexes are dropped with a warning because the model does not represent them.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).

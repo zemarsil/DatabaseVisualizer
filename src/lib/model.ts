@@ -1,4 +1,4 @@
-import type { Column, CustomType, CustomTypeField, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
+import type { Column, CustomType, CustomTypeField, Derivation, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
 import { newId } from './ids';
 import { colorForName } from './palette';
 
@@ -40,6 +40,20 @@ export function createIndex(partial: Partial<Index> & { columnIds: string[] }): 
 
 export function createRelationship(partial: Omit<Relationship, 'id'> & { id?: string }): Relationship {
   return { id: newId('rel'), onDelete: 'NO ACTION', onUpdate: 'NO ACTION', ...partial };
+}
+
+export function createDerivation(partial: Partial<Derivation> = {}): Derivation {
+  const { aggregate, ...rest } = partial;
+  return {
+    id: newId('drv'),
+    targetColumnId: '',
+    expression: '',
+    groupBy: [],
+    ...rest,
+    // null is accepted on the type ("no aggregate") but never stored, so a
+    // derivation round-trips through JSON unchanged.
+    ...(aggregate ? { aggregate } : {}),
+  };
 }
 
 export function createNote(partial: Partial<Note> = {}): Note {
@@ -127,6 +141,8 @@ export function pruneRelationships(d: Diagram): Diagram {
       ...r,
       sourceColumnIds: r.sourceColumnIds.filter((id) => columns.has(id)),
       targetColumnIds: r.targetColumnIds.filter((id) => columns.has(id)),
+      // A derivation whose target column is gone has nothing left to populate.
+      ...(r.derivations ? { derivations: r.derivations.filter((dv) => columns.has(dv.targetColumnId)) } : {}),
     }))
     .filter((r) => r.kind === 'flow' || (r.sourceColumnIds.length > 0 && r.targetColumnIds.length > 0));
   const tablesOut = d.tables.map((t) => ({

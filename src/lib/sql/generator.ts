@@ -1,4 +1,5 @@
-import type { Column, CustomType, Diagram, Dialect, Relationship, Table } from '@shared/types';
+import type { Column, CustomType, Derivation, Diagram, Dialect, Relationship, Table } from '@shared/types';
+import { derivationSummaries, derivationValue, flowDerivations, groupDerivations, isDerivationComplete } from '../derivation';
 import { isIntegerType, isSerialType, quoteIdent, quoteQualified, quoteString } from './dialect';
 
 /** Look up a column's raw type string against the diagram's named custom types (case-insensitive, quotes stripped). */
@@ -274,6 +275,62 @@ function alterAddFk(ctx: Ctx, r: Relationship): string | null {
   return `ALTER TABLE ${tableName(src, ctx.dialect)} ADD ${clause};`;
 }
 
+/**
+ * INSERT ... SELECT skeletons built from a flow's structured derivations, one per
+ * distinct (GROUP BY, WHERE) signature, so two columns rolled up the same way
+ * share a statement.
+ *
+ * A grouping key that also names a column of the target table is carried into the
+ * insert list (day, product_id in the shop sample); keys that do not - because
+ * they come from a join the metadata does not model - stay in GROUP BY only. This
+ * is documentation, never executed: joins beyond the two connected tables live in
+ * the free-text query.
+ */
+function flowStatements(ctx: Ctx, r: Relationship, warnings: string[]): string[] {
+  const src = ctx.tableById.get(r.sourceTableId);
+  const tgt = ctx.tableById.get(r.targetTableId);
+  if (!src || !tgt) return [];
+  const { dialect } = ctx;
+
+  const usable: Derivation[] = [];
+  for (const dv of flowDerivations(r)) {
+    if (isDerivationComplete(dv) && tgt.columns.some((c) => c.id === dv.targetColumnId)) usable.push(dv);
+    else warnings.push(`Data flow ${src.name} -> ${tgt.name} has an incomplete derivation; it was left out of the generated snippet.`);
+  }
+  if (!usable.length) return [];
+
+  const out: string[] = [];
+  for (const group of groupDerivations(usable)) {
+    const keys = group.groupBy.map((key) => ({ key, column: tgt.columns.find((c) => c.name.toLowerCase() === key.toLowerCase()) }));
+    const mapped = keys.filter((k): k is { key: string; column: Column } => Boolean(k.column));
+    const insertCols = [
+      ...mapped.map((k) => quoteIdent(k.column.name, dialect)),
+      ...group.entries.map((dv) => quoteIdent(tgt.columns.find((c) => c.id === dv.targetColumnId)!.name, dialect)),
+    ];
+    const selectItems = [...mapped.map((k) => k.key), ...group.entries.map(derivationValue)];
+    const lines = [
+      `INSERT INTO ${tableName(tgt, dialect)} (${insertCols.join(', ')})`,
+      `SELECT ${selectItems.join(', ')}`,
+      `FROM ${tableName(src, dialect)}`,
+    ];
+    if (group.filter) lines.push(`WHERE ${group.filter}`);
+    if (group.groupBy.length) lines.push(`GROUP BY ${group.groupBy.join(', ')}`);
+    out.push(`${lines.join('\n')};`);
+  }
+  return out;
+}
+
+/**
+ * The generated snippet for one flow relationship, uncommented - used by the
+ * inspector to preview what the structured metadata produces.
+ */
+export function generateFlowSql(d: Diagram, relationshipId: string): string {
+  const ctx = buildCtx(d);
+  const r = d.relationships.find((x) => x.id === relationshipId);
+  if (!r) return '';
+  return flowStatements(ctx, r, []).join('\n\n');
+}
+
 function commentBlock(text: string): string {
   return text
     .split('\n')
@@ -334,12 +391,28 @@ export function generateSchema(d: Diagram): GeneratedSql {
   if (annotated.length) {
     const lines: string[] = ['-- ----------------------------------------------------------------', '-- Data flows and tagged queries (documentation only, not executed)'];
     for (const r of annotated) {
-      const src = ctx.tableById.get(r.sourceTableId)?.name ?? '?';
-      const tgt = ctx.tableById.get(r.targetTableId)?.name ?? '?';
+      const srcTable = ctx.tableById.get(r.sourceTableId);
+      const tgtTable = ctx.tableById.get(r.targetTableId);
+      const src = srcTable?.name ?? '?';
+      const tgt = tgtTable?.name ?? '?';
       const head = r.kind === 'flow' ? `${src} -> ${tgt}` : `${src} references ${tgt}`;
       lines.push(`-- ${head}${r.name ? ` (${r.name})` : ''}`);
       if (r.note && r.note.trim()) lines.push(commentBlock(r.note.trim()));
-      if (r.query && r.query.trim()) lines.push(commentBlock(r.query.trim()));
+
+      const summaries = derivationSummaries(r, tgtTable);
+      if (summaries.length) {
+        lines.push('--   Derived columns:');
+        for (const summary of summaries) lines.push(`--     ${summary}`);
+      }
+      const generated = flowStatements(ctx, r, warnings);
+      if (generated.length) {
+        lines.push('--   Built from the derivation metadata:');
+        for (const stmt of generated) lines.push(commentBlock(stmt));
+      }
+      if (r.query && r.query.trim()) {
+        if (summaries.length) lines.push('--   Tagged query:');
+        lines.push(commentBlock(r.query.trim()));
+      }
     }
     scriptParts.push(lines.join('\n'));
   }

@@ -1,7 +1,8 @@
 import { memo } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
-import { Code2, GitBranch } from 'lucide-react';
-import type { Relationship } from '@shared/types';
+import { Code2, GitBranch, Sigma } from 'lucide-react';
+import type { Relationship, Table } from '@shared/types';
+import { derivationSummaries, flowDerivations } from '@/lib/derivation';
 import { HEADER_HEIGHT, estimateNodeSize, rowCenterY } from '@/lib/geometry';
 
 export interface RelationEdgeData extends Record<string, unknown> {
@@ -99,8 +100,8 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   const targetNode = useInternalNode(target);
   if (!sourceNode || !targetNode || !data) return null;
 
-  const sTable = (sourceNode.data as { table?: { columns: { name: string; type: string }[] } }).table;
-  const tTable = (targetNode.data as { table?: { columns: { name: string; type: string }[] } }).table;
+  const sTable = (sourceNode.data as { table?: Table }).table;
+  const tTable = (targetNode.data as { table?: Table }).table;
   const sEst = estimateNodeSize(sTable?.columns ?? []);
   const tEst = estimateNodeSize(tTable?.columns ?? []);
   const s = {
@@ -124,13 +125,22 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   const r = data.relationship;
   const isFlow = r.kind === 'flow';
   const hasQuery = Boolean(r.query && r.query.trim());
+  // Structured derivations read as "revenue_cents = SUM(...) GROUP BY ..." without
+  // anyone having to squint at the tagged query.
+  const derivationCount = flowDerivations(r).length;
+  const summaries = derivationSummaries(r, tTable);
   const color = data.traced ? 'var(--trace)' : selected ? 'var(--accent)' : isFlow ? 'var(--flow)' : data.attached ? 'var(--edge-strong)' : 'var(--edge)';
   const width = data.traced || selected ? 2.5 : data.attached ? 2 : 1.5;
   const opacity = data.dimmed ? 0.18 : 1;
   const markerStyle: React.CSSProperties = { stroke: color, strokeWidth: width, fill: 'none', opacity, transition: 'stroke 0.12s, opacity 0.2s' };
 
   const showLabel = isFlow || hasQuery || selected || data.traced;
-  const labelText = isFlow ? r.name || (hasQuery ? 'query' : 'data flow') : hasQuery ? r.name || 'query' : r.name || 'FK';
+  const labelText = isFlow
+    ? r.name || (derivationCount ? 'derived' : hasQuery ? 'query' : 'data flow')
+    : hasQuery
+      ? r.name || 'query'
+      : r.name || 'FK';
+  const tooltip = [summaries.join('\n'), hasQuery ? r.query!.trim() : '', r.note?.trim() ?? ''].filter(Boolean).join('\n\n');
   const labelClasses = ['edge-label'];
   if (selected) labelClasses.push('edge-label--selected');
   else if (data.traced) labelClasses.push('edge-label--trace');
@@ -163,10 +173,16 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
           <div
             className={labelClasses.join(' ')}
             style={{ transform: `translate(-50%, -50%) translate(${g.labelX}px, ${g.labelY}px)` }}
-            title={hasQuery ? r.query : r.note || undefined}
+            title={tooltip || undefined}
           >
             {isFlow ? <GitBranch /> : hasQuery ? <Code2 /> : null}
             <span>{labelText}</span>
+            {derivationCount > 0 && (
+              <span className="edge-label__count" title={summaries.join('\n')}>
+                <Sigma />
+                {derivationCount}
+              </span>
+            )}
           </div>
         </EdgeLabelRenderer>
       )}
