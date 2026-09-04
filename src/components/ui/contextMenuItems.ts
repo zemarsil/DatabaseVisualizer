@@ -17,9 +17,7 @@ import {
   Crosshair,
   Database,
   FileDown,
-  GitBranch,
   KeyRound,
-  Link2,
   ListPlus,
   Maximize,
   PanelRight,
@@ -37,7 +35,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import type { Column, Relationship, Table } from '@shared/types';
+import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type RelationshipKind, type Table } from '@shared/types';
 import { flowDerivations } from '@/lib/derivation';
 import { customTypeByName } from '@/lib/model';
 import { emptySelection, selectionSize, type Selection } from '@/lib/selection';
@@ -79,6 +77,13 @@ export interface MenuSeparator {
   id: string;
 }
 
+/** Small caption above a group of related items, e.g. the connection kinds. */
+export interface MenuCaption {
+  kind: 'caption';
+  id: string;
+  text: string;
+}
+
 /** A row of palette swatches, e.g. the table header colour. */
 export interface MenuSwatches {
   kind: 'swatches';
@@ -88,7 +93,7 @@ export interface MenuSwatches {
   pick: (colorKey: string) => void;
 }
 
-export type MenuNode = MenuAction | MenuHeading | MenuSeparator | MenuSwatches;
+export type MenuNode = MenuAction | MenuHeading | MenuSeparator | MenuCaption | MenuSwatches;
 
 export interface MenuEnv {
   store: Store;
@@ -413,34 +418,48 @@ function noteMenu(noteId: string, env: MenuEnv): MenuNode[] {
 /* Relationship (edge)                                                 */
 /* ------------------------------------------------------------------ */
 
-function convertItem(r: Relationship, env: MenuEnv): MenuAction {
+/**
+ * One checkable row per connection kind. Switching kind follows the same rules as
+ * the inspector: an embed keeps only the column the target is serialized into, and
+ * a foreign key needs a column pair, so one is filled in when it is missing.
+ */
+function kindItems(r: Relationship, env: MenuEnv): MenuNode[] {
   const s = env.store;
   const src = s.diagram.tables.find((t) => t.id === r.sourceTableId);
   const tgt = s.diagram.tables.find((t) => t.id === r.targetTableId);
-  if (r.kind === 'fk') {
-    return { kind: 'action', id: 'convert', label: 'Turn into a data flow', icon: GitBranch, run: () => s.updateRelationship(r.id, { kind: 'flow' }) };
-  }
-  // A flow may have no anchor columns; a foreign key needs one pair, so pick a
-  // sensible default (first column -> primary key) when they are missing.
-  const canConvert = Boolean(src?.columns.length && tgt?.columns.length);
-  return {
-    kind: 'action',
-    id: 'convert',
-    label: 'Turn into a foreign key',
-    icon: Link2,
-    disabled: !canConvert,
-    hint: canConvert ? undefined : 'needs columns',
-    run: () => {
-      if (!src || !tgt) return;
-      const sourceColumnIds = r.sourceColumnIds.filter(Boolean);
-      const targetColumnIds = r.targetColumnIds.filter(Boolean);
-      s.updateRelationship(r.id, {
-        kind: 'fk',
-        sourceColumnIds: sourceColumnIds.length ? sourceColumnIds : [src.columns[0].id],
-        targetColumnIds: targetColumnIds.length ? targetColumnIds : [(tgt.columns.find((c) => c.primaryKey) ?? tgt.columns[0]).id],
-      });
-    },
+  const canPair = Boolean(src?.columns.length && tgt?.columns.length);
+  const setKind = (kind: RelationshipKind) => {
+    if (kind === 'embed') {
+      s.updateRelationship(r.id, { kind, sourceColumnIds: r.sourceColumnIds.slice(0, 1), targetColumnIds: [] });
+      return;
+    }
+    if (kind !== 'fk' || !src || !tgt) {
+      s.updateRelationship(r.id, { kind });
+      return;
+    }
+    const sourceColumnIds = r.sourceColumnIds.filter(Boolean);
+    const targetColumnIds = r.targetColumnIds.filter(Boolean);
+    s.updateRelationship(r.id, {
+      kind,
+      sourceColumnIds: sourceColumnIds.length ? sourceColumnIds : [src.columns[0].id],
+      targetColumnIds: targetColumnIds.length ? targetColumnIds : [(tgt.columns.find((c) => c.primaryKey) ?? tgt.columns[0]).id],
+    });
   };
+  return [
+    { kind: 'caption', id: 'kind-caption', text: 'Connection kind' },
+    ...RELATIONSHIP_KINDS.map((k) => {
+      const blocked = k.needsColumnPairs && !canPair && r.kind !== k.id;
+      return {
+        kind: 'action' as const,
+        id: `kind-${k.id}`,
+        label: k.label,
+        checked: r.kind === k.id,
+        disabled: blocked,
+        hint: blocked ? 'needs columns' : undefined,
+        run: () => setKind(k.id),
+      };
+    }),
+  ];
 }
 
 function relationshipMenu(relationshipId: string, env: MenuEnv): MenuNode[] {
@@ -459,12 +478,13 @@ function relationshipMenu(relationshipId: string, env: MenuEnv): MenuNode[] {
       kind: 'heading',
       id: 'head',
       label: `${name(r.sourceTableId)} → ${name(r.targetTableId)}`,
-      detail: [r.kind === 'fk' ? 'Foreign key' : 'Data flow', derived > 0 && plural(derived, 'derived column')].filter(Boolean).join(' · '),
+      detail: [kindMeta(r.kind).label, derived > 0 && plural(derived, 'derived column')].filter(Boolean).join(' · '),
     },
     { kind: 'action', id: 'edit', label: query ? 'Edit connection' : 'Edit connection / tag a query', icon: PanelRight, run: select },
     { kind: 'action', id: 'swap', label: 'Swap direction', icon: ArrowLeftRight, run: () => s.swapRelationship(r.id) },
-    convertItem(r, env),
     sep('s1'),
+    ...kindItems(r, env),
+    sep('s2'),
     {
       kind: 'action',
       id: 'copy-query',
@@ -481,7 +501,7 @@ function relationshipMenu(relationshipId: string, env: MenuEnv): MenuNode[] {
       icon: SquareDashedMousePointer,
       run: () => selectOnly(s, { tableIds: [r.sourceTableId, r.targetTableId] }),
     },
-    sep('s2'),
+    sep('s3'),
     { kind: 'action', id: 'delete', label: 'Delete connection', icon: Trash2, danger: true, hint: 'Del', run: () => s.deleteRelationship(r.id) },
   ];
 }
