@@ -44,6 +44,7 @@ docker compose up --build
 | What | How |
 | --- | --- |
 | Add a table | Double-click the canvas, press `T`, or use the **+ Table** button |
+| Select a group | `Shift` + drag a box over the canvas — every table and note it touches is selected; drag any of them (or the dashed box) to move the group, `Delete` removes it in one undo step |
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks |
 | Foreign key | Hover a table and drag the handle beside a column onto a column of another table |
 | Data-flow link | Drag the orange handle in a table header onto another table, then paste the query into **Tagged query** |
