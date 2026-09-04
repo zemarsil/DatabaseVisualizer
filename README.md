@@ -45,6 +45,7 @@ docker compose up --build
 | What | How |
 | --- | --- |
 | Add a table | Double-click the canvas, press `T`, or use the **+ Table** button |
+| Select a group | `Shift` + drag a box over the canvas — every table and note it touches is selected; drag any of them (or the dashed box) to move the group, `Delete` removes it in one undo step |
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks |
 | Foreign key | Hover a table and drag the handle beside a column onto a column of another table |
 | Any other connection | Drag the orange handle in a table header onto another table, then pick the kind in the inspector (data flow, serialized, dependency) |
@@ -72,7 +73,7 @@ changes the words.
 | --- | --- | --- | --- |
 | Foreign key | solid, crow's foot | `FOREIGN KEY … REFERENCES …` | A constraint the database enforces |
 | Data flow | dashed, filled arrow | a comment | Rows in the target are built from the source by a job, rollup, or trigger |
-| Serialized | solid, filled diamond at the container | a comment | The target's rows live encoded inside one column of the source (JSONB, an array, a blob) |
+| Serialized | solid, filled diamond at the container | a comment | The target's rows live encoded inside one column of the source (JSONB, an array, a blob, a composite type) |
 | Dependency | dotted, open arrow | a comment | The source reads the target through a view, a job, or application code, with nothing enforcing it |
 
 Verbs are always stored source → target, so every one of them also gives you

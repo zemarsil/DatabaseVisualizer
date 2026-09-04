@@ -88,11 +88,11 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
       <div className="field">
         <span className="field__label">{isFk ? 'Referencing → referenced' : isEmbed ? 'Container → embedded' : 'Source → target'}</span>
         <div className="row">
-          <button className="chip chip--on" onClick={() => setSelection({ tableIds: [src.id], relationshipId: null, noteId: null })} title="Select table">
+          <button className="chip chip--on" onClick={() => setSelection({ tableIds: [src.id], relationshipId: null, noteIds: [] })} title="Select table">
             {src.name}
           </button>
           <span className="faint">→</span>
-          <button className="chip chip--on" onClick={() => setSelection({ tableIds: [tgt.id], relationshipId: null, noteId: null })} title="Select table">
+          <button className="chip chip--on" onClick={() => setSelection({ tableIds: [tgt.id], relationshipId: null, noteIds: [] })} title="Select table">
             {tgt.name}
           </button>
           <span className="grow" />
@@ -118,7 +118,8 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
             ))}
           </select>
           <span className="field__hint">
-            The column of {src.name} that holds {tgt.name} encoded — usually JSON/JSONB, an array, or a blob. Nothing is emitted into the DDL for it.
+            The column of {src.name} that holds {tgt.name} encoded — usually JSON/JSONB, an array, a blob, or a composite type. Nothing is emitted into
+            the DDL for it.
           </span>
         </div>
       ) : (

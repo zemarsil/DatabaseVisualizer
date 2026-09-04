@@ -29,6 +29,7 @@ function ColumnRow({ table, column, index, fk, embed }: { table: Table; column: 
   const deleteColumn = useStore((s) => s.deleteColumn);
   const moveColumn = useStore((s) => s.moveColumn);
   const dialect = useStore((s) => s.diagram.dialect);
+  const customType = useStore((s) => s.diagram.customTypes.find((t) => t.name.toLowerCase() === column.type.trim().toLowerCase()));
   const [open, setOpen] = useState(false);
   const patch = (p: Partial<Column>) => updateColumn(table.id, column.id, p);
 
@@ -50,6 +51,8 @@ function ColumnRow({ table, column, index, fk, embed }: { table: Table; column: 
         placeholder="TYPE"
         list={`types-${dialect}`}
         spellCheck={false}
+        title={customType ? `Custom ${customType.kind === 'enum' ? 'enum' : 'struct'} type — edit it in the Types drawer tab` : undefined}
+        style={customType ? { borderColor: 'var(--accent)' } : undefined}
       />
       <div className="col-row__flags">
         <FlagButton on={column.primaryKey} label="PK" title="Primary key" className="flag-btn--pk" onClick={() => patch({ primaryKey: !column.primaryKey })} />
@@ -155,6 +158,11 @@ export function TableEditor({ table }: { table: Table }) {
         {TYPE_SUGGESTIONS[diagram.dialect].map((t) => (
           <option key={t} value={t} />
         ))}
+        {diagram.customTypes.map((t) => (
+          <option key={t.id} value={t.name}>
+            {t.name} ({t.kind === 'enum' ? 'enum' : 'struct'})
+          </option>
+        ))}
       </datalist>
 
       <div className="field">
@@ -242,7 +250,7 @@ export function TableEditor({ table }: { table: Table }) {
           const outgoing = r.sourceTableId === table.id;
           const other = tableName(outgoing ? r.targetTableId : r.sourceTableId);
           return (
-            <button key={r.id} className="rel-item" onClick={() => setSelection({ relationshipId: r.id, tableIds: [], noteId: null })}>
+            <button key={r.id} className="rel-item" onClick={() => setSelection({ relationshipId: r.id, tableIds: [], noteIds: [] })}>
               <RelIcon kind={r.kind} />
               <span className="rel-item__arrow">{verbLabel(r, outgoing ? 'forward' : 'inverse')}</span>
               <span className="grow" style={{ fontWeight: 600 }}>

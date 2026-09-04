@@ -132,12 +132,23 @@ describe('diagram file round-trip', () => {
     expect(relationshipVerb(d.relationships[0]).forward).toBe('references');
   });
 
+  it('round-trips custom types (enum and composite)', () => {
+    const d = sampleDiagram();
+    d.customTypes.push(
+      { id: 'ct1', name: 'mood', kind: 'enum', values: ['sad', 'happy'] },
+      { id: 'ct2', name: 'address', kind: 'composite', fields: [{ id: 'f1', name: 'street', type: 'TEXT' }] },
+    );
+    const back = parseDiagramFile(serializeDiagram(d));
+    expect(back.customTypes).toEqual(d.customTypes);
+  });
+
   it('tolerates missing optional fields', () => {
     const d = parseDiagramFile(JSON.stringify({ tables: [{ id: 't1', name: 'x', columns: [{ id: 'c1', name: 'id' }] }] }));
     expect(d.dialect).toBe('postgresql');
     expect(d.tables[0].columns[0].type).toBe('TEXT');
     expect(d.tables[0].indexes).toEqual([]);
     expect(d.relationships).toEqual([]);
+    expect(d.customTypes).toEqual([]);
   });
 });
 

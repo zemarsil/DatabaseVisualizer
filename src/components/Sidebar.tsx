@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { PanelLeftClose, Plus, Search, StickyNote } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { paletteHue } from '@/lib/palette';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
 export function Sidebar() {
   const tables = useStore((s) => s.diagram.tables);
@@ -13,6 +14,7 @@ export function Sidebar() {
   const setSelection = useStore((s) => s.setSelection);
   const addTable = useStore((s) => s.addTable);
   const setSidebarOpen = useStore((s) => s.setSidebarOpen);
+  const resizePanel = useStore((s) => s.resizePanel);
   const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
@@ -66,8 +68,8 @@ export function Sidebar() {
             {notes.map((n) => (
               <button
                 key={n.id}
-                className={`sidebar__item${selection.noteId === n.id ? ' sidebar__item--active' : ''}`}
-                onClick={() => setSelection({ noteId: n.id, tableIds: [], relationshipId: null })}
+                className={`sidebar__item${selection.noteIds.includes(n.id) ? ' sidebar__item--active' : ''}`}
+                onClick={() => setSelection({ noteIds: [n.id], tableIds: [], relationshipId: null })}
               >
                 <StickyNote size={13} style={{ color: paletteHue(n.color) }} />
                 <span className="sidebar__name muted">{n.text.split('\n')[0] || 'Empty note'}</span>
@@ -76,6 +78,7 @@ export function Sidebar() {
           </>
         )}
       </div>
+      <ResizeHandle orientation="vertical" onResize={(delta) => resizePanel('sidebarW', delta)} />
     </aside>
   );
 }

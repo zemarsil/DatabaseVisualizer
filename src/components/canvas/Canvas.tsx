@@ -6,6 +6,7 @@ import {
   Controls,
   MiniMap,
   ReactFlow,
+  SelectionMode,
   useReactFlow,
   type Connection,
   type Edge,
@@ -16,6 +17,7 @@ import {
 } from '@xyflow/react';
 import { Crosshair, X } from 'lucide-react';
 import { useStore } from '@/store/useStore';
+import type { SelectionChange } from '@/lib/selection';
 import { paletteHue } from '@/lib/palette';
 import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode';
 import { NoteNode, type NoteNodeType } from './NoteNode';
@@ -49,9 +51,9 @@ export function Canvas() {
   const setNodeSize = useStore((s) => s.setNodeSize);
   const setSelection = useStore((s) => s.setSelection);
   const clearSelection = useStore((s) => s.clearSelection);
-  const deleteTables = useStore((s) => s.deleteTables);
-  const deleteNote = useStore((s) => s.deleteNote);
-  const deleteRelationship = useStore((s) => s.deleteRelationship);
+  const applyNodeSelection = useStore((s) => s.applyNodeSelection);
+  const applyEdgeSelection = useStore((s) => s.applyEdgeSelection);
+  const removeElements = useStore((s) => s.removeElements);
   const addRelationship = useStore((s) => s.addRelationship);
   const addTable = useStore((s) => s.addTable);
   const mutate = useStore((s) => s.mutate);
@@ -66,6 +68,25 @@ export function Canvas() {
 
   const { fitView, screenToFlowPosition } = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
+  /*
+   * True while a marquee (shift + drag) is being dragged. React Flow marks every edge
+   * touching a boxed node as selected, and an edge selection replaces the node selection,
+   * so those edge changes have to be dropped or the box loses the group it just picked up.
+   */
+  const boxSelecting = useRef(false);
+
+  useEffect(() => {
+    // onSelectionEnd is skipped when a pointer is cancelled or the window loses focus.
+    const stop = () => void (boxSelecting.current = false);
+    window.addEventListener('pointerup', stop);
+    window.addEventListener('pointercancel', stop);
+    window.addEventListener('blur', stop);
+    return () => {
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      window.removeEventListener('blur', stop);
+    };
+  }, []);
 
   const tableMap = useMemo(() => new Map(diagram.tables.map((t) => [t.id, t])), [diagram.tables]);
   const fkColumnsByTable = useMemo(() => {
@@ -128,7 +149,7 @@ export function Canvas() {
       width: n.width,
       height: n.height,
       data: { note: n, dimmed: tracing },
-      selected: selection.noteId === n.id,
+      selected: selection.noteIds.includes(n.id),
       measured: nodeSizes[n.id],
     }));
     return [...noteNodes, ...tableNodes];
@@ -136,7 +157,7 @@ export function Canvas() {
     diagram.tables,
     diagram.notes,
     selection.tableIds,
-    selection.noteId,
+    selection.noteIds,
     nodeSizes,
     trace.result,
     trace.picking,
@@ -178,14 +199,12 @@ export function Canvas() {
 
   /* ---------- change handlers ---------- */
 
+  const noteIds = useMemo(() => new Set(diagram.notes.map((n) => n.id)), [diagram.notes]);
+
   const onNodesChange = useCallback(
     (changes: NodeChange<CanvasNode>[]) => {
       const moves: { id: string; position: { x: number; y: number } }[] = [];
-      const removedTables: string[] = [];
-      const removedNotes: string[] = [];
-      let nextTables: string[] | null = null;
-      let nextNote: string | null | undefined;
-      const noteMap = new Set(diagram.notes.map((n) => n.id));
+      const selects: SelectionChange[] = [];
       for (const ch of changes) {
         switch (ch.type) {
           case 'position':
@@ -193,7 +212,7 @@ export function Canvas() {
             break;
           case 'dimensions':
             if (ch.dimensions) {
-              if (ch.setAttributes && noteMap.has(ch.id)) {
+              if (ch.setAttributes && noteIds.has(ch.id)) {
                 const dims = ch.dimensions;
                 mutate(
                   (d) => {
@@ -209,51 +228,42 @@ export function Canvas() {
               setNodeSize(ch.id, ch.dimensions);
             }
             break;
-          case 'select': {
-            if (noteMap.has(ch.id)) {
-              nextNote = ch.selected ? ch.id : nextNote === ch.id ? null : (nextNote ?? null);
-              if (!ch.selected && selection.noteId === ch.id) nextNote = null;
-            } else {
-              if (nextTables === null) nextTables = [...selection.tableIds];
-              if (ch.selected && !nextTables.includes(ch.id)) nextTables.push(ch.id);
-              if (!ch.selected) nextTables = nextTables.filter((x) => x !== ch.id);
-            }
+          case 'select':
+            selects.push({ id: ch.id, selected: ch.selected });
             break;
-          }
-          case 'remove':
-            if (noteMap.has(ch.id)) removedNotes.push(ch.id);
-            else removedTables.push(ch.id);
-            break;
+          // 'remove' is handled in onDelete so a group delete is a single undo step.
           default:
             break;
         }
       }
       if (moves.length) moveItems(moves);
-      if (nextTables !== null || nextNote !== undefined) {
-        const patch: Partial<typeof selection> = {};
-        if (nextTables !== null) patch.tableIds = nextTables;
-        if (nextNote !== undefined) patch.noteId = nextNote;
-        if ((nextTables && nextTables.length) || nextNote) patch.relationshipId = null;
-        setSelection(patch);
-      }
-      if (removedTables.length) deleteTables(removedTables);
-      for (const id of removedNotes) deleteNote(id);
+      if (selects.length) applyNodeSelection(selects, (id) => noteIds.has(id));
     },
-    [diagram.notes, selection, moveItems, mutate, setNodeSize, setSelection, deleteTables, deleteNote],
+    [noteIds, moveItems, mutate, setNodeSize, applyNodeSelection],
   );
 
   const onEdgesChange = useCallback(
     (changes: EdgeChange<Edge>[]) => {
+      // Marquee-driven edge selection is ignored: see the boxSelecting ref above.
+      if (boxSelecting.current) return;
+      const selects: SelectionChange[] = [];
       for (const ch of changes) {
-        if (ch.type === 'select') {
-          if (ch.selected) setSelection({ relationshipId: ch.id, tableIds: [], noteId: null });
-          else if (selection.relationshipId === ch.id) setSelection({ relationshipId: null });
-        } else if (ch.type === 'remove') {
-          if (diagram.relationships.some((r) => r.id === ch.id)) deleteRelationship(ch.id);
-        }
+        if (ch.type === 'select') selects.push({ id: ch.id, selected: ch.selected });
       }
+      if (selects.length) applyEdgeSelection(selects);
     },
-    [selection.relationshipId, diagram.relationships, setSelection, deleteRelationship],
+    [applyEdgeSelection],
+  );
+
+  const onDelete = useCallback(
+    ({ nodes: goneNodes, edges: goneEdges }: { nodes: CanvasNode[]; edges: Edge[] }) => {
+      removeElements({
+        tableIds: goneNodes.filter((n) => n.type === 'table').map((n) => n.id),
+        noteIds: goneNodes.filter((n) => n.type === 'note').map((n) => n.id),
+        relationshipIds: goneEdges.map((e) => e.id),
+      });
+    },
+    [removeElements],
   );
 
   const isValidConnection = useCallback<IsValidConnection<Edge>>(
@@ -280,7 +290,7 @@ export function Canvas() {
         );
         if (dup) {
           toast('info', 'That foreign key already exists.');
-          setSelection({ relationshipId: dup.id, tableIds: [], noteId: null });
+          setSelection({ relationshipId: dup.id, tableIds: [], noteIds: [] });
           return;
         }
         addRelationship({ kind: 'fk', sourceTableId: c.source, sourceColumnIds: [a.columnId], targetTableId: c.target, targetColumnIds: [b.columnId] });
@@ -359,6 +369,7 @@ export function Canvas() {
         edgeTypes={edgeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
+        onDelete={onDelete}
         onConnect={onConnect}
         isValidConnection={isValidConnection}
         onNodeClick={onNodeClick}
@@ -367,12 +378,16 @@ export function Canvas() {
         onNodeDragStop={endDrag}
         onSelectionDragStart={beginDrag}
         onSelectionDragStop={endDrag}
+        onSelectionStart={() => void (boxSelecting.current = true)}
+        onSelectionEnd={() => void (boxSelecting.current = false)}
         onPaneClick={() => clearSelection()}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={24}
         deleteKeyCode={['Backspace', 'Delete']}
         multiSelectionKeyCode={['Shift', 'Meta', 'Control']}
         selectionKeyCode="Shift"
+        // Touching the box is enough; requiring full containment makes the marquee fussy.
+        selectionMode={SelectionMode.Partial}
         zoomOnDoubleClick={false}
         minZoom={0.08}
         maxZoom={2.5}
