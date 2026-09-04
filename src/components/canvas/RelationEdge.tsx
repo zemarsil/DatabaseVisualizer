@@ -99,8 +99,8 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   const targetNode = useInternalNode(target);
   if (!sourceNode || !targetNode || !data) return null;
 
-  const sTable = (sourceNode.data as { table?: { columns: { name: string; type: string }[] } }).table;
-  const tTable = (targetNode.data as { table?: { columns: { name: string; type: string }[] } }).table;
+  const sTable = (sourceNode.data as { table?: { name: string; columns: { name: string; type: string }[] } }).table;
+  const tTable = (targetNode.data as { table?: { name: string; columns: { name: string; type: string }[] } }).table;
   const sEst = estimateNodeSize(sTable?.columns ?? []);
   const tEst = estimateNodeSize(tTable?.columns ?? []);
   const s = {
@@ -138,6 +138,15 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   else if (hasQuery) labelClasses.push('edge-label--query');
   if (data.dimmed) labelClasses.push('edge-label--dim');
 
+  // Reverse-direction label (target -> source), e.g. "used by" paired with a "has" forward label.
+  const showInverseLabel = Boolean(r.inverseName && r.inverseName.trim()) && (selected || data.traced || !data.dimmed);
+  const inverseLabelX = g.labelX + (g.tx - g.labelX) * 0.65;
+  const inverseLabelY = g.labelY + (g.ty - g.labelY) * 0.65;
+  const inverseLabelClasses = ['edge-label', 'edge-label--inverse'];
+  if (selected) inverseLabelClasses.push('edge-label--selected');
+  else if (data.traced) inverseLabelClasses.push('edge-label--trace');
+  if (data.dimmed) inverseLabelClasses.push('edge-label--dim');
+
   return (
     <>
       <BaseEdge
@@ -167,6 +176,17 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
           >
             {isFlow ? <GitBranch /> : hasQuery ? <Code2 /> : null}
             <span>{labelText}</span>
+          </div>
+        </EdgeLabelRenderer>
+      )}
+      {showInverseLabel && (
+        <EdgeLabelRenderer>
+          <div
+            className={inverseLabelClasses.join(' ')}
+            style={{ transform: `translate(-50%, -50%) translate(${inverseLabelX}px, ${inverseLabelY}px)` }}
+            title={tTable && sTable ? `${tTable.name} ${r.inverseName} ${sTable.name}` : undefined}
+          >
+            <span>{r.inverseName}</span>
           </div>
         </EdgeLabelRenderer>
       )}

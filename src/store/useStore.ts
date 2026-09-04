@@ -410,6 +410,7 @@ export const useStore = create<Store>()(
           if (!r) return;
           [r.sourceTableId, r.targetTableId] = [r.targetTableId, r.sourceTableId];
           [r.sourceColumnIds, r.targetColumnIds] = [r.targetColumnIds, r.sourceColumnIds];
+          [r.name, r.inverseName] = [r.inverseName, r.name];
         }),
 
       /* ---------------- notes ---------------- */

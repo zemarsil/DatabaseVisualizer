@@ -72,8 +72,10 @@ export interface Relationship {
   /** Referenced (parent / "one") table. */
   targetTableId: string;
   targetColumnIds: string[];
-  /** Constraint name for FKs; free label for flows. */
+  /** Constraint name for FKs; free label for flows. Read source -> target, e.g. "has". */
   name?: string;
+  /** Optional reverse-direction label, read target -> source, e.g. "used by" when name is "has". */
+  inverseName?: string;
   onDelete?: ReferentialAction;
   onUpdate?: ReferentialAction;
   /** Optional SQL that explains how data crosses this connection. */

@@ -1022,6 +1022,13 @@ a {
 .edge-label--dim {
   opacity: 0.2;
 }
+.edge-label--inverse {
+  height: 17px;
+  padding: 0 6px;
+  font-size: 9.5px;
+  font-style: italic;
+  opacity: 0.85;
+}
 
 /* ------------------------------------------------------------------ */
 /* Inspector                                                           */

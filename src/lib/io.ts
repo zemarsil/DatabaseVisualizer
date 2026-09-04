@@ -87,6 +87,7 @@ export function parseDiagramFile(text: string): Diagram {
       sourceColumnIds: strArray(r.sourceColumnIds),
       targetColumnIds: strArray(r.targetColumnIds),
       name: typeof r.name === 'string' && r.name ? r.name : undefined,
+      inverseName: typeof r.inverseName === 'string' && r.inverseName ? r.inverseName : undefined,
       onDelete: (r.onDelete as Relationship['onDelete']) ?? 'NO ACTION',
       onUpdate: (r.onUpdate as Relationship['onUpdate']) ?? 'NO ACTION',
       query: typeof r.query === 'string' && r.query ? r.query : undefined,

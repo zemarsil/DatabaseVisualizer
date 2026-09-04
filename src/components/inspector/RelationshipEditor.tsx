@@ -104,8 +104,20 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
       </div>
 
       <div className="field">
-        <span className="field__label">{r.kind === 'fk' ? 'Constraint name' : 'Label'}</span>
-        <input className="input input--sm" value={r.name ?? ''} onChange={(e) => patch({ name: e.target.value || undefined })} placeholder={r.kind === 'fk' ? `fk_${src.name}_${tgt.name}` : 'e.g. nightly rollup'} spellCheck={false} />
+        <span className="field__label">{r.kind === 'fk' ? 'Constraint name' : `Label (${src.name} → ${tgt.name})`}</span>
+        <input className="input input--sm" value={r.name ?? ''} onChange={(e) => patch({ name: e.target.value || undefined })} placeholder={r.kind === 'fk' ? `fk_${src.name}_${tgt.name}` : 'e.g. has'} spellCheck={false} />
+      </div>
+
+      <div className="field">
+        <span className="field__label">Inverse label ({tgt.name} → {src.name})</span>
+        <input
+          className="input input--sm"
+          value={r.inverseName ?? ''}
+          onChange={(e) => patch({ inverseName: e.target.value || undefined })}
+          placeholder="e.g. used by"
+          spellCheck={false}
+        />
+        <span className="field__hint">Shown on the edge when you're looking from {tgt.name}'s side, e.g. "{src.name} has {tgt.name}" and "{tgt.name} used by {src.name}".</span>
       </div>
 
       {r.kind === 'fk' && (
