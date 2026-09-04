@@ -8,6 +8,7 @@ import { layoutDiagram } from '../src/lib/layout';
 import { parseDiagramFile, serializeDiagram } from '../src/lib/io';
 import { buildJoinQuery, findPath } from '../src/lib/trace';
 import { sampleDiagram } from '../src/lib/sample';
+import { useStore } from '../src/store/useStore';
 
 const OWN = `
 CREATE TABLE customers (
@@ -188,6 +189,39 @@ describe('external groups and SQL', () => {
     expect(externalTableIds(d).size).toBe(2);
     d.groups[0].external = false;
     expect(externalTableIds(d).size).toBe(0);
+  });
+});
+
+describe('importing into a group', () => {
+  it('does not adopt the custom types of a database it will not create', () => {
+    const d = emptyDiagram('postgresql', 'host');
+    useStore.setState({ diagram: d, past: [], future: [] });
+    const imported = importSql(`CREATE TYPE crm_tier AS ENUM ('free', 'paid');\nCREATE TABLE crm_accounts (account_id INTEGER PRIMARY KEY, tier crm_tier);`, 'postgresql');
+    expect(imported.customTypes).toHaveLength(1);
+
+    useStore.getState().importTables(imported.tables, imported.relationships, 'replace', {
+      customTypes: imported.customTypes,
+      group: { name: 'CRM', external: true },
+    });
+    const after = useStore.getState().diagram;
+    expect(after.groups).toHaveLength(1);
+    expect(after.tables.every((t) => t.groupId === after.groups[0].id)).toBe(true);
+    // the column keeps its type text (the parser normalises the spelling), but nothing creates the type
+    expect(after.tables[0].columns.find((c) => c.name === 'tier')?.type.toLowerCase()).toBe('crm_tier');
+    expect(after.customTypes).toEqual([]);
+    expect(generateSchema(after).statements.join('\n')).not.toContain('CREATE TYPE');
+  });
+
+  it('keeps them when the imported group is part of the schema being designed', () => {
+    const imported = importSql(`CREATE TYPE mood AS ENUM ('ok');\nCREATE TABLE t (id INTEGER PRIMARY KEY, m mood);`, 'postgresql');
+    useStore.setState({ diagram: emptyDiagram('postgresql', 'host'), past: [], future: [] });
+    useStore.getState().importTables(imported.tables, imported.relationships, 'replace', {
+      customTypes: imported.customTypes,
+      group: { name: 'Staging', external: false },
+    });
+    const after = useStore.getState().diagram;
+    expect(after.customTypes).toHaveLength(1);
+    expect(generateSchema(after).statements.join('\n')).toContain("CREATE TYPE mood AS ENUM ('ok');");
   });
 });
 

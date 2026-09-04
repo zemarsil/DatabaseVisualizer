@@ -41,6 +41,35 @@ export interface Index {
   unique: boolean;
 }
 
+export type CustomTypeKind = 'enum' | 'composite';
+
+export interface CustomTypeField {
+  id: string;
+  name: string;
+  /** Raw SQL type, same convention as Column.type. Can itself be another custom type's name. */
+  type: string;
+  comment?: string;
+}
+
+/**
+ * A user-defined type, scoped to the whole diagram so it can be reused across
+ * tables/columns the way a real CREATE TYPE would be. Two kinds:
+ *  - enum: a fixed set of string values (Postgres: CREATE TYPE ... AS ENUM;
+ *    MariaDB has no named enum type, so it's inlined as ENUM(...) per column).
+ *  - composite: named sub-fields, like a struct (Postgres: CREATE TYPE ... AS
+ *    (...); MariaDB has no equivalent and falls back to JSON).
+ */
+export interface CustomType {
+  id: string;
+  name: string;
+  kind: CustomTypeKind;
+  /** enum kind only, ordered. */
+  values?: string[];
+  /** composite kind only. */
+  fields?: CustomTypeField[];
+  comment?: string;
+}
+
 export interface Table {
   id: string;
   name: string;
@@ -127,6 +156,7 @@ export interface Diagram {
   relationships: Relationship[];
   notes: Note[];
   groups: Group[];
+  customTypes: CustomType[];
   /** Saved viewport, purely cosmetic. */
   viewport?: { x: number; y: number; zoom: number };
 }

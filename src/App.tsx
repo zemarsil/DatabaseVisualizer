@@ -18,6 +18,7 @@ export default function App() {
   const theme = useStore((s) => s.theme);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const inspectorOpen = useStore((s) => s.inspectorOpen);
+  const panelSizes = useStore((s) => s.panelSizes);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -104,8 +105,14 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const panelStyle = {
+    '--sidebar-w': `${panelSizes.sidebarW}px`,
+    '--inspector-w': `${panelSizes.inspectorW}px`,
+    '--drawer-h': `${panelSizes.drawerH}px`,
+  } as React.CSSProperties;
+
   return (
-    <div className="app">
+    <div className="app" style={panelStyle}>
       <TopBar />
       <div className="app__body">
         {sidebarOpen ? <Sidebar /> : <div />}

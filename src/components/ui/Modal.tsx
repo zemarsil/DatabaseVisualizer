@@ -134,7 +134,11 @@ function HelpContent() {
         <span>
           <K k="Shift" /> + click
         </span>
-        <span>Select several tables (then Trace connects the first two)</span>
+        <span>Add a table or note to the selection (then Trace connects the first two tables)</span>
+        <span>
+          <K k="Shift" /> + drag
+        </span>
+        <span>Draw a box to select everything it touches, then drag the group to move it</span>
         <span>
           <K k="Delete" />
         </span>

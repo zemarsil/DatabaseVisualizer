@@ -102,7 +102,7 @@ export function GroupEditor({ group }: { group: Group }) {
         <div className="section__head">
           <span className="section__title">Tables ({members.length})</span>
           {members.length > 0 && (
-            <button className="btn btn--sm" onClick={() => setSelection({ tableIds: members.map((t) => t.id), relationshipId: null, noteId: null, groupId: null })}>
+            <button className="btn btn--sm" onClick={() => setSelection({ tableIds: members.map((t) => t.id), relationshipId: null, noteIds: [], groupId: null })}>
               Select all
             </button>
           )}
@@ -114,7 +114,7 @@ export function GroupEditor({ group }: { group: Group }) {
               className="grow row"
               style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, textAlign: 'left' }}
               onClick={() => {
-                setSelection({ tableIds: [t.id], relationshipId: null, noteId: null, groupId: null });
+                setSelection({ tableIds: [t.id], relationshipId: null, noteIds: [], groupId: null });
                 focusTable(t.id);
               }}
             >

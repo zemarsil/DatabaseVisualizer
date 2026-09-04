@@ -223,18 +223,16 @@ export function DatabasePanel() {
         toast('info', 'The database has no tables.');
         return;
       }
-      importTables(
-        converted.tables,
-        converted.relationships,
-        importMode,
-        importGroup
+      importTables(converted.tables, converted.relationships, importMode, {
+        customTypes: converted.customTypes,
+        group: importGroup
           ? {
               name: importGroupName.trim() || conn.database || 'Imported database',
               external: importGroupExternal,
               note: `${conn.dialect === 'mariadb' ? 'MariaDB' : 'PostgreSQL'} ${conn.database} on ${conn.host}:${conn.port}`,
             }
           : undefined,
-      );
+      });
         toast('success', `Imported ${converted.tables.length} tables from ${res.serverVersion.split(' ').slice(0, 2).join(' ')}.`);
       if (converted.warnings.length) toast('info', converted.warnings.slice(0, 3).join(' '));
     } catch (e) {

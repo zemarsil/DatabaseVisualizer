@@ -76,7 +76,7 @@ export function TracePanel() {
                   className="trace-path__table"
                   style={{ cursor: 'pointer' }}
                   onClick={() => {
-                    setSelection({ tableIds: [id], relationshipId: null, noteId: null });
+                    setSelection({ tableIds: [id], relationshipId: null, noteIds: [] });
                     focusTable(id);
                   }}
                 >
@@ -93,7 +93,7 @@ export function TracePanel() {
               const pairs = r.sourceColumnIds.map((sid, k) => `${name(r.sourceTableId)}.${colName(r.sourceTableId, sid)} = ${name(r.targetTableId)}.${colName(r.targetTableId, r.targetColumnIds[k])}`);
               return (
                 <li key={i}>
-                  <button className="chip" style={{ marginRight: 6 }} onClick={() => setSelection({ relationshipId: r.id, tableIds: [], noteId: null })}>
+                  <button className="chip" style={{ marginRight: 6 }} onClick={() => setSelection({ relationshipId: r.id, tableIds: [], noteIds: [] })}>
                     {r.kind === 'fk' ? 'FK' : 'flow'}
                   </button>
                   {r.kind === 'fk' ? pairs.join(' AND ') : `${h.from.name} → ${h.to.name}${r.name ? ` (${r.name})` : ''}`}
