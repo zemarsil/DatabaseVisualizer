@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { buildJoinQuery, findPath, reachableTables } from '../src/lib/trace';
+import { describeRelationship, normalizeVerb, relationshipVerb, verbsForKind } from '../src/shared/types';
+import { buildJoinQuery, describeHop, findPath, reachableTables } from '../src/lib/trace';
 import { layoutDiagram } from '../src/lib/layout';
 import { parseDiagramFile, serializeDiagram } from '../src/lib/io';
 import { sampleDiagram } from '../src/lib/sample';
-import { pruneRelationships } from '../src/lib/model';
+import { createRelationship, pruneRelationships } from '../src/lib/model';
 
 describe('findPath', () => {
   it('finds the shortest chain between two tables and builds a join', () => {
@@ -29,6 +30,22 @@ describe('findPath', () => {
     expect(findPath(d, a.id, a.id)?.tableIds).toEqual([a.id]);
   });
 
+  it('annotates hops the database cannot join instead of inventing a condition', () => {
+    const d = sampleDiagram();
+    const orders = d.tables.find((t) => t.name === 'orders')!;
+    const orderItems = d.tables.find((t) => t.name === 'order_items')!;
+    const embed = d.relationships.find((r) => r.kind === 'embed')!;
+    // isolate the serialized link so the trace has to walk it
+    d.relationships = [embed];
+    const res = findPath(d, orders.id, orderItems.id)!;
+    expect(res.hops).toHaveLength(1);
+    expect(describeHop(d, res.hops[0])).toContain('orders serializes order_items');
+    const q = buildJoinQuery(d, res);
+    expect(q).toContain('CROSS JOIN order_items AS t1');
+    expect(q).toContain('stored in orders.items_snapshot');
+    expect(q).not.toContain('JOIN order_items AS t1 ON');
+  });
+
   it('follows data-flow links too', () => {
     const d = sampleDiagram();
     const addresses = d.tables.find((t) => t.name === 'addresses')!;
@@ -36,6 +53,28 @@ describe('findPath', () => {
     const res = findPath(d, addresses.id, daily.id)!;
     expect(res).not.toBeNull();
     expect(reachableTables(d, addresses.id).size).toBe(d.tables.length);
+  });
+});
+
+describe('relationship verbs', () => {
+  it('reads a connection in both directions', () => {
+    const r = createRelationship({ kind: 'fk', verb: 'part-of', sourceTableId: 'a', sourceColumnIds: [], targetTableId: 'b', targetColumnIds: [] });
+    expect(describeRelationship(r, 'order_items', 'orders', 'forward')).toBe('order_items is part of orders');
+    expect(describeRelationship(r, 'order_items', 'orders', 'inverse')).toBe('orders contains order_items');
+    const owned = { kind: 'fk', verb: 'belongs-to' } as const;
+    expect(describeRelationship(owned, 'addresses', 'customers', 'inverse')).toBe('customers has addresses');
+    const dep = { kind: 'dependency', verb: 'uses' } as const;
+    expect(describeRelationship(dep, 'report', 'orders', 'inverse')).toBe('orders used by report');
+  });
+
+  it('falls back to the kind default and drops verbs that do not fit the kind', () => {
+    expect(relationshipVerb({ kind: 'fk' }).id).toBe('references');
+    expect(relationshipVerb({ kind: 'embed' }).id).toBe('serializes');
+    // "feeds" only describes a data flow, so a foreign key carrying it reads as a plain reference
+    expect(normalizeVerb('fk', 'feeds')).toBeUndefined();
+    expect(relationshipVerb({ kind: 'fk', verb: 'feeds' }).id).toBe('references');
+    expect(normalizeVerb('dependency', 'uses')).toBe('uses');
+    expect(verbsForKind('flow').map((v) => v.id)).toEqual(['feeds', 'mirrors']);
   });
 });
 
@@ -66,6 +105,33 @@ describe('diagram file round-trip', () => {
     expect(() => parseDiagramFile('{"foo": 1}')).toThrow(/tables/);
   });
 
+  it('keeps the kind and verb of every connection through a round-trip', () => {
+    const d = sampleDiagram();
+    const back = parseDiagramFile(serializeDiagram(d));
+    expect(back.relationships.map((r) => r.kind).sort()).toEqual(d.relationships.map((r) => r.kind).sort());
+    const embed = back.relationships.find((r) => r.kind === 'embed')!;
+    expect(embed.verb).toBe('serializes');
+    expect(back.relationships.find((r) => r.verb === 'part-of')).toBeDefined();
+  });
+
+  it('reads files written before kinds and verbs existed', () => {
+    const d = parseDiagramFile(
+      JSON.stringify({
+        tables: [
+          { id: 't1', name: 'a', columns: [{ id: 'c1', name: 'id' }] },
+          { id: 't2', name: 'b', columns: [{ id: 'c2', name: 'a_id' }] },
+        ],
+        relationships: [
+          { id: 'r1', sourceTableId: 't2', sourceColumnIds: ['c2'], targetTableId: 't1', targetColumnIds: ['c1'] },
+          { id: 'r2', kind: 'wormhole', sourceTableId: 't2', sourceColumnIds: ['c2'], targetTableId: 't1', targetColumnIds: ['c1'], verb: 'nibbles' },
+        ],
+      }),
+    );
+    expect(d.relationships.map((r) => r.kind)).toEqual(['fk', 'fk']);
+    expect(d.relationships.every((r) => r.verb === undefined)).toBe(true);
+    expect(relationshipVerb(d.relationships[0]).forward).toBe('references');
+  });
+
   it('tolerates missing optional fields', () => {
     const d = parseDiagramFile(JSON.stringify({ tables: [{ id: 't1', name: 'x', columns: [{ id: 'c1', name: 'id' }] }] }));
     expect(d.dialect).toBe('postgresql');
@@ -83,5 +149,20 @@ describe('pruneRelationships', () => {
     const pruned = pruneRelationships(d);
     expect(pruned.relationships.length).toBeLessThan(before);
     expect(pruned.relationships.every((r) => pruned.tables.some((t) => t.id === r.sourceTableId))).toBe(true);
+  });
+
+  it('keeps table-to-table kinds when their anchor column is deleted, but drops a foreign key', () => {
+    const d = sampleDiagram();
+    const orders = d.tables.find((t) => t.name === 'orders')!;
+    // the serialized copy is anchored to items_snapshot; the FK needs customer_id
+    orders.columns = orders.columns.filter((c) => c.name !== 'items_snapshot' && c.name !== 'customer_id');
+    const fksFromOrders = (rels: typeof d.relationships) => rels.filter((r) => r.kind === 'fk' && r.sourceTableId === orders.id).length;
+    expect(fksFromOrders(d.relationships)).toBe(2);
+    const pruned = pruneRelationships(d);
+    // the foreign key lost its column and goes; the serialized copy stays, just unanchored
+    expect(fksFromOrders(pruned.relationships)).toBe(1);
+    const embed = pruned.relationships.find((r) => r.kind === 'embed')!;
+    expect(embed).toBeDefined();
+    expect(embed.sourceColumnIds).toEqual([]);
   });
 });

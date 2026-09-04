@@ -2,7 +2,8 @@
 
 A locally hosted web app for designing relational schemas visually.
 
-- Draw tables and their connections on a pan/zoom canvas (crow's-foot foreign keys, dashed data-flow links).
+- Draw tables and their connections on a pan/zoom canvas: crow's-foot foreign keys plus three kinds the database cannot enforce — data flows, serialized copies, and plain dependencies.
+- Say how a connection *reads*: "orders **contains** order_items", "customers **has** addresses", "orders **uses** addresses". The verb is documentation, so it never changes the DDL.
 - Tag any connection with the query that moves data across it, so the diagram documents *how* one table feeds another, not just that they are related.
 - Generate the `CREATE TABLE` script for **PostgreSQL** or **MariaDB** from the diagram, or paste DDL (including `pg_dump` / `mysqldump` output) and get the diagram back.
 - **Detangle**: a layered auto-layout that ranks referenced tables before the tables that reference them and minimises edge crossings.
@@ -46,7 +47,8 @@ docker compose up --build
 | Add a table | Double-click the canvas, press `T`, or use the **+ Table** button |
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks |
 | Foreign key | Hover a table and drag the handle beside a column onto a column of another table |
-| Data-flow link | Drag the orange handle in a table header onto another table, then paste the query into **Tagged query** |
+| Any other connection | Drag the orange handle in a table header onto another table, then pick the kind in the inspector (data flow, serialized, dependency) |
+| Change how a connection reads | Select it; **Reads as** offers the verbs that fit its kind and previews the sentence in both directions |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script |
 | See / copy DDL | Bottom drawer → **SQL** (whole schema or the selected table). The table inspector also has a preview |
 | Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace |
@@ -58,6 +60,43 @@ docker compose up --build
 | Docker & database | **Database** button → left column manages containers, right column tests a connection, runs the schema, or reads an existing schema |
 
 Press `?` in the app for the full shortcut list.
+
+## Connection types
+
+A connection has two independent halves. Its **kind** is what the database
+actually does, and it drives everything mechanical — DDL, joins, layout,
+drawing. Its **verb** is how the connection reads in English, and it only
+changes the words.
+
+| Kind | Drawn as | In the script | Means |
+| --- | --- | --- | --- |
+| Foreign key | solid, crow's foot | `FOREIGN KEY … REFERENCES …` | A constraint the database enforces |
+| Data flow | dashed, filled arrow | a comment | Rows in the target are built from the source by a job, rollup, or trigger |
+| Serialized | solid, filled diamond at the container | a comment | The target's rows live encoded inside one column of the source (JSONB, an array, a blob) |
+| Dependency | dotted, open arrow | a comment | The source reads the target through a view, a job, or application code, with nothing enforcing it |
+
+Verbs are always stored source → target, so every one of them also gives you
+the reverse reading for free — which is where the rest of the vocabulary comes
+from:
+
+| You want to say | Pick | Reads back as |
+| --- | --- | --- |
+| `orders` **has** `order_items` | foreign key, *belongs to* (on the child) | order_items belongs to orders |
+| `orders` **contains** `order_items` | foreign key, *is part of* (on the child) | order_items is part of orders |
+| `orders` **uses** `currencies` | foreign key, *uses* | currencies used by orders |
+| `report` **uses** a table with no FK | dependency, *uses* | orders used by report |
+| `line_item` **serialized** into `orders` | serialized, *serializes* (on the container) | line_item serialized into orders |
+| `employees` **extends** `people` | foreign key, *extends* | people extended by employees |
+
+So "has", "contains" and "used by" are not separate connections — they are the
+same edge read from the other end, which is why the inspector shows you both
+sentences before you commit to a direction. "Serialized" is the one that has no
+foreign key behind it at all, so it gets a kind of its own; a dependency covers
+"uses" when nothing in the schema records it.
+
+Only foreign keys become `JOIN` conditions in a trace. The other kinds are
+still walked (a path can cross them) but appear as `CROSS JOIN` plus a comment
+saying why there is nothing to join on.
 
 ## Project layout
 

@@ -120,8 +120,41 @@ describe('generateSchema', () => {
     );
     const out = generateSchema(d);
     expect(out.statements).toHaveLength(2);
-    expect(out.script).toContain('-- src -> dst (rollup)');
+    expect(out.script).toContain('-- [flow] src feeds dst (rollup)');
     expect(out.script).toContain('--   INSERT INTO dst SELECT id FROM src;');
+  });
+
+  it('documents serialized and dependency links without emitting any DDL for them', () => {
+    const d = diagramFrom(`CREATE TABLE orders (id INT PRIMARY KEY, items JSONB); CREATE TABLE line_item (id INT PRIMARY KEY);`, 'postgresql');
+    const orders = d.tables.find((t) => t.name === 'orders')!;
+    const line = d.tables.find((t) => t.name === 'line_item')!;
+    d.relationships.push(
+      createRelationship({
+        kind: 'embed',
+        sourceTableId: orders.id,
+        sourceColumnIds: [orders.columns.find((c) => c.name === 'items')!.id],
+        targetTableId: line.id,
+        targetColumnIds: [],
+      }),
+      createRelationship({ kind: 'dependency', sourceTableId: line.id, sourceColumnIds: [], targetTableId: orders.id, targetColumnIds: [] }),
+    );
+    const out = generateSchema(d);
+    // two CREATE TABLEs and nothing else: neither kind is enforceable
+    expect(out.statements).toHaveLength(2);
+    expect(out.statements.join('\n')).not.toContain('FOREIGN KEY');
+    expect(out.script).toContain('-- [embed] orders serializes line_item in orders.items');
+    expect(out.script).toContain('-- [uses] line_item uses orders');
+    expect(out.script).toContain('documented connections: 2');
+  });
+
+  it('reads a foreign key with the verb it was given', () => {
+    const d = diagramFrom(`CREATE TABLE orders (id INT PRIMARY KEY); CREATE TABLE order_items (order_id INT REFERENCES orders(id));`, 'postgresql');
+    const fk = d.relationships.find((r) => r.kind === 'fk')!;
+    fk.verb = 'part-of';
+    fk.query = 'SELECT * FROM order_items WHERE order_id = $1;';
+    const out = generateSchema(d);
+    expect(out.script).toContain('FOREIGN KEY (order_id) REFERENCES orders (id)');
+    expect(out.script).toContain('-- [FK] order_items is part of orders');
   });
 
   it('generates per-table SQL and drop statements', () => {

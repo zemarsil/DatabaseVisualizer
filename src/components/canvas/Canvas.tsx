@@ -78,6 +78,16 @@ export function Canvas() {
     }
     return m;
   }, [diagram.relationships]);
+  const embedColumnsByTable = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const r of diagram.relationships) {
+      if (r.kind !== 'embed' || !r.sourceColumnIds[0]) continue;
+      const arr = m.get(r.sourceTableId) ?? [];
+      arr.push(r.sourceColumnIds[0]);
+      m.set(r.sourceTableId, arr);
+    }
+    return m;
+  }, [diagram.relationships]);
 
   const tracing = Boolean(trace.result);
   const traceTables = useMemo(() => new Set(trace.result?.tableIds ?? []), [trace.result]);
@@ -99,7 +109,14 @@ export function Canvas() {
         id: t.id,
         type: 'table',
         position: t.position,
-        data: { table: t, fkColumnIds: fkColumnsByTable.get(t.id) ?? [], dimmed: tracing && !traceTables.has(t.id), traceRole: role, picking: trace.picking },
+        data: {
+          table: t,
+          fkColumnIds: fkColumnsByTable.get(t.id) ?? [],
+          embedColumnIds: embedColumnsByTable.get(t.id) ?? [],
+          dimmed: tracing && !traceTables.has(t.id),
+          traceRole: role,
+          picking: trace.picking,
+        },
         selected: selection.tableIds.includes(t.id),
         measured: nodeSizes[t.id],
       };
@@ -115,7 +132,19 @@ export function Canvas() {
       measured: nodeSizes[n.id],
     }));
     return [...noteNodes, ...tableNodes];
-  }, [diagram.tables, diagram.notes, selection.tableIds, selection.noteId, nodeSizes, trace.result, trace.picking, traceTables, tracing, fkColumnsByTable]);
+  }, [
+    diagram.tables,
+    diagram.notes,
+    selection.tableIds,
+    selection.noteId,
+    nodeSizes,
+    trace.result,
+    trace.picking,
+    traceTables,
+    tracing,
+    fkColumnsByTable,
+    embedColumnsByTable,
+  ]);
 
   const edges = useMemo<RelationEdgeType[]>(() => {
     const out: RelationEdgeType[] = [];

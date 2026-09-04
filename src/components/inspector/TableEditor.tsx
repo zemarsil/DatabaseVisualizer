@@ -1,11 +1,20 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Code2, Copy, GitBranch, Link2, Plus, Trash2 } from 'lucide-react';
-import type { Column, Index, Table } from '@shared/types';
+import { ArrowDown, ArrowUp, Braces, ChevronDown, ChevronRight, Code2, Copy, GitBranch, Link2, Plus, Trash2, Waypoints } from 'lucide-react';
+import { verbLabel, type Column, type Index, type RelationshipKind, type Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { PALETTE, paletteHue } from '@/lib/palette';
+import { embeddedColumnIds, foreignKeyColumnIds } from '@/lib/model';
 import { TYPE_SUGGESTIONS } from '@/lib/sql/dialect';
 import { generateTableSql } from '@/lib/sql/generator';
 import { confirmDialog } from '../ui/Modal';
+
+/** Little coloured glyph that matches how the edge is drawn on the canvas. */
+function RelIcon({ kind }: { kind: RelationshipKind }) {
+  if (kind === 'flow') return <GitBranch style={{ color: 'var(--flow)' }} />;
+  if (kind === 'embed') return <Braces style={{ color: 'var(--embed)' }} />;
+  if (kind === 'dependency') return <Waypoints style={{ color: 'var(--dep)' }} />;
+  return <Link2 style={{ color: 'var(--accent)' }} />;
+}
 
 function FlagButton({ on, label, title, className, onClick }: { on: boolean; label: string; title: string; className?: string; onClick: () => void }) {
   return (
@@ -15,7 +24,7 @@ function FlagButton({ on, label, title, className, onClick }: { on: boolean; lab
   );
 }
 
-function ColumnRow({ table, column, index, fk }: { table: Table; column: Column; index: number; fk: boolean }) {
+function ColumnRow({ table, column, index, fk, embed }: { table: Table; column: Column; index: number; fk: boolean; embed: boolean }) {
   const updateColumn = useStore((s) => s.updateColumn);
   const deleteColumn = useStore((s) => s.deleteColumn);
   const moveColumn = useStore((s) => s.moveColumn);
@@ -31,8 +40,8 @@ function ColumnRow({ table, column, index, fk }: { table: Table; column: Column;
         onChange={(e) => patch({ name: e.target.value })}
         placeholder="column"
         spellCheck={false}
-        title={fk ? 'Referenced by a foreign key' : undefined}
-        style={fk ? { borderColor: 'var(--accent)' } : undefined}
+        title={fk ? 'Referenced by a foreign key' : embed ? 'Holds another table serialized' : undefined}
+        style={fk ? { borderColor: 'var(--accent)' } : embed ? { borderColor: 'var(--embed)' } : undefined}
       />
       <input
         className="input input--sm input--mono"
@@ -123,11 +132,8 @@ export function TableEditor({ table }: { table: Table }) {
   const toast = useStore((s) => s.toast);
   const [showSql, setShowSql] = useState(false);
 
-  const fkColumns = useMemo(() => {
-    const ids = new Set<string>();
-    for (const r of diagram.relationships) if (r.kind === 'fk' && r.sourceTableId === table.id) r.sourceColumnIds.forEach((c) => ids.add(c));
-    return ids;
-  }, [diagram.relationships, table.id]);
+  const fkColumns = useMemo(() => foreignKeyColumnIds(diagram, table.id), [diagram, table.id]);
+  const embedColumns = useMemo(() => embeddedColumnIds(diagram, table.id), [diagram, table.id]);
 
   const relationships = useMemo(() => diagram.relationships.filter((r) => r.sourceTableId === table.id || r.targetTableId === table.id), [diagram.relationships, table.id]);
   const tableName = (id: string) => diagram.tables.find((t) => t.id === id)?.name ?? '?';
@@ -183,7 +189,7 @@ export function TableEditor({ table }: { table: Table }) {
         </div>
         <div className="col-editor">
           {table.columns.map((c, i) => (
-            <ColumnRow key={c.id} table={table} column={c} index={i} fk={fkColumns.has(c.id)} />
+            <ColumnRow key={c.id} table={table} column={c} index={i} fk={fkColumns.has(c.id)} embed={embedColumns.has(c.id)} />
           ))}
           {table.columns.length === 0 && <div className="faint small">No columns yet.</div>}
         </div>
@@ -237,8 +243,8 @@ export function TableEditor({ table }: { table: Table }) {
           const other = tableName(outgoing ? r.targetTableId : r.sourceTableId);
           return (
             <button key={r.id} className="rel-item" onClick={() => setSelection({ relationshipId: r.id, tableIds: [], noteId: null })}>
-              {r.kind === 'fk' ? <Link2 style={{ color: 'var(--accent)' }} /> : <GitBranch style={{ color: 'var(--flow)' }} />}
-              <span className="rel-item__arrow">{outgoing ? (r.kind === 'fk' ? 'references' : 'feeds') : r.kind === 'fk' ? 'referenced by' : 'fed by'}</span>
+              <RelIcon kind={r.kind} />
+              <span className="rel-item__arrow">{verbLabel(r, outgoing ? 'forward' : 'inverse')}</span>
               <span className="grow" style={{ fontWeight: 600 }}>
                 {other}
               </span>

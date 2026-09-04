@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
 import { ArrowRight, Copy, Crosshair, Route, X } from 'lucide-react';
+import { kindMeta } from '@shared/types';
 import { useStore } from '@/store/useStore';
-import { buildJoinQuery } from '@/lib/trace';
+import { buildJoinQuery, describeHop } from '@/lib/trace';
 
 export function TracePanel() {
   const diagram = useStore((s) => s.diagram);
@@ -55,8 +56,8 @@ export function TracePanel() {
           </button>
         </div>
         <div className="small muted">
-          Finds the shortest chain of foreign keys and data-flow links between two tables (direction is ignored). Tables and edges off the path are dimmed on
-          the canvas until you clear the trace.
+          Finds the shortest chain of connections between two tables of any kind (direction is ignored). Only foreign keys become JOIN conditions; the other
+          kinds are noted as comments. Tables and edges off the path are dimmed on the canvas until you clear the trace.
         </div>
         {trace.searched && !trace.result && trace.fromId && trace.toId && (
           <div className="badge badge--danger" style={{ marginTop: 10, height: 'auto', padding: '6px 10px' }}>
@@ -68,7 +69,7 @@ export function TracePanel() {
             {trace.result.tableIds.map((id, i) => (
               <span key={id} className="row" style={{ gap: 6 }}>
                 {i > 0 && (
-                  <span className="trace-path__hop" title={trace.result!.hops[i - 1].relationship.kind === 'fk' ? 'foreign key' : 'data flow'}>
+                  <span className="trace-path__hop" title={describeHop(diagram, trace.result!.hops[i - 1])}>
                     <ArrowRight />
                   </span>
                 )}
@@ -94,9 +95,9 @@ export function TracePanel() {
               return (
                 <li key={i}>
                   <button className="chip" style={{ marginRight: 6 }} onClick={() => setSelection({ relationshipId: r.id, tableIds: [], noteId: null })}>
-                    {r.kind === 'fk' ? 'FK' : 'flow'}
+                    {kindMeta(r.kind).short}
                   </button>
-                  {r.kind === 'fk' ? pairs.join(' AND ') : `${h.from.name} → ${h.to.name}${r.name ? ` (${r.name})` : ''}`}
+                  {r.kind === 'fk' ? pairs.join(' AND ') : describeHop(diagram, h)}
                   {r.query && <span className="badge badge--accent" style={{ marginLeft: 6 }}>tagged query</span>}
                 </li>
               );

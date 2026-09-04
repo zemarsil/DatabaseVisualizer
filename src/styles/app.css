@@ -24,6 +24,8 @@
   --danger: #f7768e;
   --danger-soft: rgba(247, 118, 142, 0.14);
   --flow: #e0af68;
+  --embed: #bb9af7;
+  --dep: #7dcfff;
   --trace: #4fd1c5;
   --trace-soft: rgba(79, 209, 197, 0.18);
   --canvas-bg: #0c0e14;
@@ -63,6 +65,8 @@
   --danger: #d94b63;
   --danger-soft: rgba(217, 75, 99, 0.12);
   --flow: #c8891a;
+  --embed: #7048c4;
+  --dep: #0f7ea8;
   --trace: #109e91;
   --trace-soft: rgba(16, 158, 145, 0.16);
   --canvas-bg: #eaedf3;
@@ -868,6 +872,9 @@ a {
 .col-icon--fk {
   color: var(--accent);
 }
+.col-icon--embed {
+  color: var(--embed);
+}
 .col-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1009,6 +1016,14 @@ a {
 .edge-label--flow {
   color: var(--flow);
   border-color: var(--flow);
+}
+.edge-label--embed {
+  color: var(--embed);
+  border-color: var(--embed);
+}
+.edge-label--dependency {
+  color: var(--dep);
+  border-color: var(--dep);
 }
 .edge-label--selected {
   background: var(--accent);
@@ -1240,6 +1255,74 @@ a {
   width: 13px;
   height: 13px;
   flex-shrink: 0;
+}
+.kind-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.kind-grid .btn {
+  justify-content: flex-start;
+}
+.kind-swatch {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  background: var(--edge-strong);
+}
+.kind-swatch--flow {
+  background: var(--flow);
+}
+.kind-swatch--embed {
+  background: var(--embed);
+}
+.kind-swatch--dependency {
+  background: var(--dep);
+}
+.verb-preview {
+  margin: 6px 0 2px;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg-elev);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.legend {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.legend__row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.kind-glyph {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.legend__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.legend__tag {
+  padding: 0 5px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-faint);
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.legend__verbs {
+  font-size: 11px;
+  color: var(--text-faint);
 }
 .pair-row {
   display: grid;

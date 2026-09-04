@@ -1,4 +1,4 @@
-import type { Column, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
+import { kindMeta, type Column, type Diagram, type Dialect, type Index, type Note, type Relationship, type Table } from '@shared/types';
 import { newId } from './ids';
 import { colorForName } from './palette';
 
@@ -86,6 +86,15 @@ export function foreignKeyColumnIds(d: Diagram, tableId: string): Set<string> {
   return ids;
 }
 
+/** Column ids of this table that hold another table serialized inside them. */
+export function embeddedColumnIds(d: Diagram, tableId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const r of d.relationships) {
+    if (r.kind === 'embed' && r.sourceTableId === tableId && r.sourceColumnIds[0]) ids.add(r.sourceColumnIds[0]);
+  }
+  return ids;
+}
+
 /** Remove dangling references after tables/columns are deleted. */
 export function pruneRelationships(d: Diagram): Diagram {
   const tables = new Set(d.tables.map((t) => t.id));
@@ -97,7 +106,9 @@ export function pruneRelationships(d: Diagram): Diagram {
       sourceColumnIds: r.sourceColumnIds.filter((id) => columns.has(id)),
       targetColumnIds: r.targetColumnIds.filter((id) => columns.has(id)),
     }))
-    .filter((r) => r.kind === 'flow' || (r.sourceColumnIds.length > 0 && r.targetColumnIds.length > 0));
+    // Only column-pair kinds (FKs) become meaningless without their columns; the
+    // documentation kinds are table-to-table and survive a column being dropped.
+    .filter((r) => !kindMeta(r.kind).needsColumnPairs || (r.sourceColumnIds.length > 0 && r.targetColumnIds.length > 0));
   const tablesOut = d.tables.map((t) => ({
     ...t,
     indexes: t.indexes.map((i) => ({ ...i, columnIds: i.columnIds.filter((id) => columns.has(id)) })).filter((i) => i.columnIds.length > 0),
