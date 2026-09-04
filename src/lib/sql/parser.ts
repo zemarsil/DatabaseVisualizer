@@ -56,9 +56,15 @@ export interface ParseMessage {
   col: number;
 }
 
+export interface ParsedCompositeType {
+  name: string;
+  fields: { name: string; type: string }[];
+}
+
 export interface ParseResult {
   tables: ParsedTable[];
   enums: { name: string; values: string[] }[];
+  compositeTypes: ParsedCompositeType[];
   errors: ParseMessage[];
   warnings: ParseMessage[];
   statementCount: number;
@@ -101,7 +107,7 @@ const ACTIONS: Record<string, ReferentialAction> = {
 
 class Parser {
   private pos = 0;
-  readonly result: ParseResult = { tables: [], enums: [], errors: [], warnings: [], statementCount: 0 };
+  readonly result: ParseResult = { tables: [], enums: [], compositeTypes: [], errors: [], warnings: [], statementCount: 0 };
 
   constructor(private readonly sql: string, private readonly tokens: Token[], private readonly dialect: Dialect) {}
 
@@ -942,7 +948,9 @@ class Parser {
   private parseCreateType(): void {
     this.expectWord('TYPE');
     const { name } = this.parseQualifiedName();
-    if (this.acceptWord('AS') && this.acceptWord('ENUM')) {
+    if (this.isWord('AS') && this.peek(1).type === 'word' && this.peek(1).upper === 'ENUM') {
+      this.next(); // AS
+      this.next(); // ENUM
       const open = this.expectPunct('(');
       const values: string[] = [];
       while (!this.isPunct(')')) {
@@ -952,8 +960,21 @@ class Parser {
       }
       this.next();
       this.result.enums.push({ name, values });
+    } else if (this.isWord('AS') && this.peek(1).type === 'punct' && this.peek(1).value === '(') {
+      this.next(); // AS
+      const open = this.expectPunct('(');
+      const fields: { name: string; type: string }[] = [];
+      while (!this.isPunct(')')) {
+        if (this.peek().type === 'eof') this.fail('Unterminated type body', open);
+        const fname = this.parseIdent();
+        const ftype = this.parseType();
+        fields.push({ name: fname, type: ftype });
+        if (!this.acceptPunct(',')) break;
+      }
+      this.expectPunct(')');
+      this.result.compositeTypes.push({ name, fields });
     } else {
-      this.warn(`Skipped CREATE TYPE ${name} (only ENUM types are recorded)`);
+      this.warn(`Skipped CREATE TYPE ${name} (only ENUM and composite "AS (...)" types are recorded)`);
     }
     this.skipStatement();
   }
@@ -1002,7 +1023,7 @@ export function parseSql(sql: string, dialect: Dialect): ParseResult {
     tokens = tokenize(sql);
   } catch (e) {
     if (e instanceof SqlSyntaxError) {
-      return { tables: [], enums: [], errors: [{ message: e.message, line: e.line, col: e.col }], warnings: [], statementCount: 0 };
+      return { tables: [], enums: [], compositeTypes: [], errors: [{ message: e.message, line: e.line, col: e.col }], warnings: [], statementCount: 0 };
     }
     throw e;
   }

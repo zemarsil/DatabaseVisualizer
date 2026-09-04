@@ -97,6 +97,25 @@ describe('parseSql (PostgreSQL)', () => {
     expect(t.columns[2].type).toBe('MOOD');
   });
 
+  it('parses composite CREATE TYPE ... AS (...) definitions', () => {
+    const res = parseSql(
+      `CREATE TYPE address AS (street TEXT, city VARCHAR(80), zip CHAR(5));
+       CREATE TABLE t (id INT PRIMARY KEY, home address);`,
+      'postgresql',
+    );
+    expect(res.errors).toEqual([]);
+    expect(res.compositeTypes).toHaveLength(1);
+    expect(res.compositeTypes[0]).toEqual({
+      name: 'address',
+      fields: [
+        { name: 'street', type: 'TEXT' },
+        { name: 'city', type: 'VARCHAR(80)' },
+        { name: 'zip', type: 'CHAR(5)' },
+      ],
+    });
+    expect(res.tables[0].columns[1].type).toBe('ADDRESS');
+  });
+
   it('recovers from a bad statement and keeps going', () => {
     const res = parseSql(
       `CREATE TABLE ok1 (id INT);
@@ -168,6 +187,25 @@ describe('importSql', () => {
     const b = r.tables.find((t) => t.name === 'b')!;
     expect(r.relationships[0].targetColumnIds).toEqual([b.columns[0].id]);
     expect(r.warnings.some((w) => w.includes('placeholder'))).toBe(true);
+  });
+
+  it('turns parsed enums and composite types into diagram custom types', () => {
+    const r = importSql(
+      `CREATE TYPE mood AS ENUM ('sad', 'ok', 'happy');
+       CREATE TYPE address AS (street TEXT, city VARCHAR(80));
+       CREATE TABLE t (id INT PRIMARY KEY, m mood, home address);`,
+      'postgresql',
+    );
+    expect(r.customTypes).toHaveLength(2);
+    const mood = r.customTypes.find((c) => c.name === 'mood')!;
+    expect(mood.kind).toBe('enum');
+    expect(mood.values).toEqual(['sad', 'ok', 'happy']);
+    const address = r.customTypes.find((c) => c.name === 'address')!;
+    expect(address.kind).toBe('composite');
+    expect(address.fields?.map((f) => [f.name, f.type])).toEqual([
+      ['street', 'TEXT'],
+      ['city', 'VARCHAR(80)'],
+    ]);
   });
 
   it('resolves reference columns to the target primary key when omitted', () => {

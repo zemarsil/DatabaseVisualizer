@@ -53,11 +53,11 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
       <div className="field">
         <span className="field__label">{r.kind === 'fk' ? 'Referencing → referenced' : 'Source → target'}</span>
         <div className="row">
-          <button className="chip chip--on" onClick={() => setSelection({ tableIds: [src.id], relationshipId: null, noteId: null })} title="Select table">
+          <button className="chip chip--on" onClick={() => setSelection({ tableIds: [src.id], relationshipId: null, noteIds: [] })} title="Select table">
             {src.name}
           </button>
           <span className="faint">→</span>
-          <button className="chip chip--on" onClick={() => setSelection({ tableIds: [tgt.id], relationshipId: null, noteId: null })} title="Select table">
+          <button className="chip chip--on" onClick={() => setSelection({ tableIds: [tgt.id], relationshipId: null, noteIds: [] })} title="Select table">
             {tgt.name}
           </button>
           <span className="grow" />
