@@ -20,15 +20,17 @@ export function createColumn(partial: Partial<Column> & { name: string }): Colum
 }
 
 export function createTable(partial: Partial<Table> & { name: string }): Table {
+  // `id` is pulled out so callers cloning a table can pass `id: undefined` and
+  // still get a fresh id (a plain spread would overwrite it with undefined).
+  const { id, ...rest } = partial;
   return {
-    id: newId('tbl'),
+    id: id ?? newId('tbl'),
     columns: [],
     indexes: [],
     checks: [],
     position: { x: 0, y: 0 },
     color: colorForName(partial.name),
-    ...partial,
-    name: partial.name,
+    ...rest,
   };
 }
 
@@ -41,7 +43,8 @@ export function createRelationship(partial: Omit<Relationship, 'id'> & { id?: st
 }
 
 export function createNote(partial: Partial<Note> = {}): Note {
-  return { id: newId('note'), text: 'New note', position: { x: 0, y: 0 }, width: 220, height: 120, color: 'yellow', ...partial };
+  const { id, ...rest } = partial;
+  return { id: id ?? newId('note'), text: 'New note', position: { x: 0, y: 0 }, width: 220, height: 120, color: 'yellow', ...rest };
 }
 
 /** Next free table name like "table_3". */

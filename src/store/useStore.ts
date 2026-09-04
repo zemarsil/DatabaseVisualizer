@@ -89,9 +89,11 @@ interface Actions {
   // tables
   addTable: (position?: { x: number; y: number }) => string;
   updateTable: (id: string, patch: Partial<Omit<Table, 'id' | 'columns' | 'indexes'>>) => void;
+  /** Same patch applied to several tables in one history step. */
+  updateTables: (ids: string[], patch: Partial<Omit<Table, 'id' | 'columns' | 'indexes'>>) => void;
   deleteTables: (ids: string[]) => void;
   duplicateTable: (id: string) => void;
-  addColumn: (tableId: string, partial?: Partial<Column>) => string;
+  addColumn: (tableId: string, partial?: Partial<Column>, opts?: { after?: string }) => string;
   updateColumn: (tableId: string, columnId: string, patch: Partial<Omit<Column, 'id'>>) => void;
   deleteColumn: (tableId: string, columnId: string) => void;
   moveColumn: (tableId: string, columnId: string, delta: -1 | 1) => void;
@@ -109,6 +111,7 @@ interface Actions {
   // notes
   addNote: (position?: { x: number; y: number }) => string;
   updateNote: (id: string, patch: Partial<Omit<Note, 'id'>>) => void;
+  duplicateNote: (id: string) => void;
   deleteNote: (id: string) => void;
 
   // canvas
@@ -278,6 +281,13 @@ export const useStore = create<Store>()(
           const t = d.tables.find((x) => x.id === id);
           if (t) Object.assign(t, patch);
         }),
+      updateTables: (ids, patch) => {
+        if (!ids.length) return;
+        const idSet = new Set(ids);
+        mutate((d) => {
+          for (const t of d.tables) if (idSet.has(t.id)) Object.assign(t, patch);
+        });
+      },
       deleteTables: (ids) => {
         if (!ids.length) return;
         const idSet = new Set(ids);
@@ -316,13 +326,17 @@ export const useStore = create<Store>()(
           s.selection = { tableIds: [copy.id], relationshipId: null, noteId: null };
         });
       },
-      addColumn: (tableId, partial) => {
+      addColumn: (tableId, partial, opts) => {
         const d = get().diagram;
         const t = d.tables.find((x) => x.id === tableId);
         if (!t) return '';
         const col = createColumn({ name: uniqueColumnName(t, partial?.name ?? 'column'), type: partial?.type ?? 'VARCHAR(255)', ...partial });
         mutate((dd) => {
-          dd.tables.find((x) => x.id === tableId)?.columns.push(col);
+          const table = dd.tables.find((x) => x.id === tableId);
+          if (!table) return;
+          const after = opts?.after ? table.columns.findIndex((c) => c.id === opts.after) : -1;
+          if (after >= 0) table.columns.splice(after + 1, 0, col);
+          else table.columns.push(col);
         });
         return col.id;
       },
@@ -428,6 +442,17 @@ export const useStore = create<Store>()(
           const n = d.notes.find((x) => x.id === id);
           if (n) Object.assign(n, patch);
         }),
+      duplicateNote: (id) => {
+        const src = get().diagram.notes.find((n) => n.id === id);
+        if (!src) return;
+        const copy = createNote({ ...src, id: undefined, position: { x: src.position.x + 28, y: src.position.y + 28 } });
+        mutate((d) => {
+          d.notes.push(copy);
+        });
+        set((s) => {
+          s.selection = { tableIds: [], relationshipId: null, noteId: copy.id };
+        });
+      },
       deleteNote: (id) => {
         mutate((d) => {
           d.notes = d.notes.filter((x) => x.id !== id);

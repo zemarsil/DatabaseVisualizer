@@ -46,7 +46,13 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
         {table.columns.map((c) => {
           const isFk = fkSet.has(c.id);
           return (
-            <div key={c.id} className={`table-node__row${c.primaryKey ? ' table-node__row--pk' : ''}`} title={c.comment || undefined}>
+            <div
+              key={c.id}
+              className={`table-node__row${c.primaryKey ? ' table-node__row--pk' : ''}`}
+              title={c.comment || undefined}
+              /* Read by the canvas so a right-click on this row opens the column menu. */
+              data-column-id={c.id}
+            >
               <Handle type="source" position={Position.Left} id={`${c.id}|l`} className="col-handle col-handle--left" />
               <span className={`col-icon${c.primaryKey ? ' col-icon--pk' : isFk ? ' col-icon--fk' : ''}`}>
                 {c.primaryKey ? <KeyRound /> : isFk ? <Link2 /> : null}
