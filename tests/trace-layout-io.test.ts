@@ -4,7 +4,7 @@ import { buildJoinQuery, describeHop, findPath, reachableTables } from '../src/l
 import { layoutDiagram } from '../src/lib/layout';
 import { parseDiagramFile, serializeDiagram } from '../src/lib/io';
 import { sampleDiagram } from '../src/lib/sample';
-import { createRelationship, pruneRelationships } from '../src/lib/model';
+import { createRelationship, pruneRelationships, relationshipKindPatch } from '../src/lib/model';
 
 describe('findPath', () => {
   it('finds the shortest chain between two tables and builds a join', () => {
@@ -149,6 +149,57 @@ describe('diagram file round-trip', () => {
     expect(d.tables[0].indexes).toEqual([]);
     expect(d.relationships).toEqual([]);
     expect(d.customTypes).toEqual([]);
+  });
+});
+
+describe('relationshipKindPatch', () => {
+  it('anchors a serialized copy to one column and drops the target side', () => {
+    const d = sampleDiagram();
+    const fk = d.relationships.find((r) => r.kind === 'fk' && r.sourceColumnIds.length > 0)!;
+    expect(relationshipKindPatch(d, fk, 'embed')).toEqual({
+      kind: 'embed',
+      sourceColumnIds: [fk.sourceColumnIds[0]],
+      targetColumnIds: [],
+    });
+  });
+
+  it('fills in a column pair when something becomes a foreign key', () => {
+    const d = sampleDiagram();
+    const flow = d.relationships.find((r) => r.kind === 'flow')!;
+    const src = d.tables.find((t) => t.id === flow.sourceTableId)!;
+    const tgt = d.tables.find((t) => t.id === flow.targetTableId)!;
+    expect(relationshipKindPatch(d, flow, 'fk')).toEqual({
+      kind: 'fk',
+      sourceColumnIds: [src.columns[0].id],
+      targetColumnIds: [(tgt.columns.find((c) => c.primaryKey) ?? tgt.columns[0]).id],
+    });
+  });
+
+  it('keeps the columns a foreign key already has', () => {
+    const d = sampleDiagram();
+    const dep = d.relationships.find((r) => r.kind === 'dependency')!;
+    dep.sourceColumnIds = [d.tables.find((t) => t.id === dep.sourceTableId)!.columns[1].id];
+    dep.targetColumnIds = [d.tables.find((t) => t.id === dep.targetTableId)!.columns[1].id];
+    expect(relationshipKindPatch(d, dep, 'fk')).toEqual({
+      kind: 'fk',
+      sourceColumnIds: dep.sourceColumnIds,
+      targetColumnIds: dep.targetColumnIds,
+    });
+  });
+
+  it('touches nothing but the kind for the table-to-table kinds', () => {
+    const d = sampleDiagram();
+    const fk = d.relationships.find((r) => r.kind === 'fk')!;
+    expect(relationshipKindPatch(d, fk, 'flow')).toEqual({ kind: 'flow' });
+    expect(relationshipKindPatch(d, fk, 'dependency')).toEqual({ kind: 'dependency' });
+  });
+
+  it('cannot invent a column pair when a table has none', () => {
+    const d = sampleDiagram();
+    const flow = d.relationships.find((r) => r.kind === 'flow')!;
+    d.tables.find((t) => t.id === flow.sourceTableId)!.columns = [];
+    // the caller disables the row in that case; the patch stays honest either way
+    expect(relationshipKindPatch(d, flow, 'fk')).toEqual({ kind: 'fk' });
   });
 });
 

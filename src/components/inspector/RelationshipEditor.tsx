@@ -17,7 +17,7 @@ import {
   type RelationshipVerb,
 } from '@shared/types';
 import { derivationSummary } from '@/lib/derivation';
-import { createDerivation } from '@/lib/model';
+import { createDerivation, relationshipKindPatch } from '@/lib/model';
 import { generateFlowSql } from '@/lib/sql/generator';
 import { useStore } from '@/store/useStore';
 
@@ -93,12 +93,7 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
   const isEmbed = r.kind === 'embed';
 
   const patch = (p: Partial<Relationship>) => updateRelationship(r.id, p);
-  const setKind = (kind: RelationshipKind) => {
-    // A serialized copy is anchored to the one column that stores it, so the
-    // target-side columns of a former foreign key would just be dead state.
-    if (kind === 'embed') patch({ kind, sourceColumnIds: r.sourceColumnIds.slice(0, 1), targetColumnIds: [] });
-    else patch({ kind });
-  };
+  const setKind = (kind: RelationshipKind) => patch(relationshipKindPatch(diagram, r, kind));
 
   const pairCount = Math.max(r.sourceColumnIds.length, r.targetColumnIds.length, isFk ? 1 : 0);
   const setPair = (i: number, side: 'source' | 'target', colId: string) => {
