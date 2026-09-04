@@ -7,6 +7,7 @@ import {
   Download,
   FileImage,
   FilePlus2,
+  FileText,
   FolderOpen,
   HelpCircle,
   Maximize,
@@ -29,6 +30,7 @@ import { useStore } from '@/store/useStore';
 import { downloadDataUrl, downloadText, fileSlug, parseDiagramFile, serializeDiagram, FILE_EXTENSION } from '@/lib/io';
 import { exportDiagramImage } from '@/lib/exportImage';
 import { generateSchema } from '@/lib/sql/generator';
+import { generateMarkdown } from '@/lib/markdownExport';
 import { confirmDialog, useDialogStore } from './ui/Modal';
 
 function Menu({ label, icon, children, align = 'right' }: { label?: string; icon: ReactNode; children: (close: () => void) => ReactNode; align?: 'left' | 'right' }) {
@@ -142,6 +144,15 @@ export function TopBar() {
   const exportSql = () => {
     const out = generateSchema(diagram);
     downloadText(`${fileSlug(diagram.name)}.sql`, out.script, 'text/sql');
+  };
+
+  const exportMarkdown = () => {
+    if (diagram.tables.length === 0) {
+      toast('error', 'There is nothing to export yet.');
+      return;
+    }
+    downloadText(`${fileSlug(diagram.name)}.md`, generateMarkdown(diagram), 'text/markdown');
+    toast('success', 'Exported Markdown.');
   };
 
   const onNew = async () => {
@@ -278,6 +289,9 @@ export function TopBar() {
               </button>
               <button className="menu__item" onClick={() => void (close(), exportSql())}>
                 <Download /> Export SQL script
+              </button>
+              <button className="menu__item" onClick={() => void (close(), exportMarkdown())}>
+                <FileText /> Export Markdown
               </button>
               <div className="menu__sep" />
               <button className="menu__item" onClick={() => void (close(), loadSample())}>
