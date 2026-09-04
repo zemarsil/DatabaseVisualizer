@@ -1,0 +1,52 @@
+{
+  "name": "database-visualizer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Design database schemas visually: diagram tables, tag connections with queries, generate or import CREATE TABLE DDL, auto-untangle, trace paths, and push the schema into a Docker-hosted PostgreSQL or MariaDB.",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n web,api -c cyan,magenta \"vite\" \"tsx watch server/index.ts\"",
+    "dev:web": "vite",
+    "dev:api": "tsx watch server/index.ts",
+    "build": "tsc -p tsconfig.json --noEmit && vite build",
+    "start": "cross-env NODE_ENV=production tsx server/index.ts",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit"
+  },
+  "dependencies": {
+    "@dagrejs/dagre": "^3.1.1",
+    "@xyflow/react": "^12.11.6",
+    "cors": "^2.8.6",
+    "cross-env": "^10.1.0",
+    "dockerode": "^5.0.1",
+    "express": "^5.2.1",
+    "html-to-image": "^1.11.13",
+    "immer": "^10.2.0",
+    "lucide-react": "^1.41.0",
+    "mariadb": "^3.5.4",
+    "pg": "^8.23.0",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "tsx": "^4.23.13",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/dockerode": "^4.0.1",
+    "@types/express": "^5.0.6",
+    "@types/node": "^22.19.0",
+    "@types/pg": "^8.23.1",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.7",
+    "@vitejs/plugin-react": "^5.1.0",
+    "concurrently": "^10.0.5",
+    "typescript": "^5.9.0",
+    "vite": "^7.3.0",
+    "vitest": "^3.2.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
