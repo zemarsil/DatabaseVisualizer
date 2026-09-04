@@ -1,4 +1,5 @@
-import type { Diagram, Relationship, Table } from '@shared/types';
+import { describeRelationship, kindMeta, type Diagram, type Relationship, type Table } from '@shared/types';
+import { externalTableIds } from './groups';
 import { quoteIdent } from './sql/dialect';
 
 export interface PathHop {
@@ -91,21 +92,53 @@ export function reachableTables(d: Diagram, fromId: string): Map<string, number>
 }
 
 /**
+ * Human-readable description of one hop, in the direction the path walks it:
+ * "orders contains order_items", "daily_sales fed by order_items".
+ */
+export function describeHop(d: Diagram, hop: PathHop): string {
+  const r = hop.relationship;
+  const src = d.tables.find((t) => t.id === r.sourceTableId)?.name ?? '?';
+  const tgt = d.tables.find((t) => t.id === r.targetTableId)?.name ?? '?';
+  const sentence = describeRelationship(r, src, tgt, hop.reversed ? 'inverse' : 'forward');
+  return r.name ? `${sentence} (${r.name})` : sentence;
+}
+
+/** Where an embedded table is stored, e.g. "orders.items_snapshot". */
+function embedLocation(d: Diagram, r: Relationship): string | null {
+  if (r.kind !== 'embed') return null;
+  const src = d.tables.find((t) => t.id === r.sourceTableId);
+  const col = src?.columns.find((c) => c.id === r.sourceColumnIds[0]);
+  return src && col ? `${src.name}.${col.name}` : null;
+}
+
+/**
  * A SELECT that joins every table along a traced path using the FK columns.
- * Data-flow hops have no join condition, so they are emitted as comments.
+ * Only foreign keys carry a join condition; the documentation kinds (data
+ * flows, serialized copies, dependencies) are emitted as comments instead.
  */
 export function buildJoinQuery(d: Diagram, trace: TraceResult): string {
   const q = (s: string) => quoteIdent(s, d.dialect);
   const alias = (i: number) => `t${i}`;
   const lines: string[] = [];
+
+  // A path that leaves the schema you are designing cannot run as one query.
+  const external = externalTableIds(d);
+  const crossed = trace.tableIds.filter((id) => external.has(id));
+  if (crossed.length && crossed.length < trace.tableIds.length) {
+    const names = [...new Set(crossed.map((id) => d.tables.find((t) => t.id === id)?.name ?? '?'))];
+    lines.push(`-- Heads up: this path crosses into another database (${names.join(', ')}).`);
+    lines.push('-- The query below will not run as one statement; stage those tables first.');
+  }
+
   lines.push(`SELECT ${trace.tableIds.map((_, i) => `${alias(i)}.*`).join(', ')}`);
   lines.push(`FROM ${q(trace.from.name)} AS ${alias(0)}`);
   trace.hops.forEach((hop, i) => {
     const r = hop.relationship;
     const a = `t${i}`;
     const b = `t${i + 1}`;
-    if (r.kind !== 'fk') {
-      lines.push(`-- ${hop.from.name} -> ${hop.to.name} is a data-flow link (no FK join condition)`);
+    if (!kindMeta(r.kind).joinable) {
+      const where = embedLocation(d, r);
+      lines.push(`-- ${describeHop(d, hop)}: ${kindMeta(r.kind).label.toLowerCase()} link${where ? ` stored in ${where}` : ''}, no join condition`);
       lines.push(`CROSS JOIN ${q(hop.to.name)} AS ${b}`);
       return;
     }

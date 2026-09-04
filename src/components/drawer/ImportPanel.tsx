@@ -23,6 +23,9 @@ export function ImportPanel() {
   const [sql, setSql] = useState('');
   const [mode, setMode] = useState<'merge' | 'replace'>(diagram.tables.length ? 'merge' : 'replace');
   const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [group, setGroup] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [groupExternal, setGroupExternal] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const dialect = DIALECTS.find((d) => d.id === diagram.dialect)?.label ?? diagram.dialect;
 
@@ -34,8 +37,12 @@ export function ImportPanel() {
       toast('error', res.errors.length ? 'Nothing imported: fix the errors below.' : 'No CREATE TABLE statements found.');
       return;
     }
-    importTables(res.tables, res.relationships, mode);
-    toast('success', `Imported ${res.tables.length} table(s) and ${res.relationships.length} foreign key(s).`);
+    importTables(res.tables, res.relationships, mode, {
+      customTypes: res.customTypes,
+      group: group ? { name: groupName.trim() || 'Imported', external: groupExternal } : undefined,
+    });
+    const typeNote = res.customTypes.length ? ` and ${res.customTypes.length} type(s)` : '';
+    toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} foreign key(s)${typeNote}.`);
     setSql('');
     setPreview(null);
   };
@@ -69,6 +76,19 @@ export function ImportPanel() {
             <input type="radio" name="import-mode" checked={mode === 'replace'} onChange={() => setMode('replace')} /> Replace the current diagram
           </label>
         </div>
+        <div className="field">
+          <label className="checkbox">
+            <input type="checkbox" checked={group} onChange={(e) => setGroup(e.target.checked)} /> Put these tables in a group
+          </label>
+          {group && (
+            <div className="row row--wrap" style={{ marginTop: 4 }}>
+              <input className="input input--sm grow" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name" />
+              <label className="checkbox small" title="Leave these tables out of the generated script and out of anything applied to a database">
+                <input type="checkbox" checked={groupExternal} onChange={(e) => setGroupExternal(e.target.checked)} /> Another database
+              </label>
+            </div>
+          )}
+        </div>
         <div className="row" style={{ marginBottom: 10 }}>
           <button className="btn btn--primary" onClick={() => run(true)} disabled={!sql.trim()}>
             <Play /> Import
@@ -78,8 +98,8 @@ export function ImportPanel() {
           </button>
         </div>
         <div className="small muted" style={{ marginBottom: 8 }}>
-          Understands CREATE TABLE with column and table constraints, ALTER TABLE … ADD CONSTRAINT, CREATE INDEX, COMMENT ON and CREATE TYPE … AS ENUM. Other
-          statements are skipped with a warning. Tables referenced but not defined get a placeholder.
+          Understands CREATE TABLE with column and table constraints, ALTER TABLE … ADD CONSTRAINT, CREATE INDEX, COMMENT ON, CREATE TYPE … AS ENUM and CREATE TYPE
+          … AS (composite). Other statements are skipped with a warning. Tables referenced but not defined get a placeholder.
         </div>
         {preview && (
           <div style={{ overflow: 'auto', minHeight: 0 }}>

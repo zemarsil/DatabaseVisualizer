@@ -1,5 +1,19 @@
-import type { Diagram, Note, Relationship, Table } from '@shared/types';
+import {
+  AGGREGATE_FUNCTIONS,
+  isRelationshipKind,
+  normalizeVerb,
+  type AggregateFunction,
+  type CustomType,
+  type Derivation,
+  type Diagram,
+  type Group,
+  type Note,
+  type Relationship,
+  type Table,
+} from '@shared/types';
+import { pruneGroupIds } from './groups';
 import { emptyDiagram } from './model';
+import { newId } from './ids';
 
 export const FILE_EXTENSION = '.dbviz.json';
 
@@ -20,6 +34,28 @@ function num(v: unknown, fallback = 0): number {
 }
 function strArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
+/**
+ * Structured flow derivations. Absent -> undefined (files written before the
+ * field existed keep loading unchanged); present -> one sanitised entry per
+ * object, so a hand-edited file cannot smuggle in an unknown aggregate.
+ */
+function parseDerivations(v: unknown): Derivation[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v
+    .filter((e: unknown): e is Record<string, unknown> => Boolean(e) && typeof e === 'object')
+    .map((e) => {
+      const aggregate = AGGREGATE_FUNCTIONS.includes(e.aggregate as AggregateFunction) ? (e.aggregate as AggregateFunction) : undefined;
+      return {
+        id: typeof e.id === 'string' && e.id ? e.id : newId('drv'),
+        targetColumnId: str(e.targetColumnId),
+        expression: str(e.expression),
+        groupBy: strArray(e.groupBy),
+        ...(aggregate ? { aggregate } : {}),
+        ...(typeof e.filter === 'string' && e.filter ? { filter: e.filter } : {}),
+      };
+    });
 }
 
 /** Parse and validate a saved file. Tolerant of missing optional fields so old files keep loading. */
@@ -49,6 +85,7 @@ export function parseDiagramFile(text: string): Diagram {
       schema: typeof t.schema === 'string' && t.schema ? t.schema : undefined,
       comment: typeof t.comment === 'string' && t.comment ? t.comment : undefined,
       color: str(t.color, 'blue'),
+      groupId: typeof t.groupId === 'string' && t.groupId ? t.groupId : undefined,
       position: { x: num(pos.x), y: num(pos.y) },
       checks: strArray(t.checks),
       columns: (Array.isArray(t.columns) ? t.columns : [])
@@ -79,22 +116,45 @@ export function parseDiagramFile(text: string): Diagram {
     if (!rr || typeof rr !== 'object') continue;
     const r = rr as Record<string, unknown>;
     if (typeof r.id !== 'string' || typeof r.sourceTableId !== 'string' || typeof r.targetTableId !== 'string') continue;
+    const kind = isRelationshipKind(r.kind) ? r.kind : 'fk';
     rels.push({
       id: r.id,
-      kind: r.kind === 'flow' ? 'flow' : 'fk',
+      kind,
+      // Files written before verbs existed (and any verb that does not fit the
+      // kind) fall back to the kind's default.
+      verb: normalizeVerb(kind, r.verb),
       sourceTableId: r.sourceTableId,
       targetTableId: r.targetTableId,
       sourceColumnIds: strArray(r.sourceColumnIds),
       targetColumnIds: strArray(r.targetColumnIds),
       name: typeof r.name === 'string' && r.name ? r.name : undefined,
-      inverseName: typeof r.inverseName === 'string' && r.inverseName ? r.inverseName : undefined,
       onDelete: (r.onDelete as Relationship['onDelete']) ?? 'NO ACTION',
       onUpdate: (r.onUpdate as Relationship['onUpdate']) ?? 'NO ACTION',
       query: typeof r.query === 'string' && r.query ? r.query : undefined,
       note: typeof r.note === 'string' && r.note ? r.note : undefined,
+      derivations: parseDerivations(r.derivations),
     });
   }
   d.relationships = rels;
+
+  const groups: Group[] = [];
+  for (const rg of (Array.isArray(o.groups) ? o.groups : []) as unknown[]) {
+    if (!rg || typeof rg !== 'object') continue;
+    const g = rg as Record<string, unknown>;
+    if (typeof g.id !== 'string') continue;
+    const pos = (g.position ?? {}) as Record<string, unknown>;
+    groups.push({
+      id: g.id,
+      name: str(g.name, 'Group'),
+      color: str(g.color, 'slate'),
+      external: bool(g.external),
+      note: typeof g.note === 'string' && g.note ? g.note : undefined,
+      position: { x: num(pos.x), y: num(pos.y) },
+    });
+  }
+  d.groups = groups;
+  // A table pointing at a group that is not in the file would draw nothing.
+  pruneGroupIds(d);
 
   const notes: Note[] = [];
   for (const rn of (Array.isArray(o.notes) ? o.notes : []) as unknown[]) {
@@ -112,6 +172,34 @@ export function parseDiagramFile(text: string): Diagram {
     });
   }
   d.notes = notes;
+
+  const customTypes: CustomType[] = [];
+  for (const rc of (Array.isArray(o.customTypes) ? o.customTypes : []) as unknown[]) {
+    if (!rc || typeof rc !== 'object') continue;
+    const c = rc as Record<string, unknown>;
+    if (typeof c.id !== 'string' || typeof c.name !== 'string') continue;
+    const kind = c.kind === 'composite' ? 'composite' : 'enum';
+    customTypes.push({
+      id: c.id,
+      name: c.name,
+      kind,
+      comment: typeof c.comment === 'string' && c.comment ? c.comment : undefined,
+      values: kind === 'enum' ? strArray(c.values) : undefined,
+      fields:
+        kind === 'composite'
+          ? (Array.isArray(c.fields) ? c.fields : [])
+              .filter((f: unknown): f is Record<string, unknown> => Boolean(f) && typeof f === 'object')
+              .filter((f) => typeof f.id === 'string' && typeof f.name === 'string')
+              .map((f) => ({
+                id: f.id as string,
+                name: f.name as string,
+                type: str(f.type, 'TEXT'),
+                comment: typeof f.comment === 'string' && f.comment ? f.comment : undefined,
+              }))
+          : undefined,
+    });
+  }
+  d.customTypes = customTypes;
 
   if (o.viewport && typeof o.viewport === 'object') {
     const v = o.viewport as Record<string, unknown>;
