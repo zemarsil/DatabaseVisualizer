@@ -5,6 +5,7 @@ A locally hosted web app for designing relational schemas visually.
 - Draw tables and their connections on a pan/zoom canvas: crow's-foot foreign keys plus three kinds the database cannot enforce — data flows, serialized copies, and plain dependencies.
 - Say how a connection *reads*: "orders **contains** order_items", "customers **has** addresses", "orders **uses** addresses". The verb is documentation, so it never changes the DDL.
 - Tag any connection with the query that moves data across it, so the diagram documents *how* one table feeds another, not just that they are related.
+- **Group** tables into a labelled region — handy when part of the diagram is a *different* database you only read from. Mark that group external and the generated script documents those tables instead of creating them.
 - Generate the `CREATE TABLE` script for **PostgreSQL** or **MariaDB** from the diagram, or paste DDL (including `pg_dump` / `mysqldump` output) and get the diagram back.
 - **Detangle**: a layered auto-layout that ranks referenced tables before the tables that reference them and minimises edge crossings.
 - **Trace**: pick two tables and get the shortest chain of connections between them, highlighted on the canvas, plus the `JOIN` query for that path.
@@ -49,12 +50,14 @@ docker compose up --build
 | Right-click anything | Every target has its own menu: the canvas (add a table or note right here, select all, detangle, undo, open a drawer), a table (rename, duplicate, colour, copy `CREATE TABLE`, trace, delete), a column row inside a table (toggle PK / NN / UQ / AI, add a column below, index it, reorder, delete), a connection (swap direction, switch its kind, copy the tagged query), a note, and the entries in the table list. Right-clicking inside a selected group acts on the whole group |
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks |
 | Foreign key | Hover a table and drag the handle beside a column onto a column of another table |
+| Group tables | Select them and press `G` (or the group button in the top bar). Drag a table into or out of a region to change what is in it; drag a region by its title bar to move everything inside it |
+| Mark a group as another database | Select the region, tick **These tables live in another database** in the inspector |
 | Any other connection | Drag the orange handle in a table header onto another table, then pick the kind in the inspector (data flow, serialized, dependency) |
 | Change how a connection reads | Select it; **Reads as** offers the verbs that fit its kind and previews the sentence in both directions |
 | Derived columns | On a data-flow edge, add one entry per target column: target column, aggregate, source expression, group-by keys, filter. The edge shows a `Σ` count and a per-column summary, and the script gets an `INSERT ... SELECT ... GROUP BY` skeleton built from it |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express |
 | See / copy DDL | Bottom drawer → **SQL** (whole schema or the selected table). The table inspector also has a preview |
-| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace |
+| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group |
 | Switch dialect | Top bar selector; known column types are translated (`SERIAL` ↔ `INT AUTO_INCREMENT`, `TIMESTAMPTZ` ↔ `TIMESTAMP`, `JSONB` ↔ `JSON`, …). Undo reverts |
 | Detangle | **Detangle** button (`L`), direction menu next to it |
 | Trace | **Trace** button: with two tables selected it traces immediately, otherwise it enters pick mode; or use the **Trace** drawer tab |
@@ -106,7 +109,8 @@ saying why there is nothing to join on.
 ```
 src/shared/types.ts      data model + API contracts shared by client and server
 src/lib/sql/             tokenizer, parser (DDL -> model), generator (model -> DDL), dialect helpers
-src/lib/layout.ts        dagre-based "detangle"
+src/lib/groups.ts        table groups: region geometry, membership, external tables
+src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
 src/lib/io.ts            .dbviz.json save/load
 src/store/useStore.ts    zustand store with undo/redo and autosave
@@ -119,6 +123,32 @@ tests/                   vitest unit tests for the SQL round-trip, tracing, layo
 npm test          # unit tests
 npm run typecheck # client + server
 ```
+
+## Groups and a second database
+
+A group is a labelled region drawn around a set of tables. Its rectangle is
+derived from where its member tables sit rather than stored, so Detangle, an
+import or a drag can never leave the region and its contents out of step.
+Membership lives on the table (`Table.groupId`); dragging a table into a region
+joins it, dragging it clearly outside leaves.
+
+Ticking **These tables live in another database** makes the group *external*,
+which is the case for a database you query but do not own:
+
+- its tables are left out of the generated `CREATE TABLE` script, out of
+  **Run schema**, and out of the `DROP TABLE` prefix;
+- a foreign key from your schema into one of those tables cannot exist, so it is
+  emitted as a commented-out `ALTER TABLE` in an **External sources** appendix,
+  with a warning in the SQL tab;
+- foreign keys *inside* the external group are that database's business and are
+  skipped entirely;
+- data-flow links and their tagged queries still work across the boundary — that
+  is the point: the diagram documents how you pull the data across. Tracing a
+  path that crosses the boundary says so in the generated `JOIN`.
+
+**Database → Read schema** and **Import SQL** can both drop everything they
+bring in straight into a new group, external by default, which is usually what
+you want when you are reading someone else's database.
 
 ## Notes on the SQL support
 

@@ -6,10 +6,12 @@ import {
   type CustomType,
   type Derivation,
   type Diagram,
+  type Group,
   type Note,
   type Relationship,
   type Table,
 } from '@shared/types';
+import { pruneGroupIds } from './groups';
 import { emptyDiagram } from './model';
 import { newId } from './ids';
 
@@ -83,6 +85,7 @@ export function parseDiagramFile(text: string): Diagram {
       schema: typeof t.schema === 'string' && t.schema ? t.schema : undefined,
       comment: typeof t.comment === 'string' && t.comment ? t.comment : undefined,
       color: str(t.color, 'blue'),
+      groupId: typeof t.groupId === 'string' && t.groupId ? t.groupId : undefined,
       position: { x: num(pos.x), y: num(pos.y) },
       checks: strArray(t.checks),
       columns: (Array.isArray(t.columns) ? t.columns : [])
@@ -133,6 +136,25 @@ export function parseDiagramFile(text: string): Diagram {
     });
   }
   d.relationships = rels;
+
+  const groups: Group[] = [];
+  for (const rg of (Array.isArray(o.groups) ? o.groups : []) as unknown[]) {
+    if (!rg || typeof rg !== 'object') continue;
+    const g = rg as Record<string, unknown>;
+    if (typeof g.id !== 'string') continue;
+    const pos = (g.position ?? {}) as Record<string, unknown>;
+    groups.push({
+      id: g.id,
+      name: str(g.name, 'Group'),
+      color: str(g.color, 'slate'),
+      external: bool(g.external),
+      note: typeof g.note === 'string' && g.note ? g.note : undefined,
+      position: { x: num(pos.x), y: num(pos.y) },
+    });
+  }
+  d.groups = groups;
+  // A table pointing at a group that is not in the file would draw nothing.
+  pruneGroupIds(d);
 
   const notes: Note[] = [];
   for (const rn of (Array.isArray(o.notes) ? o.notes : []) as unknown[]) {

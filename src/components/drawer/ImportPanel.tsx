@@ -23,6 +23,9 @@ export function ImportPanel() {
   const [sql, setSql] = useState('');
   const [mode, setMode] = useState<'merge' | 'replace'>(diagram.tables.length ? 'merge' : 'replace');
   const [preview, setPreview] = useState<ImportResult | null>(null);
+  const [group, setGroup] = useState(false);
+  const [groupName, setGroupName] = useState('');
+  const [groupExternal, setGroupExternal] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
   const dialect = DIALECTS.find((d) => d.id === diagram.dialect)?.label ?? diagram.dialect;
 
@@ -34,7 +37,10 @@ export function ImportPanel() {
       toast('error', res.errors.length ? 'Nothing imported: fix the errors below.' : 'No CREATE TABLE statements found.');
       return;
     }
-    importTables(res.tables, res.relationships, mode, res.customTypes);
+    importTables(res.tables, res.relationships, mode, {
+      customTypes: res.customTypes,
+      group: group ? { name: groupName.trim() || 'Imported', external: groupExternal } : undefined,
+    });
     const typeNote = res.customTypes.length ? ` and ${res.customTypes.length} type(s)` : '';
     toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} foreign key(s)${typeNote}.`);
     setSql('');
@@ -69,6 +75,19 @@ export function ImportPanel() {
           <label className="checkbox">
             <input type="radio" name="import-mode" checked={mode === 'replace'} onChange={() => setMode('replace')} /> Replace the current diagram
           </label>
+        </div>
+        <div className="field">
+          <label className="checkbox">
+            <input type="checkbox" checked={group} onChange={(e) => setGroup(e.target.checked)} /> Put these tables in a group
+          </label>
+          {group && (
+            <div className="row row--wrap" style={{ marginTop: 4 }}>
+              <input className="input input--sm grow" value={groupName} onChange={(e) => setGroupName(e.target.value)} placeholder="Group name" />
+              <label className="checkbox small" title="Leave these tables out of the generated script and out of anything applied to a database">
+                <input type="checkbox" checked={groupExternal} onChange={(e) => setGroupExternal(e.target.checked)} /> Another database
+              </label>
+            </div>
+          )}
         </div>
         <div className="row" style={{ marginBottom: 10 }}>
           <button className="btn btn--primary" onClick={() => run(true)} disabled={!sql.trim()}>

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import {
+  Boxes,
   ChevronDown,
   Database,
   Download,
@@ -76,6 +77,7 @@ export function TopBar() {
   const setDialect = useStore((s) => s.setDialect);
   const addTable = useStore((s) => s.addTable);
   const addNote = useStore((s) => s.addNote);
+  const addGroup = useStore((s) => s.addGroup);
   const applyLayout = useStore((s) => s.applyLayout);
   const setTheme = useStore((s) => s.setTheme);
   const setSidebarOpen = useStore((s) => s.setSidebarOpen);
@@ -199,6 +201,13 @@ export function TopBar() {
       <div className="topbar__group">
         <button className="btn" onClick={() => addTable()} title="Add table (T)">
           <Plus /> Table
+        </button>
+        <button
+          className="btn btn--icon"
+          onClick={() => addGroup({ tableIds: selection.tableIds })}
+          title={selection.tableIds.length > 1 ? `Group the ${selection.tableIds.length} selected tables (G)` : 'Add a group region (G)'}
+        >
+          <Boxes />
         </button>
         <button className="btn btn--icon" onClick={() => addNote()} title="Add note (N)">
           <StickyNote />

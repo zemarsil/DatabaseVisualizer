@@ -28,6 +28,7 @@ import {
   Shapes,
   Shuffle,
   SquareDashedMousePointer,
+  Ungroup,
   StickyNote,
   Trash2,
   Undo2,
@@ -48,6 +49,7 @@ export type ContextTarget =
   | { type: 'table'; tableId: string; columnId?: string }
   | { type: 'note'; noteId: string }
   | { type: 'relationship'; relationshipId: string }
+  | { type: 'group'; groupId: string }
   /** Several tables are selected; act on all of them. */
   | { type: 'selection' };
 
@@ -103,6 +105,8 @@ export interface MenuEnv {
   renameTable: (tableId: string) => void;
   /** Delete tables and/or notes, confirming first when connections would go with them. */
   remove: (ids: { tableIds?: string[]; noteIds?: string[] }) => void;
+  /** Delete a group's region together with its tables, confirming first. */
+  removeGroup: (groupId: string) => void;
 }
 
 const sep = (id: string): MenuSeparator => ({ kind: 'separator', id });
@@ -489,6 +493,59 @@ function relationshipMenu(relationshipId: string, env: MenuEnv): MenuNode[] {
   ];
 }
 
+function groupMenu(groupId: string, env: MenuEnv): MenuNode[] {
+  const s = env.store;
+  const group = s.diagram.groups.find((g) => g.id === groupId);
+  if (!group) return [];
+  const members = s.diagram.tables.filter((t) => t.groupId === groupId);
+  const ids = members.map((t) => t.id);
+  return [
+    {
+      kind: 'heading',
+      id: 'head',
+      label: group.name || 'Untitled group',
+      detail: `${plural(members.length, 'table')}${group.external ? ' · in another database' : ''}`,
+    },
+    {
+      kind: 'action',
+      id: 'select',
+      label: `Select its ${plural(members.length, 'table')}`,
+      icon: SquareDashedMousePointer,
+      disabled: members.length === 0,
+      run: () => s.setSelection({ ...emptySelection(), tableIds: ids }),
+    },
+    {
+      kind: 'action',
+      id: 'external',
+      label: 'In another database',
+      checked: group.external,
+      hint: group.external ? 'not created by the script' : undefined,
+      run: () => s.updateGroup(groupId, { external: !group.external }),
+    },
+    { kind: 'action', id: 'inspector', label: 'Edit group…', icon: PanelRight, run: () => s.selectGroup(groupId) },
+    sep('s1'),
+    {
+      kind: 'action',
+      id: 'ungroup',
+      label: 'Remove region, keep tables',
+      icon: Ungroup,
+      run: () => {
+        s.deleteGroup(groupId, false);
+        s.toast('info', `Removed the "${group.name}" region. Its tables are still in the diagram.`);
+      },
+    },
+    {
+      kind: 'action',
+      id: 'delete',
+      label: `Delete region and its ${plural(members.length, 'table')}`,
+      icon: Trash2,
+      danger: true,
+      disabled: members.length === 0,
+      run: () => env.removeGroup(groupId),
+    },
+  ];
+}
+
 /* ------------------------------------------------------------------ */
 
 export function buildContextMenu(target: ContextTarget, env: MenuEnv): MenuNode[] {
@@ -517,6 +574,8 @@ export function buildContextMenu(target: ContextTarget, env: MenuEnv): MenuNode[
       return inGroup(s, 'note', target.noteId) ? selectionMenu(env) : noteMenu(target.noteId, env);
     case 'relationship':
       return relationshipMenu(target.relationshipId, env);
+    case 'group':
+      return groupMenu(target.groupId, env);
   }
 }
 

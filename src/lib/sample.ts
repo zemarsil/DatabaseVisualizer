@@ -1,6 +1,6 @@
 import type { Diagram, RelationshipVerb } from '@shared/types';
 import { layoutDiagram } from './layout';
-import { createDerivation, createNote, createRelationship, emptyDiagram } from './model';
+import { createDerivation, createGroup, createNote, createRelationship, emptyDiagram } from './model';
 import { importSql } from './sql/import';
 
 const SAMPLE_SQL = `
@@ -54,6 +54,23 @@ CREATE TABLE daily_sales (
   PRIMARY KEY (day, product_id)
 );
 COMMENT ON TABLE daily_sales IS 'Nightly rollup built from order_items';
+`;
+
+/** A second database the shop reads from but does not own. */
+const CRM_SQL = `
+CREATE TABLE crm_accounts (
+  account_id INTEGER PRIMARY KEY,
+  company VARCHAR(200) NOT NULL,
+  tier VARCHAR(20) NOT NULL,
+  signed_at DATE NOT NULL
+);
+
+CREATE TABLE crm_contacts (
+  contact_id INTEGER PRIMARY KEY,
+  account_id INTEGER NOT NULL REFERENCES crm_accounts(account_id),
+  email VARCHAR(255) NOT NULL,
+  full_name VARCHAR(120) NOT NULL
+);
 `;
 
 export function sampleDiagram(): Diagram {
@@ -129,12 +146,43 @@ GROUP BY 1, 2;`,
     );
   }
 
+  // The CRM lives in its own database: grouped, marked external, so the schema
+  // script documents it instead of trying to create it.
+  const crm = importSql(CRM_SQL, 'postgresql', d);
+  const crmGroup = createGroup({ name: 'CRM (read-only)', color: 'purple', external: true, note: 'Reporting replica; we only ever SELECT from it.' });
+  for (const t of crm.tables) t.groupId = crmGroup.id;
+  d.groups.push(crmGroup);
+  d.tables.push(...crm.tables);
+  d.relationships.push(...crm.relationships);
+
+  const contacts = crm.tables.find((t) => t.name === 'crm_contacts');
+  const customers = d.tables.find((t) => t.name === 'customers');
+  if (contacts && customers) {
+    d.relationships.push(
+      createRelationship({
+        kind: 'flow',
+        name: 'nightly customer sync',
+        sourceTableId: contacts.id,
+        sourceColumnIds: [],
+        targetTableId: customers.id,
+        targetColumnIds: [],
+        note: 'Pulled from the CRM database; no foreign key, the tables are not in the same server.',
+        query: `INSERT INTO customers (email, full_name)
+SELECT c.email, c.full_name
+FROM crm_contacts c
+JOIN crm_accounts a ON a.account_id = c.account_id
+WHERE a.tier <> 'churned'
+ON CONFLICT (email) DO UPDATE SET full_name = EXCLUDED.full_name;`,
+      }),
+    );
+  }
+
   const positions = layoutDiagram(d, { direction: 'LR' });
   for (const t of d.tables) t.position = positions[t.id] ?? t.position;
 
   d.notes.push(
     createNote({
-      text: 'Tip: drag from a column handle to another column to add a foreign key. Select any edge to change its kind (foreign key, data flow, serialized, dependency) and how it reads.',
+      text: 'Tip: drag from a column handle to another column to add a foreign key. Select any edge to change its kind (foreign key, data flow, serialized, dependency) and how it reads.\nThe dashed region is a second database: press G to make one of your own.',
       position: { x: 40, y: -140 },
       width: 300,
       height: 90,

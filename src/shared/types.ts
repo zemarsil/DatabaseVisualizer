@@ -82,6 +82,34 @@ export interface Table {
   /** Key into the palette in src/lib/palette.ts. */
   color: string;
   comment?: string;
+  /** Group this table belongs to, if any (see Group). */
+  groupId?: string;
+}
+
+/**
+ * A labelled region of the canvas that keeps a set of tables together, e.g.
+ * the tables that live in another database you read from.
+ *
+ * Membership lives on the tables (Table.groupId) and the region's rectangle is
+ * derived from where its members sit, so auto-layout, imports and drags can
+ * never leave a group and its box out of sync.
+ */
+export interface Group {
+  id: string;
+  name: string;
+  /** Key into the palette in src/lib/palette.ts. */
+  color: string;
+  /**
+   * True when these tables live in a different database: they document a source
+   * you query rather than part of the schema being designed, so they are left
+   * out of the generated CREATE TABLE script and out of anything run against a
+   * live database.
+   */
+  external: boolean;
+  /** Free text: which database this is, how it is reached, who owns it. */
+  note?: string;
+  /** Where the region sits while it has no member tables to derive it from. */
+  position: { x: number; y: number };
 }
 
 /**
@@ -386,6 +414,7 @@ export interface Diagram {
   tables: Table[];
   relationships: Relationship[];
   notes: Note[];
+  groups: Group[];
   customTypes: CustomType[];
   /** Saved viewport, purely cosmetic. */
   viewport?: { x: number; y: number; zoom: number };

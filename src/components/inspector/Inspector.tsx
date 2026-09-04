@@ -1,9 +1,10 @@
-import { PanelRightClose, Route, Trash2 } from 'lucide-react';
+import { Boxes, PanelRightClose, Route, Trash2 } from 'lucide-react';
 import { kindMeta } from '@shared/types';
-import { selectSelectedNote, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
+import { selectSelectedGroup, selectSelectedNote, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
 import { TableEditor } from './TableEditor';
 import { RelationshipEditor } from './RelationshipEditor';
 import { NoteEditor } from './NoteEditor';
+import { GroupEditor } from './GroupEditor';
 import { DiagramPanel } from './DiagramPanel';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
@@ -11,6 +12,7 @@ export function Inspector() {
   const table = useStore(selectSelectedTable);
   const relationship = useStore(selectSelectedRelationship);
   const note = useStore(selectSelectedNote);
+  const group = useStore(selectSelectedGroup);
   const selectedTableIds = useStore((s) => s.selection.tableIds);
   const selectedNoteIds = useStore((s) => s.selection.noteIds);
   const tables = useStore((s) => s.diagram.tables);
@@ -20,6 +22,7 @@ export function Inspector() {
   const removeElements = useStore((s) => s.removeElements);
   const setTraceEndpoints = useStore((s) => s.setTraceEndpoints);
   const runTrace = useStore((s) => s.runTrace);
+  const addGroup = useStore((s) => s.addGroup);
   const count = selectedTableIds.length + selectedNoteIds.length;
 
   let title = 'Diagram';
@@ -33,6 +36,9 @@ export function Inspector() {
   } else if (note) {
     title = 'Note';
     body = <NoteEditor note={note} />;
+  } else if (group) {
+    title = group.external ? 'External group' : 'Group';
+    body = <GroupEditor group={group} />;
   } else if (count > 1) {
     const tableNames = selectedTableIds.map((id) => tables.find((t) => t.id === id)?.name ?? '?');
     const noteNames = selectedNoteIds.map((id) => notes.find((n) => n.id === id)?.text.split('\n')[0] || 'Empty note');
@@ -49,6 +55,11 @@ export function Inspector() {
             </span>
           ))}
         </div>
+        {selectedTableIds.length > 1 && (
+          <button className="btn" onClick={() => addGroup({ tableIds: selectedTableIds })}>
+            <Boxes /> Group these {selectedTableIds.length} tables
+          </button>
+        )}
         {selectedTableIds.length > 1 && (
           <button
             className="btn"

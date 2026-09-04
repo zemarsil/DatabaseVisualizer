@@ -66,6 +66,11 @@ export default function App() {
           e.preventDefault();
           s.addNote();
           break;
+        case 'g':
+        case 'G':
+          e.preventDefault();
+          s.addGroup({ tableIds: s.selection.tableIds });
+          break;
         case 'l':
         case 'L':
           e.preventDefault();
@@ -79,6 +84,16 @@ export default function App() {
         case '?':
           e.preventDefault();
           useDialogStore.getState().setHelp(true);
+          break;
+        case 'Delete':
+        case 'Backspace':
+          // React Flow handles tables, notes and edges; regions are not its nodes.
+          if (s.selection.groupId) {
+            e.preventDefault();
+            const name = s.diagram.groups.find((g) => g.id === s.selection.groupId)?.name ?? 'group';
+            s.deleteGroup(s.selection.groupId, false);
+            s.toast('info', `Removed the "${name}" region. Its tables are still in the diagram.`);
+          }
           break;
         case 'Escape':
           if (s.trace.picking) s.setTracePicking(false);

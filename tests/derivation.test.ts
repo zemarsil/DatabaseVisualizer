@@ -52,7 +52,7 @@ describe('derivation formatting', () => {
 describe('the sample diagram', () => {
   it('describes the nightly rollup with structured derivations next to the free-text query', () => {
     const d = sampleDiagram();
-    const flow = d.relationships.find((r) => r.kind === 'flow')!;
+    const flow = d.relationships.find((r) => r.name === 'nightly rollup')!;
     const daily = d.tables.find((t) => t.name === 'daily_sales')!;
     expect(derivationSummaries(flow, daily)).toEqual([
       "units_sold = SUM(quantity) GROUP BY product_id, day WHERE status = 'paid'",
@@ -68,8 +68,8 @@ describe('derivation persistence', () => {
   it('survives a save/load round-trip', () => {
     const d = sampleDiagram();
     const back = parseDiagramFile(serializeDiagram(d));
-    const flow = back.relationships.find((r) => r.kind === 'flow')!;
-    expect(flow.derivations).toEqual(d.relationships.find((r) => r.kind === 'flow')!.derivations);
+    const flow = back.relationships.find((r) => r.name === 'nightly rollup')!;
+    expect(flow.derivations).toEqual(d.relationships.find((r) => r.name === 'nightly rollup')!.derivations);
     expect(flow.derivations).toHaveLength(2);
     expect(flow.derivations![1]).toMatchObject({ expression: 'quantity * unit_price_cents', aggregate: 'SUM', groupBy: ['product_id', 'day'], filter: "status = 'paid'" });
   });
@@ -118,7 +118,7 @@ describe('pruneRelationships', () => {
     const daily = d.tables.find((t) => t.name === 'daily_sales')!;
     daily.columns = daily.columns.filter((c) => c.name !== 'revenue_cents');
     const pruned = pruneRelationships(d);
-    const flow = pruned.relationships.find((r) => r.kind === 'flow')!;
+    const flow = pruned.relationships.find((r) => r.name === 'nightly rollup')!;
     expect(flow.derivations).toHaveLength(1);
     expect(derivationSummaries(flow, daily)).toEqual(["units_sold = SUM(quantity) GROUP BY product_id, day WHERE status = 'paid'"]);
   });

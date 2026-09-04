@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Braces, ChevronDown, ChevronRight, Code2, Copy, GitBranch, Link2, Plus, Trash2, Waypoints } from 'lucide-react';
+import { ArrowDown, ArrowUp, Braces, ChevronDown, ChevronRight, Code2, Copy, Database, GitBranch, Link2, Plus, Trash2, Waypoints } from 'lucide-react';
 import { verbLabel, type Column, type Index, type RelationshipKind, type Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { flowDerivations } from '@/lib/derivation';
@@ -132,6 +132,8 @@ export function TableEditor({ table }: { table: Table }) {
   const deleteTables = useStore((s) => s.deleteTables);
   const duplicateTable = useStore((s) => s.duplicateTable);
   const setSelection = useStore((s) => s.setSelection);
+  const setTableGroup = useStore((s) => s.setTableGroup);
+  const addGroup = useStore((s) => s.addGroup);
   const openDrawer = useStore((s) => s.openDrawer);
   const toast = useStore((s) => s.toast);
   const [showSql, setShowSql] = useState(false);
@@ -140,6 +142,7 @@ export function TableEditor({ table }: { table: Table }) {
   const embedColumns = useMemo(() => embeddedColumnIds(diagram, table.id), [diagram, table.id]);
 
   const relationships = useMemo(() => diagram.relationships.filter((r) => r.sourceTableId === table.id || r.targetTableId === table.id), [diagram.relationships, table.id]);
+  const group = diagram.groups.find((g) => g.id === table.groupId);
   const tableName = (id: string) => diagram.tables.find((t) => t.id === id)?.name ?? '?';
   const sql = showSql ? generateTableSql(diagram, table.id) : '';
 
@@ -187,6 +190,40 @@ export function TableEditor({ table }: { table: Table }) {
       <div className="field">
         <span className="field__label">Comment</span>
         <input className="input input--sm" value={table.comment ?? ''} onChange={(e) => updateTable(table.id, { comment: e.target.value || undefined })} placeholder="What this table is for" />
+      </div>
+      <div className="field">
+        <span className="field__label">Group</span>
+        <div className="row">
+          <select
+            className="select grow"
+            value={table.groupId ?? ''}
+            onChange={(e) => {
+              if (e.target.value === '__new__') addGroup({ tableIds: [table.id] });
+              else setTableGroup([table.id], e.target.value || null);
+            }}
+          >
+            <option value="">No group</option>
+            {diagram.groups.map((g) => (
+              <option key={g.id} value={g.id}>
+                {g.name}
+                {g.external ? ' (external)' : ''}
+              </option>
+            ))}
+            <option value="__new__">New group…</option>
+          </select>
+        </div>
+        {group && (
+          <div className="field__hint">
+            {group.external ? (
+              <>
+                <Database size={12} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+                In another database: the schema script documents this table instead of creating it.
+              </>
+            ) : (
+              'Drawn inside this region on the canvas; Detangle keeps the group together.'
+            )}
+          </div>
+        )}
       </div>
 
       <div className="section">

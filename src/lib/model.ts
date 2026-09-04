@@ -6,6 +6,7 @@ import {
   type Derivation,
   type Diagram,
   type Dialect,
+  type Group,
   type Index,
   type Note,
   type Relationship,
@@ -16,7 +17,7 @@ import { newId } from './ids';
 import { colorForName } from './palette';
 
 export function emptyDiagram(dialect: Dialect = 'postgresql', name = 'Untitled diagram'): Diagram {
-  return { version: 1, name, dialect, tables: [], relationships: [], notes: [], customTypes: [] };
+  return { version: 1, name, dialect, tables: [], relationships: [], notes: [], groups: [], customTypes: [] };
 }
 
 export function createColumn(partial: Partial<Column> & { name: string }): Column {
@@ -53,6 +54,10 @@ export function createIndex(partial: Partial<Index> & { columnIds: string[] }): 
 
 export function createRelationship(partial: Omit<Relationship, 'id'> & { id?: string }): Relationship {
   return { id: newId('rel'), onDelete: 'NO ACTION', onUpdate: 'NO ACTION', ...partial };
+}
+
+export function createGroup(partial: Partial<Group> = {}): Group {
+  return { id: newId('grp'), name: 'New group', color: 'slate', external: false, position: { x: 0, y: 0 }, ...partial };
 }
 
 export function createDerivation(partial: Partial<Derivation> = {}): Derivation {
@@ -109,6 +114,15 @@ export function uniqueTableName(d: Diagram, base = 'new_table'): string {
   let i = 2;
   while (names.has(`${base}_${i}`)) i++;
   return `${base}_${i}`;
+}
+
+/** Next free group name like "Source DB 2". */
+export function uniqueGroupName(d: Diagram, base = 'New group'): string {
+  const names = new Set(d.groups.map((g) => g.name.toLowerCase()));
+  if (!names.has(base.toLowerCase())) return base;
+  let i = 2;
+  while (names.has(`${base} ${i}`.toLowerCase())) i++;
+  return `${base} ${i}`;
 }
 
 export function uniqueColumnName(t: Table, base = 'column'): string {

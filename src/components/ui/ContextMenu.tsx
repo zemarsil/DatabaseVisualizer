@@ -83,6 +83,21 @@ function ContextMenuView({ menu }: { menu: OpenMenu }) {
           if (next && next !== table.name) s.updateTable(tableId, { name: next });
         });
       },
+      removeGroup: (groupId) => {
+        const group = s.diagram.groups.find((g) => g.id === groupId);
+        if (!group) return;
+        const members = s.diagram.tables.filter((t) => t.groupId === groupId);
+        const ids = new Set(members.map((t) => t.id));
+        const touched = s.diagram.relationships.filter((r) => ids.has(r.sourceTableId) !== ids.has(r.targetTableId)).length;
+        void confirmDialog({
+          title: `Delete "${group.name}" and its ${members.length} table${members.length === 1 ? '' : 's'}?`,
+          message: touched
+            ? `${touched} connection${touched === 1 ? '' : 's'} to the rest of the diagram will go with them. This can be undone with Ctrl+Z.`
+            : 'This can be undone with Ctrl+Z.',
+          confirmLabel: 'Delete tables',
+          danger: true,
+        }).then((ok) => ok && s.deleteGroup(groupId, true));
+      },
       remove: ({ tableIds = [], noteIds = [] }) => {
         const touched = s.diagram.relationships.filter((r) => tableIds.includes(r.sourceTableId) || tableIds.includes(r.targetTableId)).length;
         if (!touched) {

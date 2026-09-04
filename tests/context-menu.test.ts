@@ -29,6 +29,9 @@ function makeEnv(diagram: Diagram, over: Partial<Store> = {}) {
     focusTable: vi.fn(),
     openDrawer: vi.fn(),
     setSelection: vi.fn(),
+    updateGroup: vi.fn(),
+    deleteGroup: vi.fn(),
+    selectGroup: vi.fn(),
     setInspectorOpen: vi.fn(),
     clearSelection: vi.fn(),
     setTraceEndpoints: vi.fn(),
@@ -41,18 +44,67 @@ function makeEnv(diagram: Diagram, over: Partial<Store> = {}) {
     diagram,
     past: [],
     future: [],
-    selection: { tableIds: [], noteIds: [], relationshipId: null },
+    selection: { tableIds: [], noteIds: [], relationshipId: null, groupId: null },
     trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
     ...actions,
     ...over,
   } as unknown as Store;
-  const env: MenuEnv = { store, copy: vi.fn(), renameTable: vi.fn(), remove: vi.fn() };
+  const env: MenuEnv = { store, copy: vi.fn(), renameTable: vi.fn(), remove: vi.fn(), removeGroup: vi.fn() };
   return { env, store, actions };
 }
 
 const ids = (items: MenuNode[]) => items.filter((i) => i.kind === 'action').map((i) => i.id);
 const action = (items: MenuNode[], id: string) => items.find((i): i is MenuAction => i.kind === 'action' && i.id === id)!;
 const heading = (items: MenuNode[]) => items.find((i) => i.kind === 'heading');
+
+describe('group region menu', () => {
+  const withGroup = () => {
+    const d = sampleDiagram();
+    const group = d.groups[0];
+    const members = d.tables.filter((t) => t.groupId === group.id);
+    return { d, group, members };
+  };
+
+  it('acts on the region rather than on a table that does not exist', () => {
+    const { d, group, members } = withGroup();
+    const { env, store } = makeEnv(d);
+    const items = buildContextMenu({ type: 'group', groupId: group.id }, env);
+    expect(heading(items)).toMatchObject({ label: group.name, detail: `${members.length} tables · in another database` });
+    expect(ids(items)).toEqual(['select', 'external', 'inspector', 'ungroup', 'delete']);
+
+    action(items, 'select').run();
+    expect(store.setSelection).toHaveBeenCalledWith({ tableIds: members.map((t) => t.id), noteIds: [], relationshipId: null, groupId: null });
+  });
+
+  it('toggles whether the group lives in another database', () => {
+    const { d, group } = withGroup();
+    const { env, store } = makeEnv(d);
+    const items = buildContextMenu({ type: 'group', groupId: group.id }, env);
+    expect(action(items, 'external').checked).toBe(true);
+    action(items, 'external').run();
+    expect(store.updateGroup).toHaveBeenCalledWith(group.id, { external: false });
+  });
+
+  it('separates removing the region from deleting its tables', () => {
+    const { d, group, members } = withGroup();
+    const { env, store } = makeEnv(d);
+    const items = buildContextMenu({ type: 'group', groupId: group.id }, env);
+
+    action(items, 'ungroup').run();
+    expect(store.deleteGroup).toHaveBeenCalledWith(group.id, false);
+
+    expect(action(items, 'delete').label).toBe(`Delete region and its ${members.length} tables`);
+    expect(action(items, 'delete').danger).toBe(true);
+    action(items, 'delete').run();
+    expect(env.removeGroup).toHaveBeenCalledWith(group.id);
+  });
+
+  it('returns nothing for a region that is already gone', () => {
+    const { d } = withGroup();
+    const { env } = makeEnv(d);
+    expect(buildContextMenu({ type: 'group', groupId: 'grp_missing' }, env)).toEqual([]);
+  });
+});
 
 describe('canvas background menu', () => {
   it('adds a table at the clicked point and offers diagram-wide actions', () => {
@@ -103,7 +155,7 @@ describe('table menu', () => {
   it('acts on the whole group when the clicked table is part of a multi-selection', () => {
     const d = sampleDiagram();
     const [a, b] = d.tables;
-    const { env, actions } = makeEnv(d, { selection: { tableIds: [a.id, b.id], noteIds: [], relationshipId: null } });
+    const { env, actions } = makeEnv(d, { selection: { tableIds: [a.id, b.id], noteIds: [], relationshipId: null, groupId: null } });
     const items = buildContextMenu({ type: 'table', tableId: b.id }, env);
     expect(heading(items)).toMatchObject({ label: '2 tables selected' });
     expect(action(items, 'delete').label).toBe('Delete 2 tables');
@@ -118,7 +170,7 @@ describe('table menu', () => {
     const d = sampleDiagram();
     const [a, b] = d.tables;
     const note = d.notes[0];
-    const selection = { tableIds: [a.id, b.id], noteIds: [note.id], relationshipId: null };
+    const selection = { tableIds: [a.id, b.id], noteIds: [note.id], relationshipId: null, groupId: null };
     const { env, actions } = makeEnv(d, { selection });
     for (const target of [
       { type: 'table' as const, tableId: a.id },
@@ -142,7 +194,7 @@ describe('table menu', () => {
     const note = d.notes[0];
     const extra = { ...note, id: 'note2' };
     d.notes.push(extra);
-    const { env } = makeEnv(d, { selection: { tableIds: [], noteIds: [note.id, extra.id], relationshipId: null } });
+    const { env } = makeEnv(d, { selection: { tableIds: [], noteIds: [note.id, extra.id], relationshipId: null, groupId: null } });
     const items = buildContextMenu({ type: 'note', noteId: note.id }, env);
     expect(heading(items)).toMatchObject({ label: '2 notes selected' });
     expect(ids(items)).toEqual(['clear', 'delete']);

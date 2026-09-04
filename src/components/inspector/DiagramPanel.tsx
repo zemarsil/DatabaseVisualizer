@@ -1,4 +1,4 @@
-import { Code2, Database, FileDown, Plus, Route, Shuffle } from 'lucide-react';
+import { Boxes, Code2, Database, FileDown, Plus, Route, Shuffle } from 'lucide-react';
 import { DIALECTS, RELATIONSHIP_KINDS, verbsForKind, type RelationshipKind } from '@shared/types';
 import { flowDerivations } from '@/lib/derivation';
 import { useStore } from '@/store/useStore';
@@ -43,6 +43,8 @@ export function DiagramPanel() {
   const openDrawer = useStore((s) => s.openDrawer);
   const setTracePicking = useStore((s) => s.setTracePicking);
   const setDiagramName = useStore((s) => s.setDiagramName);
+  const addGroup = useStore((s) => s.addGroup);
+  const selectGroup = useStore((s) => s.selectGroup);
 
   const columns = diagram.tables.reduce((n, t) => n + t.columns.length, 0);
   const byKind = (k: RelationshipKind) => diagram.relationships.filter((r) => r.kind === k).length;
@@ -54,6 +56,7 @@ export function DiagramPanel() {
   const tagged = diagram.relationships.filter((r) => r.query && r.query.trim()).length;
   const derived = diagram.relationships.reduce((n, r) => n + flowDerivations(r).length, 0);
   const dialect = DIALECTS.find((d) => d.id === diagram.dialect)?.label ?? diagram.dialect;
+  const externalTables = diagram.tables.filter((t) => diagram.groups.some((g) => g.id === t.groupId && g.external)).length;
 
   return (
     <div>
@@ -82,7 +85,28 @@ export function DiagramPanel() {
           <div className="stat__value">{derived}</div>
           <div className="stat__label">derived columns</div>
         </div>
+        {diagram.groups.length > 0 && (
+          <div className="stat">
+            <div className="stat__value">{diagram.groups.length}</div>
+            <div className="stat__label">groups{externalTables ? ` · ${externalTables} external tables` : ''}</div>
+          </div>
+        )}
       </div>
+      {diagram.groups.length > 0 && (
+        <div className="section">
+          <div className="section__head">
+            <span className="section__title">Groups</span>
+          </div>
+          <div className="chip-list">
+            {diagram.groups.map((g) => (
+              <button key={g.id} className={`chip${g.external ? ' chip--external' : ''}`} onClick={() => selectGroup(g.id)} title={g.external ? 'In another database' : undefined}>
+                {g.name}
+                <span className="faint"> ({diagram.tables.filter((t) => t.groupId === g.id).length})</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="section">
         <div className="section__head">
           <span className="section__title">Quick actions</span>
@@ -90,6 +114,9 @@ export function DiagramPanel() {
         <div className="stack">
           <button className="btn" onClick={() => addTable()}>
             <Plus /> Add a table
+          </button>
+          <button className="btn" onClick={() => addGroup()}>
+            <Boxes /> Add a group
           </button>
           <button className="btn" onClick={() => openDrawer('import')}>
             <FileDown /> Import CREATE TABLE statements
@@ -146,6 +173,7 @@ export function DiagramPanel() {
           <li>Click a table to edit it here; shift-click to select several.</li>
           <li>Drag a column handle onto another table's column to add a foreign key.</li>
           <li>Drag the orange header handle to another table for a table-to-table link, then set its kind in the inspector.</li>
+          <li>Group tables into a region to keep a second database's tables apart; mark the group external and the script stops creating them.</li>
           <li>Everything autosaves in this browser; use File → Save to keep a portable .dbviz.json file.</li>
         </ul>
       </div>

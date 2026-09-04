@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Background,
   BackgroundVariant,
@@ -20,14 +20,34 @@ import { useStore } from '@/store/useStore';
 import { openContextMenu } from '@/components/ui/ContextMenu';
 import type { SelectionChange } from '@/lib/selection';
 import { paletteHue } from '@/lib/palette';
+import { GROUP_STICKINESS, groupAtPoint, groupBounds, inflate, rectCenter, rectContains, tableRect, type Rect } from '@/lib/groups';
 import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode';
 import { NoteNode, type NoteNodeType } from './NoteNode';
+import { GroupNode, GROUP_DRAG_HANDLE, type GroupNodeType } from './GroupNode';
 import { RelationEdge, type RelationEdgeType } from './RelationEdge';
 
-const nodeTypes = { table: TableNode, note: NoteNode };
+const nodeTypes = { table: TableNode, note: NoteNode, tablegroup: GroupNode };
 const edgeTypes = { relation: RelationEdge };
 
-type CanvasNode = TableNodeType | NoteNodeType;
+type CanvasNode = TableNodeType | NoteNodeType | GroupNodeType;
+
+/**
+ * What is currently being dragged. Regions are sized from where their tables
+ * sit, so while a table is in flight we hold its group's box still (computed
+ * without it) instead of letting the region stretch after the cursor.
+ */
+interface DragState {
+  kind: 'tables' | 'group';
+  /** Dragged table ids, or the members of the dragged group. */
+  ids: string[];
+  /** Positions at the moment the drag started, so moves stay absolute. */
+  startPositions: Record<string, { x: number; y: number }>;
+  /** Group being dragged, plus where its box started. */
+  groupId?: string;
+  groupStart?: { x: number; y: number };
+  /** Region boxes as they were before the drag, for groups left empty by it. */
+  boundsAtStart: Record<string, Rect>;
+}
 
 function parseHandle(handle: string | null | undefined): { kind: 'column'; columnId: string } | { kind: 'header'; ownerId: string } | null {
   if (!handle) return null;
@@ -35,6 +55,20 @@ function parseHandle(handle: string | null | undefined): { kind: 'column'; colum
   const i = handle.lastIndexOf('|');
   if (i === -1) return null;
   return { kind: 'column', columnId: handle.slice(0, i) };
+}
+
+/**
+ * Which region a table belongs in after a drag. Another group's region wins
+ * outright; its own region keeps it unless it was dragged clearly outside,
+ * so nudging a table at the edge does not silently drop it out of the group.
+ */
+function resolveGroup(bounds: Record<string, Rect>, center: { x: number; y: number }, currentGroupId: string | undefined): string | null {
+  const others = Object.fromEntries(Object.entries(bounds).filter(([id]) => id !== currentGroupId));
+  const hit = groupAtPoint(others, center);
+  if (hit) return hit;
+  const own = currentGroupId ? bounds[currentGroupId] : undefined;
+  if (own && rectContains(inflate(own, GROUP_STICKINESS), center)) return currentGroupId ?? null;
+  return null;
 }
 
 export function Canvas() {
@@ -66,6 +100,8 @@ export function Canvas() {
   const toast = useStore((s) => s.toast);
   const loadSample = useStore((s) => s.loadSample);
   const openDrawer = useStore((s) => s.openDrawer);
+  const moveGroup = useStore((s) => s.moveGroup);
+  const selectGroup = useStore((s) => s.selectGroup);
 
   const { fitView, screenToFlowPosition } = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -111,6 +147,31 @@ export function Canvas() {
     return m;
   }, [diagram.relationships]);
 
+  /* ---------- group regions ---------- */
+
+  const groupIds = useMemo(() => new Set(diagram.groups.map((g) => g.id)), [diagram.groups]);
+  const dragRef = useRef<DragState | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const [dropTargetId, setDropTargetId] = useState<string | null>(null);
+
+  const bounds = useMemo(
+    () =>
+      groupBounds(diagram, {
+        sizes: nodeSizes,
+        // While tables are in flight their region holds still, so you can see
+        // whether you are dropping them inside it or outside it.
+        exclude: drag?.kind === 'tables' ? new Set(drag.ids) : undefined,
+        fallback: drag?.boundsAtStart,
+      }),
+    [diagram, nodeSizes, drag],
+  );
+
+  const groupTableCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const t of diagram.tables) if (t.groupId) counts[t.groupId] = (counts[t.groupId] ?? 0) + 1;
+    return counts;
+  }, [diagram.tables]);
+
   const tracing = Boolean(trace.result);
   const traceTables = useMemo(() => new Set(trace.result?.tableIds ?? []), [trace.result]);
   const traceRels = useMemo(() => new Set(trace.result?.relationshipIds ?? []), [trace.result]);
@@ -153,18 +214,47 @@ export function Canvas() {
       selected: selection.noteIds.includes(n.id),
       measured: nodeSizes[n.id],
     }));
-    return [...noteNodes, ...tableNodes];
+    // Regions render behind the edges, and let clicks through everywhere except
+    // their title bar, so the canvas underneath keeps working normally.
+    const groupNodes: GroupNodeType[] = diagram.groups.map((g) => {
+      const box = bounds[g.id];
+      return {
+        id: g.id,
+        type: 'tablegroup',
+        position: { x: box.x, y: box.y },
+        width: box.width,
+        height: box.height,
+        data: {
+          group: g,
+          tableCount: groupTableCounts[g.id] ?? 0,
+          selected: selection.groupId === g.id,
+          dimmed: tracing,
+          dropTarget: dropTargetId === g.id,
+        },
+        selectable: false,
+        deletable: false,
+        dragHandle: GROUP_DRAG_HANDLE,
+        zIndex: -1,
+        style: { pointerEvents: 'none' },
+      };
+    });
+    return [...groupNodes, ...noteNodes, ...tableNodes];
   }, [
     diagram.tables,
     diagram.notes,
+    diagram.groups,
     selection.tableIds,
     selection.noteIds,
+    selection.groupId,
     nodeSizes,
     trace.result,
     trace.picking,
     traceTables,
     tracing,
     fkColumnsByTable,
+    bounds,
+    groupTableCounts,
+    dropTargetId,
     embedColumnsByTable,
   ]);
 
@@ -207,6 +297,10 @@ export function Canvas() {
       const moves: { id: string; position: { x: number; y: number } }[] = [];
       const selects: SelectionChange[] = [];
       for (const ch of changes) {
+        // A region's rectangle is derived from its tables, so React Flow's own
+        // position and size changes for it are noise; onNodeDrag moves the
+        // member tables instead.
+        if ('id' in ch && groupIds.has(ch.id)) continue;
         switch (ch.type) {
           case 'position':
             if (ch.position) moves.push({ id: ch.id, position: ch.position });
@@ -240,7 +334,7 @@ export function Canvas() {
       if (moves.length) moveItems(moves);
       if (selects.length) applyNodeSelection(selects, (id) => noteIds.has(id));
     },
-    [noteIds, moveItems, mutate, setNodeSize, applyNodeSelection],
+    [noteIds, groupIds, moveItems, mutate, setNodeSize, applyNodeSelection],
   );
 
   const onEdgesChange = useCallback(
@@ -308,8 +402,148 @@ export function Canvas() {
     [diagram.relationships, addRelationship, toast, setSelection],
   );
 
+  /* ---------- dragging tables and regions ---------- */
+
+  /** Start of a table drag, whether by one node or by the marquee rectangle. */
+  const startTableDrag = useCallback(
+    (dragged: Node[]) => {
+      const d = useStore.getState().diagram;
+      const tables = dragged.filter((n) => n.type === 'table');
+      const state: DragState = {
+        kind: 'tables',
+        ids: tables.map((n) => n.id),
+        startPositions: Object.fromEntries(tables.map((n) => [n.id, { ...n.position }])),
+        boundsAtStart: groupBounds(d, { sizes: nodeSizes }),
+      };
+      dragRef.current = state;
+      setDrag(state);
+    },
+    [nodeSizes],
+  );
+
+  /** Highlights the region a dragged table would land in. */
+  const updateDropTarget = useCallback(
+    (node: Node) => {
+      if (node.type !== 'table' || diagram.groups.length === 0) return;
+      const t = tableMap.get(node.id);
+      if (!t) return;
+      const size = tableRect(t, nodeSizes);
+      const center = rectCenter({ x: node.position.x, y: node.position.y, width: size.width, height: size.height });
+      setDropTargetId(resolveGroup(bounds, center, t.groupId));
+    },
+    [diagram.groups.length, tableMap, nodeSizes, bounds],
+  );
+
+  const onNodeDragStart = useCallback(
+    (_e: MouseEvent | TouchEvent, node: Node, dragged: Node[]) => {
+      beginDrag();
+      if (node.type !== 'tablegroup') {
+        startTableDrag(dragged.length ? dragged : [node]);
+        return;
+      }
+      const d = useStore.getState().diagram;
+      const boundsAtStart = groupBounds(d, { sizes: nodeSizes });
+      {
+        const members = d.tables.filter((t) => t.groupId === node.id);
+        const state: DragState = {
+          kind: 'group',
+          ids: members.map((t) => t.id),
+          startPositions: Object.fromEntries(members.map((t) => [t.id, { ...t.position }])),
+          groupId: node.id,
+          groupStart: { ...node.position },
+          boundsAtStart,
+        };
+        dragRef.current = state;
+        setDrag(state);
+        selectGroup(node.id);
+      }
+    },
+    [beginDrag, nodeSizes, selectGroup, startTableDrag],
+  );
+
+  const onNodeDrag = useCallback(
+    (_e: MouseEvent | TouchEvent, node: Node) => {
+      const state = dragRef.current;
+      if (!state) return;
+      if (state.kind === 'group') {
+        if (node.id !== state.groupId || !state.groupStart) return;
+        // Absolute, not incremental: a dropped frame can never accumulate drift.
+        const dx = node.position.x - state.groupStart.x;
+        const dy = node.position.y - state.groupStart.y;
+        moveItems(state.ids.map((id) => ({ id, position: { x: state.startPositions[id].x + dx, y: state.startPositions[id].y + dy } })));
+        return;
+      }
+      updateDropTarget(node);
+    },
+    [moveItems, updateDropTarget],
+  );
+
+  const onNodeDragStop = useCallback(() => {
+    const state = dragRef.current;
+    dragRef.current = null;
+    setDrag(null);
+    setDropTargetId(null);
+
+    if (state && diagram.groups.length) {
+      const d = useStore.getState().diagram;
+      if (state.kind === 'group' && state.groupId) {
+        // Keep the fallback anchor under the region, so emptying it later does
+        // not teleport the box back to where it was first created.
+        const box = groupBounds(d, { sizes: nodeSizes })[state.groupId];
+        if (box) moveGroup(state.groupId, [], { x: Math.round(box.x), y: Math.round(box.y) });
+      } else if (state.kind === 'tables') {
+        const dropped = groupBounds(d, { sizes: nodeSizes, exclude: new Set(state.ids), fallback: state.boundsAtStart });
+        const moves: { id: string; groupId: string | undefined }[] = [];
+        for (const id of state.ids) {
+          const t = d.tables.find((x) => x.id === id);
+          if (!t) continue;
+          const target = resolveGroup(dropped, rectCenter(tableRect(t, nodeSizes)), t.groupId);
+          if ((t.groupId ?? null) !== target) moves.push({ id, groupId: target ?? undefined });
+        }
+        if (moves.length) {
+          // Same history step as the move itself: one undo puts everything back.
+          mutate(
+            (dd) => {
+              for (const m of moves) {
+                const t = dd.tables.find((x) => x.id === m.id);
+                if (t) t.groupId = m.groupId;
+              }
+            },
+            { history: false },
+          );
+        }
+      }
+    }
+    endDrag();
+  }, [diagram.groups.length, nodeSizes, moveGroup, mutate, endDrag]);
+
+  /**
+   * Dragging the marquee rectangle reports through the selection callbacks
+   * instead of the node ones, so it has to run the same membership pass or a
+   * boxed group of tables would move without ever joining or leaving a region.
+   */
+  const onSelectionDragStart = useCallback(
+    (_e: React.MouseEvent, dragged: Node[]) => {
+      beginDrag();
+      startTableDrag(dragged);
+    },
+    [beginDrag, startTableDrag],
+  );
+
+  const onSelectionDrag = useCallback(
+    (_e: React.MouseEvent, dragged: Node[]) => {
+      const first = dragged.find((n) => n.type === 'table');
+      if (first) updateDropTarget(first);
+    },
+    [updateDropTarget],
+  );
+
   const onNodeClick = useCallback(
     (_e: React.MouseEvent, node: Node) => {
+      if (node.type === 'tablegroup') {
+        selectGroup(node.id);
+        return;
+      }
       if (!trace.picking || node.type !== 'table') return;
       if (!trace.fromId) {
         setTraceEndpoints(node.id, null);
@@ -319,7 +553,7 @@ export function Canvas() {
         setTimeout(() => runTrace(), 0);
       }
     },
-    [trace.picking, trace.fromId, setTraceEndpoints, runTrace],
+    [trace.picking, trace.fromId, setTraceEndpoints, runTrace, selectGroup],
   );
 
   /* ---------- right-click menus ---------- */
@@ -333,6 +567,14 @@ export function Canvas() {
 
   const onNodeContextMenu = useCallback(
     (e: React.MouseEvent, node: Node) => {
+      // A region is a node too, but it is not a table: give it its own menu
+      // rather than letting it fall through and act on a table id that does
+      // not exist.
+      if (node.type === 'tablegroup') {
+        selectGroup(node.id);
+        openContextMenu(e, { type: 'group', groupId: node.id });
+        return;
+      }
       // Right-clicking inside a group selection keeps it and acts on the group.
       const isNote = node.type === 'note';
       const groupSize = selection.tableIds.length + selection.noteIds.length;
@@ -349,7 +591,7 @@ export function Canvas() {
       const columnId = (e.target as Element | null)?.closest?.('[data-column-id]')?.getAttribute('data-column-id') ?? undefined;
       openContextMenu(e, { type: 'table', tableId: node.id, columnId });
     },
-    [selection.tableIds, selection.noteIds, setSelection],
+    [selection.tableIds, selection.noteIds, setSelection, selectGroup],
   );
 
   const onEdgeContextMenu = useCallback(
@@ -427,10 +669,12 @@ export function Canvas() {
         onNodeContextMenu={onNodeContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
         onSelectionContextMenu={onSelectionContextMenu}
-        onNodeDragStart={beginDrag}
-        onNodeDragStop={endDrag}
-        onSelectionDragStart={beginDrag}
-        onSelectionDragStop={endDrag}
+        onNodeDragStart={onNodeDragStart}
+        onNodeDrag={onNodeDrag}
+        onNodeDragStop={onNodeDragStop}
+        onSelectionDragStart={onSelectionDragStart}
+        onSelectionDrag={onSelectionDrag}
+        onSelectionDragStop={onNodeDragStop}
         onSelectionStart={() => void (boxSelecting.current = true)}
         onSelectionEnd={() => void (boxSelecting.current = false)}
         onPaneClick={() => clearSelection()}
@@ -455,7 +699,11 @@ export function Canvas() {
           zoomable
           position="bottom-right"
           style={{ width: 160, height: 100 }}
-          nodeColor={(n) => (n.type === 'table' ? paletteHue((n.data as { table: { color: string } }).table.color) : 'var(--flow)')}
+          nodeColor={(n) => {
+            if (n.type === 'table') return paletteHue((n.data as { table: { color: string } }).table.color);
+            if (n.type === 'tablegroup') return 'var(--minimap-group)';
+            return 'var(--flow)';
+          }}
           nodeStrokeWidth={0}
           maskColor="rgba(0,0,0,0.25)"
         />
