@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Column, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
+import type { Column, CustomType, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
 import { layoutDiagram, type LayoutDirection } from '@/lib/layout';
 import {
   createColumn,
+  createCustomType,
   createIndex,
   createNote,
   createRelationship,
@@ -11,6 +12,7 @@ import {
   emptyDiagram,
   pruneRelationships,
   uniqueColumnName,
+  uniqueCustomTypeName,
   uniqueTableName,
 } from '@/lib/model';
 import { translateType } from '@/lib/sql/dialect';
@@ -20,7 +22,7 @@ import { sampleDiagram } from '@/lib/sample';
 import { newId } from '@/lib/ids';
 
 export type Theme = 'dark' | 'light';
-export type DrawerTab = 'sql' | 'import' | 'database' | 'trace';
+export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'types';
 
 export interface Selection {
   tableIds: string[];
@@ -51,7 +53,22 @@ export interface NodeSize {
 
 const AUTOSAVE_KEY = 'dbviz:autosave';
 const THEME_KEY = 'dbviz:theme';
+const PANEL_SIZES_KEY = 'dbviz:panelSizes';
 const HISTORY_LIMIT = 100;
+
+export interface PanelSizes {
+  sidebarW: number;
+  inspectorW: number;
+  drawerH: number;
+}
+
+const PANEL_SIZE_LIMITS: Record<keyof PanelSizes, [number, number]> = {
+  sidebarW: [180, 480],
+  inspectorW: [260, 560],
+  drawerH: [140, 640],
+};
+
+const DEFAULT_PANEL_SIZES: PanelSizes = { sidebarW: 240, inspectorW: 360, drawerH: 320 };
 
 interface State {
   diagram: Diagram;
@@ -64,6 +81,7 @@ interface State {
   drawer: { open: boolean; tab: DrawerTab };
   sidebarOpen: boolean;
   inspectorOpen: boolean;
+  panelSizes: PanelSizes;
   toasts: Toast[];
   dirty: boolean;
   layoutDirection: LayoutDirection;
@@ -100,6 +118,12 @@ interface Actions {
   deleteIndex: (tableId: string, indexId: string) => void;
   setChecks: (tableId: string, checks: string[]) => void;
 
+  // custom types
+  addCustomType: (kind: CustomType['kind']) => string;
+  updateCustomType: (id: string, patch: Partial<Omit<CustomType, 'id' | 'kind'>>) => void;
+  deleteCustomType: (id: string) => void;
+  customTypeUsage: (id: string) => { table: Table; column: Column }[];
+
   // relationships
   addRelationship: (rel: Omit<Relationship, 'id'>) => string;
   updateRelationship: (id: string, patch: Partial<Omit<Relationship, 'id'>>) => void;
@@ -120,7 +144,7 @@ interface Actions {
   setLayoutDirection: (direction: LayoutDirection) => void;
   requestFitView: () => void;
   focusTable: (id: string | null) => void;
-  importTables: (tables: Table[], relationships: Relationship[], mode: 'merge' | 'replace') => void;
+  importTables: (tables: Table[], relationships: Relationship[], mode: 'merge' | 'replace', customTypes?: CustomType[]) => void;
 
   // selection
   setSelection: (sel: Partial<Selection>) => void;
@@ -140,6 +164,7 @@ interface Actions {
   toggleDrawer: (tab?: DrawerTab) => void;
   setSidebarOpen: (open: boolean) => void;
   setInspectorOpen: (open: boolean) => void;
+  resizePanel: (key: keyof PanelSizes, delta: number) => void;
   toast: (kind: Toast['kind'], message: string) => void;
   dismissToast: (id: string) => void;
   markSaved: () => void;
@@ -165,6 +190,19 @@ function loadTheme(): Theme {
     /* ignore */
   }
   return 'dark';
+}
+
+function loadPanelSizes(): PanelSizes {
+  try {
+    const raw = localStorage.getItem(PANEL_SIZES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PanelSizes>;
+      return { ...DEFAULT_PANEL_SIZES, ...parsed };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { ...DEFAULT_PANEL_SIZES };
 }
 
 const dragSnapshot: { diagram: Diagram | null } = { diagram: null };
@@ -203,6 +241,7 @@ export const useStore = create<Store>()(
       drawer: { open: false, tab: 'sql' },
       sidebarOpen: true,
       inspectorOpen: true,
+      panelSizes: loadPanelSizes(),
       toasts: [],
       dirty: false,
       layoutDirection: 'LR',
@@ -377,6 +416,49 @@ export const useStore = create<Store>()(
           if (t) t.checks = checks;
         }),
 
+      /* ---------------- custom types ---------------- */
+      addCustomType: (kind) => {
+        const d = get().diagram;
+        const ct = createCustomType({ name: uniqueCustomTypeName(d, kind === 'enum' ? 'my_enum' : 'my_type'), kind });
+        mutate((dd) => {
+          dd.customTypes.push(ct);
+        });
+        return ct.id;
+      },
+      updateCustomType: (id, patch) =>
+        mutate((d) => {
+          const ct = d.customTypes.find((x) => x.id === id);
+          if (!ct) return;
+          const renaming = typeof patch.name === 'string' && patch.name.trim() && patch.name !== ct.name;
+          const oldName = ct.name;
+          Object.assign(ct, patch);
+          if (renaming) {
+            const newName = ct.name;
+            const matches = (t: string) => t.trim().toLowerCase() === oldName.toLowerCase();
+            for (const t of d.tables) for (const c of t.columns) if (matches(c.type)) c.type = newName;
+            for (const other of d.customTypes) {
+              if (other.id === id) continue;
+              for (const f of other.fields ?? []) if (matches(f.type)) f.type = newName;
+            }
+          }
+        }),
+      deleteCustomType: (id) =>
+        mutate((d) => {
+          d.customTypes = d.customTypes.filter((t) => t.id !== id);
+        }),
+      customTypeUsage: (id) => {
+        const d = get().diagram;
+        const ct = d.customTypes.find((t) => t.id === id);
+        if (!ct) return [];
+        const out: { table: Table; column: Column }[] = [];
+        for (const t of d.tables) {
+          for (const c of t.columns) {
+            if (c.type.trim().toLowerCase() === ct.name.toLowerCase()) out.push({ table: t, column: c });
+          }
+        }
+        return out;
+      },
+
       /* ---------------- relationships ---------------- */
       addRelationship: (rel) => {
         const r = createRelationship(rel);
@@ -485,16 +567,18 @@ export const useStore = create<Store>()(
       setLayoutDirection: (direction) => set((s) => void (s.layoutDirection = direction)),
       requestFitView: () => set((s) => void s.fitViewNonce++),
       focusTable: (id) => set((s) => void (s.focusTableId = id)),
-      importTables: (tables, relationships, mode) => {
+      importTables: (tables, relationships, mode, customTypes) => {
         const { layoutDirection, nodeSizes } = get();
         mutate((d) => {
           if (mode === 'replace') {
             d.tables = tables;
             d.relationships = relationships;
             d.notes = [];
+            d.customTypes = customTypes ?? [];
           } else {
             d.tables.push(...tables);
             d.relationships.push(...relationships);
+            if (customTypes?.length) d.customTypes.push(...customTypes);
           }
           // Lay everything out in the same history step so one undo removes the import.
           const positions = layoutDiagram(d as Diagram, { direction: layoutDirection, sizes: nodeSizes });
@@ -592,6 +676,18 @@ export const useStore = create<Store>()(
         }),
       setSidebarOpen: (open) => set((s) => void (s.sidebarOpen = open)),
       setInspectorOpen: (open) => set((s) => void (s.inspectorOpen = open)),
+      resizePanel: (key, delta) => {
+        const [min, max] = PANEL_SIZE_LIMITS[key];
+        set((s) => {
+          const next = s.panelSizes[key] + delta;
+          s.panelSizes[key] = Math.min(max, Math.max(min, next));
+        });
+        try {
+          localStorage.setItem(PANEL_SIZES_KEY, JSON.stringify(get().panelSizes));
+        } catch {
+          /* ignore */
+        }
+      },
       toast: (kind, message) => {
         const id = newId('toast');
         set((s) => {

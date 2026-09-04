@@ -1,4 +1,4 @@
-import { AGGREGATE_FUNCTIONS, type AggregateFunction, type Derivation, type Diagram, type Note, type Relationship, type Table } from '@shared/types';
+import { AGGREGATE_FUNCTIONS, type AggregateFunction, type CustomType, type Derivation, type Diagram, type Note, type Relationship, type Table } from '@shared/types';
 import { emptyDiagram } from './model';
 import { newId } from './ids';
 
@@ -135,6 +135,34 @@ export function parseDiagramFile(text: string): Diagram {
     });
   }
   d.notes = notes;
+
+  const customTypes: CustomType[] = [];
+  for (const rc of (Array.isArray(o.customTypes) ? o.customTypes : []) as unknown[]) {
+    if (!rc || typeof rc !== 'object') continue;
+    const c = rc as Record<string, unknown>;
+    if (typeof c.id !== 'string' || typeof c.name !== 'string') continue;
+    const kind = c.kind === 'composite' ? 'composite' : 'enum';
+    customTypes.push({
+      id: c.id,
+      name: c.name,
+      kind,
+      comment: typeof c.comment === 'string' && c.comment ? c.comment : undefined,
+      values: kind === 'enum' ? strArray(c.values) : undefined,
+      fields:
+        kind === 'composite'
+          ? (Array.isArray(c.fields) ? c.fields : [])
+              .filter((f: unknown): f is Record<string, unknown> => Boolean(f) && typeof f === 'object')
+              .filter((f) => typeof f.id === 'string' && typeof f.name === 'string')
+              .map((f) => ({
+                id: f.id as string,
+                name: f.name as string,
+                type: str(f.type, 'TEXT'),
+                comment: typeof f.comment === 'string' && f.comment ? f.comment : undefined,
+              }))
+          : undefined,
+    });
+  }
+  d.customTypes = customTypes;
 
   if (o.viewport && typeof o.viewport === 'object') {
     const v = o.viewport as Record<string, unknown>;

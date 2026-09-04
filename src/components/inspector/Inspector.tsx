@@ -4,6 +4,7 @@ import { TableEditor } from './TableEditor';
 import { RelationshipEditor } from './RelationshipEditor';
 import { NoteEditor } from './NoteEditor';
 import { DiagramPanel } from './DiagramPanel';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
 export function Inspector() {
   const table = useStore(selectSelectedTable);
@@ -12,6 +13,7 @@ export function Inspector() {
   const multi = useStore((s) => s.selection.tableIds);
   const tables = useStore((s) => s.diagram.tables);
   const setInspectorOpen = useStore((s) => s.setInspectorOpen);
+  const resizePanel = useStore((s) => s.resizePanel);
   const deleteTables = useStore((s) => s.deleteTables);
   const setTraceEndpoints = useStore((s) => s.setTraceEndpoints);
   const runTrace = useStore((s) => s.runTrace);
@@ -59,6 +61,7 @@ export function Inspector() {
 
   return (
     <aside className="inspector">
+      <ResizeHandle orientation="vertical" className="resize-handle--start" onResize={(delta) => resizePanel('inspectorW', -delta)} />
       <div className="inspector__head">
         <span className="inspector__title">{title}</span>
         <span className="grow" />
