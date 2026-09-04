@@ -18,10 +18,15 @@ export interface LayoutOptions {
  * them, and dagre's crossing-minimisation orders each layer so that edges
  * cross as little as possible. Disconnected components are packed side by
  * side.
+ *
+ * Tables that share a schema form a group. Dagre's compound-graph support
+ * (setParent) keeps each group's tables contiguous through ranking and
+ * ordering, so detangle can reflow a diagram without pulling a table out of
+ * its schema's cluster or dropping an unrelated table in the middle of one.
  */
 export function layoutDiagram(diagram: Diagram, opts: LayoutOptions = {}): Record<string, { x: number; y: number }> {
   const direction = opts.direction ?? 'LR';
-  const g = new dagre.graphlib.Graph({ multigraph: true });
+  const g = new dagre.graphlib.Graph({ multigraph: true, compound: true });
   g.setGraph({
     rankdir: direction,
     nodesep: opts.nodeSpacing ?? 60,
@@ -35,6 +40,19 @@ export function layoutDiagram(diagram: Diagram, opts: LayoutOptions = {}): Recor
   for (const t of diagram.tables) {
     const size = opts.sizes?.[t.id] ?? estimateNodeSize(t.columns);
     g.setNode(t.id, { width: size.width, height: size.height });
+  }
+
+  // Cluster tables by schema so a group's members stay together.
+  const groupCounts = new Map<string, number>();
+  for (const t of diagram.tables) {
+    if (!t.schema) continue;
+    groupCounts.set(t.schema, (groupCounts.get(t.schema) ?? 0) + 1);
+  }
+  for (const t of diagram.tables) {
+    if (!t.schema || (groupCounts.get(t.schema) ?? 0) < 2) continue;
+    const clusterId = `cluster:${t.schema}`;
+    if (!g.hasNode(clusterId)) g.setNode(clusterId, {});
+    g.setParent(t.id, clusterId);
   }
 
   const seen = new Set<string>();
