@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Column, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
+import type { Column, CustomType, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
 import { layoutDiagram, type LayoutDirection } from '@/lib/layout';
 import {
   createColumn,
+  createCustomType,
   createIndex,
   createNote,
   createRelationship,
@@ -11,6 +12,7 @@ import {
   emptyDiagram,
   pruneRelationships,
   uniqueColumnName,
+  uniqueCustomTypeName,
   uniqueTableName,
 } from '@/lib/model';
 import { translateType } from '@/lib/sql/dialect';
@@ -20,7 +22,7 @@ import { sampleDiagram } from '@/lib/sample';
 import { newId } from '@/lib/ids';
 
 export type Theme = 'dark' | 'light';
-export type DrawerTab = 'sql' | 'import' | 'database' | 'trace';
+export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'types';
 
 export interface Selection {
   tableIds: string[];
@@ -116,6 +118,12 @@ interface Actions {
   deleteIndex: (tableId: string, indexId: string) => void;
   setChecks: (tableId: string, checks: string[]) => void;
 
+  // custom types
+  addCustomType: (kind: CustomType['kind']) => string;
+  updateCustomType: (id: string, patch: Partial<Omit<CustomType, 'id' | 'kind'>>) => void;
+  deleteCustomType: (id: string) => void;
+  customTypeUsage: (id: string) => { table: Table; column: Column }[];
+
   // relationships
   addRelationship: (rel: Omit<Relationship, 'id'>) => string;
   updateRelationship: (id: string, patch: Partial<Omit<Relationship, 'id'>>) => void;
@@ -136,7 +144,7 @@ interface Actions {
   setLayoutDirection: (direction: LayoutDirection) => void;
   requestFitView: () => void;
   focusTable: (id: string | null) => void;
-  importTables: (tables: Table[], relationships: Relationship[], mode: 'merge' | 'replace') => void;
+  importTables: (tables: Table[], relationships: Relationship[], mode: 'merge' | 'replace', customTypes?: CustomType[]) => void;
 
   // selection
   setSelection: (sel: Partial<Selection>) => void;
@@ -408,6 +416,49 @@ export const useStore = create<Store>()(
           if (t) t.checks = checks;
         }),
 
+      /* ---------------- custom types ---------------- */
+      addCustomType: (kind) => {
+        const d = get().diagram;
+        const ct = createCustomType({ name: uniqueCustomTypeName(d, kind === 'enum' ? 'my_enum' : 'my_type'), kind });
+        mutate((dd) => {
+          dd.customTypes.push(ct);
+        });
+        return ct.id;
+      },
+      updateCustomType: (id, patch) =>
+        mutate((d) => {
+          const ct = d.customTypes.find((x) => x.id === id);
+          if (!ct) return;
+          const renaming = typeof patch.name === 'string' && patch.name.trim() && patch.name !== ct.name;
+          const oldName = ct.name;
+          Object.assign(ct, patch);
+          if (renaming) {
+            const newName = ct.name;
+            const matches = (t: string) => t.trim().toLowerCase() === oldName.toLowerCase();
+            for (const t of d.tables) for (const c of t.columns) if (matches(c.type)) c.type = newName;
+            for (const other of d.customTypes) {
+              if (other.id === id) continue;
+              for (const f of other.fields ?? []) if (matches(f.type)) f.type = newName;
+            }
+          }
+        }),
+      deleteCustomType: (id) =>
+        mutate((d) => {
+          d.customTypes = d.customTypes.filter((t) => t.id !== id);
+        }),
+      customTypeUsage: (id) => {
+        const d = get().diagram;
+        const ct = d.customTypes.find((t) => t.id === id);
+        if (!ct) return [];
+        const out: { table: Table; column: Column }[] = [];
+        for (const t of d.tables) {
+          for (const c of t.columns) {
+            if (c.type.trim().toLowerCase() === ct.name.toLowerCase()) out.push({ table: t, column: c });
+          }
+        }
+        return out;
+      },
+
       /* ---------------- relationships ---------------- */
       addRelationship: (rel) => {
         const r = createRelationship(rel);
@@ -516,16 +567,18 @@ export const useStore = create<Store>()(
       setLayoutDirection: (direction) => set((s) => void (s.layoutDirection = direction)),
       requestFitView: () => set((s) => void s.fitViewNonce++),
       focusTable: (id) => set((s) => void (s.focusTableId = id)),
-      importTables: (tables, relationships, mode) => {
+      importTables: (tables, relationships, mode, customTypes) => {
         const { layoutDirection, nodeSizes } = get();
         mutate((d) => {
           if (mode === 'replace') {
             d.tables = tables;
             d.relationships = relationships;
             d.notes = [];
+            d.customTypes = customTypes ?? [];
           } else {
             d.tables.push(...tables);
             d.relationships.push(...relationships);
+            if (customTypes?.length) d.customTypes.push(...customTypes);
           }
           // Lay everything out in the same history step so one undo removes the import.
           const positions = layoutDiagram(d as Diagram, { direction: layoutDirection, sizes: nodeSizes });

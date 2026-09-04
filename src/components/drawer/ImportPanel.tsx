@@ -34,8 +34,9 @@ export function ImportPanel() {
       toast('error', res.errors.length ? 'Nothing imported: fix the errors below.' : 'No CREATE TABLE statements found.');
       return;
     }
-    importTables(res.tables, res.relationships, mode);
-    toast('success', `Imported ${res.tables.length} table(s) and ${res.relationships.length} foreign key(s).`);
+    importTables(res.tables, res.relationships, mode, res.customTypes);
+    const typeNote = res.customTypes.length ? ` and ${res.customTypes.length} type(s)` : '';
+    toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} foreign key(s)${typeNote}.`);
     setSql('');
     setPreview(null);
   };
@@ -78,8 +79,8 @@ export function ImportPanel() {
           </button>
         </div>
         <div className="small muted" style={{ marginBottom: 8 }}>
-          Understands CREATE TABLE with column and table constraints, ALTER TABLE … ADD CONSTRAINT, CREATE INDEX, COMMENT ON and CREATE TYPE … AS ENUM. Other
-          statements are skipped with a warning. Tables referenced but not defined get a placeholder.
+          Understands CREATE TABLE with column and table constraints, ALTER TABLE … ADD CONSTRAINT, CREATE INDEX, COMMENT ON, CREATE TYPE … AS ENUM and CREATE TYPE
+          … AS (composite). Other statements are skipped with a warning. Tables referenced but not defined get a placeholder.
         </div>
         {preview && (
           <div style={{ overflow: 'auto', minHeight: 0 }}>

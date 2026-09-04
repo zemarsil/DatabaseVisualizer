@@ -1,10 +1,12 @@
-import type { Diagram, Dialect, Relationship, Table } from '@shared/types';
-import { createColumn, createIndex, createRelationship, createTable } from '../model';
+import type { CustomType, Diagram, Dialect, Relationship, Table } from '@shared/types';
+import { createColumn, createCustomTypeField, createIndex, createRelationship, createTable } from '../model';
+import { newId } from '../ids';
 import { parseSql, type ParseResult, type ParsedTable } from './parser';
 
 export interface ImportResult {
   tables: Table[];
   relationships: Relationship[];
+  customTypes: CustomType[];
   errors: string[];
   warnings: string[];
   statementCount: number;
@@ -86,7 +88,29 @@ export function parseResultToDiagram(res: ParseResult, existing: Diagram | null 
     t.position = { x: (i % cols) * 320, y: Math.floor(i / cols) * 260 };
   });
 
-  return { tables, relationships, errors, warnings, statementCount: res.statementCount };
+  const existingTypeNames = new Set((existing?.customTypes ?? []).map((t) => t.name.toLowerCase()));
+  const customTypes: CustomType[] = [];
+  for (const e of res.enums) {
+    if (existingTypeNames.has(e.name.toLowerCase())) {
+      warnings.push(`Type ${e.name} already exists in the diagram; the imported enum was skipped.`);
+      continue;
+    }
+    customTypes.push({ id: newId('ctype'), name: e.name, kind: 'enum', values: e.values });
+  }
+  for (const c of res.compositeTypes) {
+    if (existingTypeNames.has(c.name.toLowerCase())) {
+      warnings.push(`Type ${c.name} already exists in the diagram; the imported type was skipped.`);
+      continue;
+    }
+    customTypes.push({
+      id: newId('ctype'),
+      name: c.name,
+      kind: 'composite',
+      fields: c.fields.map((f) => createCustomTypeField({ name: f.name, type: f.type })),
+    });
+  }
+
+  return { tables, relationships, customTypes, errors, warnings, statementCount: res.statementCount };
 }
 
 function parsedTableToTable(pt: ParsedTable): Table {
