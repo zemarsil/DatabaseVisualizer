@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { ArrowRight, Copy, Crosshair, Route, X } from 'lucide-react';
 import { kindMeta } from '@shared/types';
 import { useStore } from '@/store/useStore';
+import { flowDerivations } from '@/lib/derivation';
 import { buildJoinQuery, describeHop } from '@/lib/trace';
 
 export function TracePanel() {
@@ -98,6 +99,11 @@ export function TracePanel() {
                     {kindMeta(r.kind).short}
                   </button>
                   {r.kind === 'fk' ? pairs.join(' AND ') : describeHop(diagram, h)}
+                  {flowDerivations(r).length > 0 && (
+                    <span className="badge badge--flow" style={{ marginLeft: 6 }}>
+                      {flowDerivations(r).length} derived
+                    </span>
+                  )}
                   {r.query && <span className="badge badge--accent" style={{ marginLeft: 6 }}>tagged query</span>}
                 </li>
               );

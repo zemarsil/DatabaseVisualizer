@@ -1,5 +1,6 @@
 import { Code2, Database, FileDown, Plus, Route, Shuffle } from 'lucide-react';
 import { DIALECTS, RELATIONSHIP_KINDS, verbsForKind, type RelationshipKind } from '@shared/types';
+import { flowDerivations } from '@/lib/derivation';
 import { useStore } from '@/store/useStore';
 
 const GLYPH_COLOR: Record<RelationshipKind, string> = {
@@ -51,6 +52,7 @@ export function DiagramPanel() {
     .map((k) => `${byKind(k.id)} ${k.short}`)
     .join(' · ');
   const tagged = diagram.relationships.filter((r) => r.query && r.query.trim()).length;
+  const derived = diagram.relationships.reduce((n, r) => n + flowDerivations(r).length, 0);
   const dialect = DIALECTS.find((d) => d.id === diagram.dialect)?.label ?? diagram.dialect;
 
   return (
@@ -75,6 +77,10 @@ export function DiagramPanel() {
         <div className="stat">
           <div className="stat__value">{tagged}</div>
           <div className="stat__label">tagged queries</div>
+        </div>
+        <div className="stat">
+          <div className="stat__value">{derived}</div>
+          <div className="stat__label">derived columns</div>
         </div>
       </div>
       <div className="section">

@@ -260,6 +260,42 @@ export const DEFAULT_VERBS: Record<RelationshipKind, RelationshipVerb> = {
   dependency: 'uses',
 };
 
+export type AggregateFunction = 'SUM' | 'COUNT' | 'AVG' | 'MIN' | 'MAX';
+
+export const AGGREGATE_FUNCTIONS: AggregateFunction[] = ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX'];
+
+/**
+ * One derived column on a flow relationship: "this target column is filled with
+ * <aggregate>(<expression>) computed over source rows, grouped by <groupBy> and
+ * restricted by <filter>".
+ *
+ * This is the structured counterpart of Relationship.query: enough shape for the
+ * app to render a summary and generate an INSERT ... SELECT skeleton, without
+ * pretending to be a SQL parser. Anything that does not fit (extra joins, window
+ * functions, upsert logic) still belongs in the free-text query, which coexists
+ * with these entries rather than being replaced by them.
+ */
+export interface Derivation {
+  id: string;
+  /**
+   * Column of the relationship's target table that this derivation populates.
+   * Empty (or pointing at a deleted column) means the entry is incomplete: it is
+   * kept but skipped by the generator.
+   */
+  targetColumnId: string;
+  /** Source-side expression as free text, e.g. "quantity * unit_price_cents". */
+  expression: string;
+  /** Aggregate wrapped around the expression; null/undefined means a plain per-row value. */
+  aggregate?: AggregateFunction | null;
+  /**
+   * Grouping keys as free text: usually source column names ("product_id"), but
+   * a key may also be an expression or a column pulled in by a join ("day").
+   */
+  groupBy: string[];
+  /** Optional WHERE-style condition, free text, e.g. "status = 'paid'". */
+  filter?: string;
+}
+
 export interface Relationship {
   id: string;
   kind: RelationshipKind;
@@ -283,6 +319,13 @@ export interface Relationship {
   query?: string;
   /** Free-text note shown next to the query. */
   note?: string;
+  /**
+   * Structured "how each target column is computed" metadata for flow links, one
+   * entry per derived target column. Coexists with `query`: the structured form
+   * drives the summaries and the generated skeleton, the free text covers what it
+   * cannot express.
+   */
+  derivations?: Derivation[];
 }
 
 const KIND_FALLBACK = RELATIONSHIP_KINDS[0];

@@ -3,6 +3,7 @@ import {
   type Column,
   type CustomType,
   type CustomTypeField,
+  type Derivation,
   type Diagram,
   type Dialect,
   type Index,
@@ -49,6 +50,20 @@ export function createIndex(partial: Partial<Index> & { columnIds: string[] }): 
 
 export function createRelationship(partial: Omit<Relationship, 'id'> & { id?: string }): Relationship {
   return { id: newId('rel'), onDelete: 'NO ACTION', onUpdate: 'NO ACTION', ...partial };
+}
+
+export function createDerivation(partial: Partial<Derivation> = {}): Derivation {
+  const { aggregate, ...rest } = partial;
+  return {
+    id: newId('drv'),
+    targetColumnId: '',
+    expression: '',
+    groupBy: [],
+    ...rest,
+    // null is accepted on the type ("no aggregate") but never stored, so a
+    // derivation round-trips through JSON unchanged.
+    ...(aggregate ? { aggregate } : {}),
+  };
 }
 
 export function createNote(partial: Partial<Note> = {}): Note {
@@ -144,6 +159,8 @@ export function pruneRelationships(d: Diagram): Diagram {
       ...r,
       sourceColumnIds: r.sourceColumnIds.filter((id) => columns.has(id)),
       targetColumnIds: r.targetColumnIds.filter((id) => columns.has(id)),
+      // A derivation whose target column is gone has nothing left to populate.
+      ...(r.derivations ? { derivations: r.derivations.filter((dv) => columns.has(dv.targetColumnId)) } : {}),
     }))
     // Only column-pair kinds (FKs) become meaningless without their columns; the
     // documentation kinds are table-to-table and survive a column being dropped.

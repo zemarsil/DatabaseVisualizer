@@ -1,7 +1,8 @@
 import { memo } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
-import { Braces, Code2, GitBranch, Waypoints } from 'lucide-react';
-import { DEFAULT_VERBS, relationshipVerb, type Relationship, type RelationshipKind } from '@shared/types';
+import { Braces, Code2, GitBranch, Sigma, Waypoints } from 'lucide-react';
+import { DEFAULT_VERBS, relationshipVerb, type Relationship, type RelationshipKind, type Table } from '@shared/types';
+import { derivationSummaries, flowDerivations } from '@/lib/derivation';
 import { HEADER_HEIGHT, estimateNodeSize, rowCenterY } from '@/lib/geometry';
 
 export interface RelationEdgeData extends Record<string, unknown> {
@@ -128,8 +129,8 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   const targetNode = useInternalNode(target);
   if (!sourceNode || !targetNode || !data) return null;
 
-  const sTable = (sourceNode.data as { table?: { columns: { name: string; type: string }[] } }).table;
-  const tTable = (targetNode.data as { table?: { columns: { name: string; type: string }[] } }).table;
+  const sTable = (sourceNode.data as { table?: Table }).table;
+  const tTable = (targetNode.data as { table?: Table }).table;
   const sEst = estimateNodeSize(sTable?.columns ?? []);
   const tEst = estimateNodeSize(tTable?.columns ?? []);
   const s = {
@@ -155,6 +156,10 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   const verb = relationshipVerb(r);
   const style = EDGE_STYLE[kind] ?? EDGE_STYLE.fk;
   const hasQuery = Boolean(r.query && r.query.trim());
+  // Structured derivations read as "revenue_cents = SUM(...) GROUP BY ..." without
+  // anyone having to squint at the tagged query.
+  const derivationCount = flowDerivations(r).length;
+  const summaries = derivationSummaries(r, tTable);
   const base = kind === 'fk' && data.attached ? 'var(--edge-strong)' : style.color;
   const color = data.traced ? 'var(--trace)' : selected ? 'var(--accent)' : base;
   const width = data.traced || selected ? 2.5 : data.attached ? 2 : 1.5;
@@ -164,11 +169,13 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   const stub = `M ${g.sx} ${g.sy} L ${g.sx + sDir * MARKER} ${g.sy}`;
 
   // A plain foreign key stays unlabelled so the canvas keeps quiet; anything
-  // that carries meaning (another kind, a chosen verb, a query) says so.
+  // that carries meaning (another kind, a chosen verb, a query, a derivation)
+  // says so. The verb reads the edge, the sigma chip counts the derivations.
   const namedVerb = Boolean(r.verb) && r.verb !== DEFAULT_VERBS[kind];
-  const showLabel = kind !== 'fk' || namedVerb || hasQuery || selected || data.traced;
+  const showLabel = kind !== 'fk' || namedVerb || hasQuery || derivationCount > 0 || selected || data.traced;
   const labelText = r.name || (kind === 'fk' && !namedVerb ? 'FK' : verb.forward);
   const Icon = hasQuery && kind === 'fk' ? Code2 : KIND_ICON[kind];
+  const tooltip = [summaries.join('\n'), hasQuery ? r.query!.trim() : '', r.note?.trim() ?? ''].filter(Boolean).join('\n\n');
   const labelClasses = ['edge-label'];
   if (selected) labelClasses.push('edge-label--selected');
   else if (data.traced) labelClasses.push('edge-label--trace');
@@ -210,10 +217,16 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
           <div
             className={labelClasses.join(' ')}
             style={{ transform: `translate(-50%, -50%) translate(${g.labelX}px, ${g.labelY}px)` }}
-            title={hasQuery ? r.query : r.note || undefined}
+            title={tooltip || undefined}
           >
             {Icon ? <Icon /> : null}
             <span>{labelText}</span>
+            {derivationCount > 0 && (
+              <span className="edge-label__count" title={summaries.join('\n')}>
+                <Sigma />
+                {derivationCount}
+              </span>
+            )}
           </div>
         </EdgeLabelRenderer>
       )}

@@ -1,5 +1,17 @@
-import { isRelationshipKind, normalizeVerb, type CustomType, type Diagram, type Note, type Relationship, type Table } from '@shared/types';
+import {
+  AGGREGATE_FUNCTIONS,
+  isRelationshipKind,
+  normalizeVerb,
+  type AggregateFunction,
+  type CustomType,
+  type Derivation,
+  type Diagram,
+  type Note,
+  type Relationship,
+  type Table,
+} from '@shared/types';
 import { emptyDiagram } from './model';
+import { newId } from './ids';
 
 export const FILE_EXTENSION = '.dbviz.json';
 
@@ -20,6 +32,28 @@ function num(v: unknown, fallback = 0): number {
 }
 function strArray(v: unknown): string[] {
   return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : [];
+}
+
+/**
+ * Structured flow derivations. Absent -> undefined (files written before the
+ * field existed keep loading unchanged); present -> one sanitised entry per
+ * object, so a hand-edited file cannot smuggle in an unknown aggregate.
+ */
+function parseDerivations(v: unknown): Derivation[] | undefined {
+  if (!Array.isArray(v)) return undefined;
+  return v
+    .filter((e: unknown): e is Record<string, unknown> => Boolean(e) && typeof e === 'object')
+    .map((e) => {
+      const aggregate = AGGREGATE_FUNCTIONS.includes(e.aggregate as AggregateFunction) ? (e.aggregate as AggregateFunction) : undefined;
+      return {
+        id: typeof e.id === 'string' && e.id ? e.id : newId('drv'),
+        targetColumnId: str(e.targetColumnId),
+        expression: str(e.expression),
+        groupBy: strArray(e.groupBy),
+        ...(aggregate ? { aggregate } : {}),
+        ...(typeof e.filter === 'string' && e.filter ? { filter: e.filter } : {}),
+      };
+    });
 }
 
 /** Parse and validate a saved file. Tolerant of missing optional fields so old files keep loading. */
@@ -95,6 +129,7 @@ export function parseDiagramFile(text: string): Diagram {
       onUpdate: (r.onUpdate as Relationship['onUpdate']) ?? 'NO ACTION',
       query: typeof r.query === 'string' && r.query ? r.query : undefined,
       note: typeof r.note === 'string' && r.note ? r.note : undefined,
+      derivations: parseDerivations(r.derivations),
     });
   }
   d.relationships = rels;
