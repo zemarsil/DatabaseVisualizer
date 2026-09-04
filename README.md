@@ -83,3 +83,7 @@ npm run typecheck # client + server
 ## Notes on the SQL support
 
 The parser is purpose-built for schema DDL rather than a full SQL grammar. It handles `CREATE TABLE` with column and table constraints in both dialects, `ALTER TABLE … ADD CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`, `COMMENT ON`, and `CREATE TYPE … AS ENUM`. Anything else is skipped with a warning, and a broken statement does not stop the rest of the script from importing. Generated columns, partitioning, and expression indexes are dropped with a warning because the model does not represent them.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE).
