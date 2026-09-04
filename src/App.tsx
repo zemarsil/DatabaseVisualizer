@@ -6,6 +6,7 @@ import { Canvas } from './components/canvas/Canvas';
 import { Inspector } from './components/inspector/Inspector';
 import { Drawer } from './components/drawer/Drawer';
 import { Toasts } from './components/ui/Toasts';
+import { ContextMenuHost, isContextMenuOpen } from './components/ui/ContextMenu';
 import { DialogHost, useDialogStore } from './components/ui/Modal';
 
 function isEditable(el: EventTarget | null): boolean {
@@ -18,6 +19,7 @@ export default function App() {
   const theme = useStore((s) => s.theme);
   const sidebarOpen = useStore((s) => s.sidebarOpen);
   const inspectorOpen = useStore((s) => s.inspectorOpen);
+  const panelSizes = useStore((s) => s.panelSizes);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -25,6 +27,8 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // An open context menu drives the keyboard itself (arrows, Enter, Esc).
+      if (isContextMenuOpen()) return;
       const s = useStore.getState();
       const mod = e.ctrlKey || e.metaKey;
       const bridge = (window as unknown as { __dbviz?: Record<string, () => void> }).__dbviz;
@@ -62,6 +66,11 @@ export default function App() {
           e.preventDefault();
           s.addNote();
           break;
+        case 'g':
+        case 'G':
+          e.preventDefault();
+          s.addGroup({ tableIds: s.selection.tableIds });
+          break;
         case 'l':
         case 'L':
           e.preventDefault();
@@ -76,6 +85,16 @@ export default function App() {
           e.preventDefault();
           useDialogStore.getState().setHelp(true);
           break;
+        case 'Delete':
+        case 'Backspace':
+          // React Flow handles tables, notes and edges; regions are not its nodes.
+          if (s.selection.groupId) {
+            e.preventDefault();
+            const name = s.diagram.groups.find((g) => g.id === s.selection.groupId)?.name ?? 'group';
+            s.deleteGroup(s.selection.groupId, false);
+            s.toast('info', `Removed the "${name}" region. Its tables are still in the diagram.`);
+          }
+          break;
         case 'Escape':
           if (s.trace.picking) s.setTracePicking(false);
           else if (s.trace.result) s.clearTrace();
@@ -89,8 +108,14 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
+  const panelStyle = {
+    '--sidebar-w': `${panelSizes.sidebarW}px`,
+    '--inspector-w': `${panelSizes.inspectorW}px`,
+    '--drawer-h': `${panelSizes.drawerH}px`,
+  } as React.CSSProperties;
+
   return (
-    <div className="app">
+    <div className="app" style={panelStyle}>
       <TopBar />
       <div className="app__body">
         {sidebarOpen ? <Sidebar /> : <div />}
@@ -101,6 +126,7 @@ export default function App() {
         {inspectorOpen ? <Inspector /> : <div />}
       </div>
       <Toasts />
+      <ContextMenuHost />
       <DialogHost />
     </div>
   );

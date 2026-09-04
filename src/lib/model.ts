@@ -1,9 +1,23 @@
-import type { Column, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
+import {
+  kindMeta,
+  type Column,
+  type CustomType,
+  type CustomTypeField,
+  type Derivation,
+  type Diagram,
+  type Dialect,
+  type Group,
+  type Index,
+  type Note,
+  type Relationship,
+  type RelationshipKind,
+  type Table,
+} from '@shared/types';
 import { newId } from './ids';
 import { colorForName } from './palette';
 
 export function emptyDiagram(dialect: Dialect = 'postgresql', name = 'Untitled diagram'): Diagram {
-  return { version: 1, name, dialect, tables: [], relationships: [], notes: [] };
+  return { version: 1, name, dialect, tables: [], relationships: [], notes: [], groups: [], customTypes: [] };
 }
 
 export function createColumn(partial: Partial<Column> & { name: string }): Column {
@@ -20,15 +34,17 @@ export function createColumn(partial: Partial<Column> & { name: string }): Colum
 }
 
 export function createTable(partial: Partial<Table> & { name: string }): Table {
+  // `id` is pulled out so callers cloning a table can pass `id: undefined` and
+  // still get a fresh id (a plain spread would overwrite it with undefined).
+  const { id, ...rest } = partial;
   return {
-    id: newId('tbl'),
+    id: id ?? newId('tbl'),
     columns: [],
     indexes: [],
     checks: [],
     position: { x: 0, y: 0 },
     color: colorForName(partial.name),
-    ...partial,
-    name: partial.name,
+    ...rest,
   };
 }
 
@@ -40,8 +56,55 @@ export function createRelationship(partial: Omit<Relationship, 'id'> & { id?: st
   return { id: newId('rel'), onDelete: 'NO ACTION', onUpdate: 'NO ACTION', ...partial };
 }
 
+export function createGroup(partial: Partial<Group> = {}): Group {
+  return { id: newId('grp'), name: 'New group', color: 'slate', external: false, position: { x: 0, y: 0 }, ...partial };
+}
+
+export function createDerivation(partial: Partial<Derivation> = {}): Derivation {
+  const { aggregate, ...rest } = partial;
+  return {
+    id: newId('drv'),
+    targetColumnId: '',
+    expression: '',
+    groupBy: [],
+    ...rest,
+    // null is accepted on the type ("no aggregate") but never stored, so a
+    // derivation round-trips through JSON unchanged.
+    ...(aggregate ? { aggregate } : {}),
+  };
+}
+
 export function createNote(partial: Partial<Note> = {}): Note {
-  return { id: newId('note'), text: 'New note', position: { x: 0, y: 0 }, width: 220, height: 120, color: 'yellow', ...partial };
+  const { id, ...rest } = partial;
+  return { id: id ?? newId('note'), text: 'New note', position: { x: 0, y: 0 }, width: 220, height: 120, color: 'yellow', ...rest };
+}
+
+export function createCustomTypeField(partial: Partial<CustomTypeField> & { name: string }): CustomTypeField {
+  return { id: newId('ctf'), type: 'TEXT', ...partial, name: partial.name };
+}
+
+export function createCustomType(partial: Partial<CustomType> & { name: string; kind: CustomType['kind'] }): CustomType {
+  return {
+    id: newId('ctype'),
+    values: partial.kind === 'enum' ? ['value_1'] : undefined,
+    fields: partial.kind === 'composite' ? [createCustomTypeField({ name: 'field_1' })] : undefined,
+    ...partial,
+    name: partial.name,
+  };
+}
+
+/** Next free custom type name like "my_type_2". Names live in the same namespace as SQL types, case-insensitive. */
+export function uniqueCustomTypeName(d: Diagram, base = 'my_type'): string {
+  const names = new Set(d.customTypes.map((t) => t.name.toLowerCase()));
+  if (!names.has(base.toLowerCase())) return base;
+  let i = 2;
+  while (names.has(`${base}_${i}`.toLowerCase())) i++;
+  return `${base}_${i}`;
+}
+
+export function customTypeByName(d: Diagram, type: string): CustomType | undefined {
+  const bare = type.trim().replace(/^["'`]|["'`]$/g, '');
+  return d.customTypes.find((t) => t.name.toLowerCase() === bare.toLowerCase());
 }
 
 /** Next free table name like "table_3". */
@@ -51,6 +114,15 @@ export function uniqueTableName(d: Diagram, base = 'new_table'): string {
   let i = 2;
   while (names.has(`${base}_${i}`)) i++;
   return `${base}_${i}`;
+}
+
+/** Next free group name like "Source DB 2". */
+export function uniqueGroupName(d: Diagram, base = 'New group'): string {
+  const names = new Set(d.groups.map((g) => g.name.toLowerCase()));
+  if (!names.has(base.toLowerCase())) return base;
+  let i = 2;
+  while (names.has(`${base} ${i}`.toLowerCase())) i++;
+  return `${base} ${i}`;
 }
 
 export function uniqueColumnName(t: Table, base = 'column'): string {
@@ -86,6 +158,40 @@ export function foreignKeyColumnIds(d: Diagram, tableId: string): Set<string> {
   return ids;
 }
 
+/**
+ * Patch that moves a relationship to another kind while keeping its columns
+ * meaningful: a foreign key needs a column pair, so one is filled in from the
+ * primary key when the connection had none, and a serialized copy is anchored
+ * to the single column that stores it, so everything else is dropped.
+ *
+ * Lives here rather than in either caller because the inspector's kind picker
+ * and the edge context menu both change a connection's kind, and two copies of
+ * these rules would drift.
+ */
+export function relationshipKindPatch(d: Diagram, r: Relationship, kind: RelationshipKind): Partial<Relationship> {
+  if (kind === 'embed') return { kind, sourceColumnIds: r.sourceColumnIds.slice(0, 1), targetColumnIds: [] };
+  if (kind !== 'fk') return { kind };
+  const src = tableById(d, r.sourceTableId);
+  const tgt = tableById(d, r.targetTableId);
+  if (!src?.columns.length || !tgt?.columns.length) return { kind };
+  const sourceColumnIds = r.sourceColumnIds.filter(Boolean);
+  const targetColumnIds = r.targetColumnIds.filter(Boolean);
+  return {
+    kind,
+    sourceColumnIds: sourceColumnIds.length ? sourceColumnIds : [src.columns[0].id],
+    targetColumnIds: targetColumnIds.length ? targetColumnIds : [(tgt.columns.find((c) => c.primaryKey) ?? tgt.columns[0]).id],
+  };
+}
+
+/** Column ids of this table that hold another table serialized inside them. */
+export function embeddedColumnIds(d: Diagram, tableId: string): Set<string> {
+  const ids = new Set<string>();
+  for (const r of d.relationships) {
+    if (r.kind === 'embed' && r.sourceTableId === tableId && r.sourceColumnIds[0]) ids.add(r.sourceColumnIds[0]);
+  }
+  return ids;
+}
+
 /** Remove dangling references after tables/columns are deleted. */
 export function pruneRelationships(d: Diagram): Diagram {
   const tables = new Set(d.tables.map((t) => t.id));
@@ -96,8 +202,12 @@ export function pruneRelationships(d: Diagram): Diagram {
       ...r,
       sourceColumnIds: r.sourceColumnIds.filter((id) => columns.has(id)),
       targetColumnIds: r.targetColumnIds.filter((id) => columns.has(id)),
+      // A derivation whose target column is gone has nothing left to populate.
+      ...(r.derivations ? { derivations: r.derivations.filter((dv) => columns.has(dv.targetColumnId)) } : {}),
     }))
-    .filter((r) => r.kind === 'flow' || (r.sourceColumnIds.length > 0 && r.targetColumnIds.length > 0));
+    // Only column-pair kinds (FKs) become meaningless without their columns; the
+    // documentation kinds are table-to-table and survive a column being dropped.
+    .filter((r) => !kindMeta(r.kind).needsColumnPairs || (r.sourceColumnIds.length > 0 && r.targetColumnIds.length > 0));
   const tablesOut = d.tables.map((t) => ({
     ...t,
     indexes: t.indexes.map((i) => ({ ...i, columnIds: i.columnIds.filter((id) => columns.has(id)) })).filter((i) => i.columnIds.length > 0),

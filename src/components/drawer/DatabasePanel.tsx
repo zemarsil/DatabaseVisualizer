@@ -53,6 +53,11 @@ export function DatabasePanel() {
   const [stopOnError, setStopOnError] = useState(true);
   const [results, setResults] = useState<StatementResult[] | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('replace');
+  // Reading a second database is the usual reason to want a group: keep those
+  // tables together and, by default, out of the schema being designed.
+  const [importGroup, setImportGroup] = useState(true);
+  const [importGroupName, setImportGroupName] = useState('');
+  const [importGroupExternal, setImportGroupExternal] = useState(true);
 
   useEffect(() => {
     try {
@@ -218,7 +223,16 @@ export function DatabasePanel() {
         toast('info', 'The database has no tables.');
         return;
       }
-      importTables(converted.tables, converted.relationships, importMode);
+      importTables(converted.tables, converted.relationships, importMode, {
+        customTypes: converted.customTypes,
+        group: importGroup
+          ? {
+              name: importGroupName.trim() || conn.database || 'Imported database',
+              external: importGroupExternal,
+              note: `${conn.dialect === 'mariadb' ? 'MariaDB' : 'PostgreSQL'} ${conn.database} on ${conn.host}:${conn.port}`,
+            }
+          : undefined,
+      });
         toast('success', `Imported ${converted.tables.length} tables from ${res.serverVersion.split(' ').slice(0, 2).join(' ')}.`);
       if (converted.warnings.length) toast('info', converted.warnings.slice(0, 3).join(' '));
     } catch (e) {
@@ -434,8 +448,28 @@ export function DatabasePanel() {
             <CloudDownload /> {busy === 'introspect' ? 'Reading…' : 'Read schema'}
           </button>
         </div>
+        <div className="row row--wrap" style={{ marginTop: 6 }}>
+          <label className="checkbox small">
+            <input type="checkbox" checked={importGroup} onChange={(e) => setImportGroup(e.target.checked)} /> Put them in a group
+          </label>
+          {importGroup && (
+            <>
+              <input
+                className="input input--sm"
+                style={{ maxWidth: 180 }}
+                value={importGroupName}
+                onChange={(e) => setImportGroupName(e.target.value)}
+                placeholder={conn.database || 'group name'}
+              />
+              <label className="checkbox small" title="Leave these tables out of the generated script and out of anything applied to a database">
+                <input type="checkbox" checked={importGroupExternal} onChange={(e) => setImportGroupExternal(e.target.checked)} /> Another database
+              </label>
+            </>
+          )}
+        </div>
         <div className="field__hint" style={{ marginTop: 6 }}>
-          Reads tables, columns, keys, indexes and foreign keys from the connected database and lays them out.
+          Reads tables, columns, keys, indexes and foreign keys from the connected database and lays them out. Grouping them keeps a database you only read
+          from visually separate; marking it as another database also keeps it out of the CREATE TABLE script.
         </div>
       </div>
     </div>

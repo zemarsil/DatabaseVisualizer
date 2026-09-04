@@ -1,7 +1,7 @@
 {
   "name": "database-visualizer",
   "version": "0.1.0",
-  "private": true,
+  "license": "Apache-2.0",
   "description": "Design database schemas visually: diagram tables, tag connections with queries, generate or import CREATE TABLE DDL, auto-untangle, trace paths, and push the schema into a Docker-hosted PostgreSQL or MariaDB.",
   "type": "module",
   "scripts": {

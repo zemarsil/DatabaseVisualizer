@@ -1,12 +1,13 @@
 import { memo } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
-import { Code2, GitBranch } from 'lucide-react';
-import type { Relationship } from '@shared/types';
+import { Braces, Code2, GitBranch, Sigma, Waypoints } from 'lucide-react';
+import { DEFAULT_VERBS, relationshipVerb, type Relationship, type RelationshipKind, type Table } from '@shared/types';
+import { derivationSummaries, flowDerivations } from '@/lib/derivation';
 import { HEADER_HEIGHT, estimateNodeSize, rowCenterY } from '@/lib/geometry';
 
 export interface RelationEdgeData extends Record<string, unknown> {
   relationship: Relationship;
-  /** Row index of the first source / target column (-1 for header-anchored flow edges). */
+  /** Row index of the first source / target column (-1 when the edge anchors on the header). */
   sourceRow: number;
   targetRow: number;
   hue: string;
@@ -89,18 +90,47 @@ function oneBar(x: number, y: number, dir: number): string {
   return `M ${bx} ${y - 7} L ${bx} ${y + 7} M ${x} ${y} L ${x + dir * MARKER} ${y}`;
 }
 
-function arrowHead(x: number, y: number, dir: number): string {
+/** Open "V" head, for dependencies (UML draws an unenforced link this way). */
+function openArrow(x: number, y: number, dir: number): string {
   const ox = x + dir * MARKER;
   return `M ${ox} ${y} L ${x} ${y} M ${x + dir * 9} ${y - 6} L ${x} ${y} L ${x + dir * 9} ${y + 6}`;
 }
+
+/** Filled head, for data flows: rows really move this way. */
+function solidArrow(x: number, y: number, dir: number): string {
+  const back = x + dir * 11;
+  return `M ${x} ${y} L ${back} ${y - 5.5} L ${back} ${y + 5.5} Z`;
+}
+
+/** Filled diamond at the containing table, for a serialized copy (UML composition). */
+function diamond(x: number, y: number, dir: number): string {
+  const mid = x + dir * (MARKER * 0.5);
+  const end = x + dir * MARKER;
+  return `M ${x} ${y} L ${mid} ${y - 5} L ${end} ${y} L ${mid} ${y + 5} Z`;
+}
+
+/** Stroke colour token and dash pattern per kind. */
+const EDGE_STYLE: Record<RelationshipKind, { color: string; dash?: string }> = {
+  fk: { color: 'var(--edge)' },
+  flow: { color: 'var(--flow)', dash: '7 5' },
+  embed: { color: 'var(--embed)' },
+  dependency: { color: 'var(--dep)', dash: '2 4' },
+};
+
+const KIND_ICON: Record<RelationshipKind, typeof GitBranch | null> = {
+  fk: null,
+  flow: GitBranch,
+  embed: Braces,
+  dependency: Waypoints,
+};
 
 function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<RelationEdgeType>) {
   const sourceNode = useInternalNode(source);
   const targetNode = useInternalNode(target);
   if (!sourceNode || !targetNode || !data) return null;
 
-  const sTable = (sourceNode.data as { table?: { columns: { name: string; type: string }[] } }).table;
-  const tTable = (targetNode.data as { table?: { columns: { name: string; type: string }[] } }).table;
+  const sTable = (sourceNode.data as { table?: Table }).table;
+  const tTable = (targetNode.data as { table?: Table }).table;
   const sEst = estimateNodeSize(sTable?.columns ?? []);
   const tEst = estimateNodeSize(tTable?.columns ?? []);
   const s = {
@@ -122,40 +152,64 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   const tDir = g.tSide === 'right' ? 1 : -1;
 
   const r = data.relationship;
-  const isFlow = r.kind === 'flow';
+  const kind = r.kind;
+  const verb = relationshipVerb(r);
+  const style = EDGE_STYLE[kind] ?? EDGE_STYLE.fk;
   const hasQuery = Boolean(r.query && r.query.trim());
-  const color = data.traced ? 'var(--trace)' : selected ? 'var(--accent)' : isFlow ? 'var(--flow)' : data.attached ? 'var(--edge-strong)' : 'var(--edge)';
+  // Structured derivations read as "revenue_cents = SUM(...) GROUP BY ..." without
+  // anyone having to squint at the tagged query.
+  const derivationCount = flowDerivations(r).length;
+  const summaries = derivationSummaries(r, tTable);
+  const base = kind === 'fk' && data.attached ? 'var(--edge-strong)' : style.color;
+  const color = data.traced ? 'var(--trace)' : selected ? 'var(--accent)' : base;
   const width = data.traced || selected ? 2.5 : data.attached ? 2 : 1.5;
   const opacity = data.dimmed ? 0.18 : 1;
   const markerStyle: React.CSSProperties = { stroke: color, strokeWidth: width, fill: 'none', opacity, transition: 'stroke 0.12s, opacity 0.2s' };
+  const filledStyle: React.CSSProperties = { ...markerStyle, fill: color };
+  const stub = `M ${g.sx} ${g.sy} L ${g.sx + sDir * MARKER} ${g.sy}`;
 
-  const showLabel = isFlow || hasQuery || selected || data.traced;
-  const labelText = isFlow ? r.name || (hasQuery ? 'query' : 'data flow') : hasQuery ? r.name || 'query' : r.name || 'FK';
+  // A plain foreign key stays unlabelled so the canvas keeps quiet; anything
+  // that carries meaning (another kind, a chosen verb, a query, a derivation)
+  // says so. The verb reads the edge, the sigma chip counts the derivations.
+  const namedVerb = Boolean(r.verb) && r.verb !== DEFAULT_VERBS[kind];
+  const showLabel = kind !== 'fk' || namedVerb || hasQuery || derivationCount > 0 || selected || data.traced;
+  const labelText = r.name || (kind === 'fk' && !namedVerb ? 'FK' : verb.forward);
+  const Icon = hasQuery && kind === 'fk' ? Code2 : KIND_ICON[kind];
+  const tooltip = [summaries.join('\n'), hasQuery ? r.query!.trim() : '', r.note?.trim() ?? ''].filter(Boolean).join('\n\n');
   const labelClasses = ['edge-label'];
   if (selected) labelClasses.push('edge-label--selected');
   else if (data.traced) labelClasses.push('edge-label--trace');
-  else if (isFlow) labelClasses.push('edge-label--flow');
+  else if (kind !== 'fk') labelClasses.push(`edge-label--${kind}`);
   else if (hasQuery) labelClasses.push('edge-label--query');
   if (data.dimmed) labelClasses.push('edge-label--dim');
 
   return (
     <>
-      <BaseEdge
-        id={id}
-        path={g.path}
-        style={{ stroke: color, strokeWidth: width, opacity, strokeDasharray: isFlow ? '7 5' : undefined }}
-        interactionWidth={18}
-      />
-      {isFlow ? (
-        <>
-          <path d={`M ${g.sx} ${g.sy} L ${g.sx + sDir * MARKER} ${g.sy}`} style={{ ...markerStyle, strokeDasharray: undefined }} />
-          <path d={arrowHead(g.tx, g.ty, tDir)} style={markerStyle} />
-        </>
-      ) : (
+      <BaseEdge id={id} path={g.path} style={{ stroke: color, strokeWidth: width, opacity, strokeDasharray: style.dash }} interactionWidth={18} />
+      {kind === 'fk' && (
         <>
           <path d={crowsFoot(g.sx, g.sy, sDir)} style={markerStyle} />
           <path d={oneBar(g.tx, g.ty, tDir)} style={markerStyle} />
           {data.optional && <circle cx={g.sx + sDir * (MARKER + 5)} cy={g.sy} r={3.5} style={{ ...markerStyle, fill: 'var(--canvas-bg)' }} />}
+        </>
+      )}
+      {kind === 'flow' && (
+        <>
+          <path d={stub} style={markerStyle} />
+          <path d={`M ${g.tx + tDir * MARKER} ${g.ty} L ${g.tx} ${g.ty}`} style={markerStyle} />
+          <path d={solidArrow(g.tx, g.ty, tDir)} style={filledStyle} />
+        </>
+      )}
+      {kind === 'embed' && (
+        <>
+          <path d={diamond(g.sx, g.sy, sDir)} style={filledStyle} />
+          <path d={`M ${g.tx + tDir * MARKER} ${g.ty} L ${g.tx} ${g.ty}`} style={markerStyle} />
+        </>
+      )}
+      {kind === 'dependency' && (
+        <>
+          <path d={stub} style={markerStyle} />
+          <path d={openArrow(g.tx, g.ty, tDir)} style={markerStyle} />
         </>
       )}
       {showLabel && (
@@ -163,10 +217,16 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
           <div
             className={labelClasses.join(' ')}
             style={{ transform: `translate(-50%, -50%) translate(${g.labelX}px, ${g.labelY}px)` }}
-            title={hasQuery ? r.query : r.note || undefined}
+            title={tooltip || undefined}
           >
-            {isFlow ? <GitBranch /> : hasQuery ? <Code2 /> : null}
+            {Icon ? <Icon /> : null}
             <span>{labelText}</span>
+            {derivationCount > 0 && (
+              <span className="edge-label__count" title={summaries.join('\n')}>
+                <Sigma />
+                {derivationCount}
+              </span>
+            )}
           </div>
         </EdgeLabelRenderer>
       )}
