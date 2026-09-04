@@ -6,6 +6,7 @@ import { Canvas } from './components/canvas/Canvas';
 import { Inspector } from './components/inspector/Inspector';
 import { Drawer } from './components/drawer/Drawer';
 import { Toasts } from './components/ui/Toasts';
+import { ContextMenuHost, isContextMenuOpen } from './components/ui/ContextMenu';
 import { DialogHost, useDialogStore } from './components/ui/Modal';
 
 function isEditable(el: EventTarget | null): boolean {
@@ -26,6 +27,8 @@ export default function App() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // An open context menu drives the keyboard itself (arrows, Enter, Esc).
+      if (isContextMenuOpen()) return;
       const s = useStore.getState();
       const mod = e.ctrlKey || e.metaKey;
       const bridge = (window as unknown as { __dbviz?: Record<string, () => void> }).__dbviz;
@@ -108,6 +111,7 @@ export default function App() {
         {inspectorOpen ? <Inspector /> : <div />}
       </div>
       <Toasts />
+      <ContextMenuHost />
       <DialogHost />
     </div>
   );

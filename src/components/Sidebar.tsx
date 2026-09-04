@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { PanelLeftClose, Plus, Search, StickyNote } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { paletteHue } from '@/lib/palette';
+import { openContextMenu } from '@/components/ui/ContextMenu';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
 export function Sidebar() {
@@ -54,6 +55,10 @@ export function Sidebar() {
                 selectTable(t.id, e.shiftKey);
                 if (!e.shiftKey) focusTable(t.id);
               }}
+              onContextMenu={(e) => {
+                if (!selection.tableIds.includes(t.id)) setSelection({ tableIds: [t.id], relationshipId: null, noteIds: [] });
+                openContextMenu(e, { type: 'table', tableId: t.id });
+              }}
               title={t.comment || t.name}
             >
               <span className="sidebar__dot" style={{ background: paletteHue(t.color) }} />
@@ -70,6 +75,10 @@ export function Sidebar() {
                 key={n.id}
                 className={`sidebar__item${selection.noteIds.includes(n.id) ? ' sidebar__item--active' : ''}`}
                 onClick={() => setSelection({ noteIds: [n.id], tableIds: [], relationshipId: null })}
+                onContextMenu={(e) => {
+                  if (!selection.noteIds.includes(n.id)) setSelection({ noteIds: [n.id], tableIds: [], relationshipId: null });
+                  openContextMenu(e, { type: 'note', noteId: n.id });
+                }}
               >
                 <StickyNote size={13} style={{ color: paletteHue(n.color) }} />
                 <span className="sidebar__name muted">{n.text.split('\n')[0] || 'Empty note'}</span>

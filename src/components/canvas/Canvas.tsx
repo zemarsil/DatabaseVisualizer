@@ -17,6 +17,7 @@ import {
 } from '@xyflow/react';
 import { Crosshair, X } from 'lucide-react';
 import { useStore } from '@/store/useStore';
+import { openContextMenu } from '@/components/ui/ContextMenu';
 import type { SelectionChange } from '@/lib/selection';
 import { paletteHue } from '@/lib/palette';
 import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode';
@@ -321,6 +322,54 @@ export function Canvas() {
     [trace.picking, trace.fromId, setTraceEndpoints, runTrace],
   );
 
+  /* ---------- right-click menus ---------- */
+
+  const onPaneContextMenu = useCallback(
+    (e: React.MouseEvent | MouseEvent) => {
+      openContextMenu(e, { type: 'pane', flowPosition: screenToFlowPosition({ x: e.clientX, y: e.clientY }) });
+    },
+    [screenToFlowPosition],
+  );
+
+  const onNodeContextMenu = useCallback(
+    (e: React.MouseEvent, node: Node) => {
+      // Right-clicking inside a group selection keeps it and acts on the group.
+      const isNote = node.type === 'note';
+      const groupSize = selection.tableIds.length + selection.noteIds.length;
+      if (groupSize > 1 && (isNote ? selection.noteIds : selection.tableIds).includes(node.id)) {
+        openContextMenu(e, { type: 'selection' });
+        return;
+      }
+      if (isNote) {
+        setSelection({ tableIds: [], relationshipId: null, noteIds: [node.id] });
+        openContextMenu(e, { type: 'note', noteId: node.id });
+        return;
+      }
+      setSelection({ tableIds: [node.id], relationshipId: null, noteIds: [] });
+      const columnId = (e.target as Element | null)?.closest?.('[data-column-id]')?.getAttribute('data-column-id') ?? undefined;
+      openContextMenu(e, { type: 'table', tableId: node.id, columnId });
+    },
+    [selection.tableIds, selection.noteIds, setSelection],
+  );
+
+  const onEdgeContextMenu = useCallback(
+    (e: React.MouseEvent, edge: Edge) => {
+      setSelection({ relationshipId: edge.id, tableIds: [], noteIds: [] });
+      openContextMenu(e, { type: 'relationship', relationshipId: edge.id });
+    },
+    [setSelection],
+  );
+
+  const onSelectionContextMenu = useCallback(
+    (e: React.MouseEvent, picked: Node[]) => {
+      const tableIds = picked.filter((n) => n.type === 'table').map((n) => n.id);
+      const noteIds = picked.filter((n) => n.type === 'note').map((n) => n.id);
+      if (tableIds.length || noteIds.length) setSelection({ tableIds, noteIds, relationshipId: null });
+      openContextMenu(e, { type: 'selection' });
+    },
+    [setSelection],
+  );
+
   const onPaneDoubleClick = useCallback(
     (e: React.MouseEvent) => {
       const target = e.target as HTMLElement;
@@ -374,6 +423,10 @@ export function Canvas() {
         isValidConnection={isValidConnection}
         onNodeClick={onNodeClick}
         onNodeDoubleClick={() => setInspectorOpen(true)}
+        onPaneContextMenu={onPaneContextMenu}
+        onNodeContextMenu={onNodeContextMenu}
+        onEdgeContextMenu={onEdgeContextMenu}
+        onSelectionContextMenu={onSelectionContextMenu}
         onNodeDragStart={beginDrag}
         onNodeDragStop={endDrag}
         onSelectionDragStart={beginDrag}
