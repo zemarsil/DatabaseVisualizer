@@ -38,6 +38,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { Column, Relationship, Table } from '@shared/types';
+import { flowDerivations } from '@/lib/derivation';
 import { customTypeByName } from '@/lib/model';
 import { emptySelection, selectionSize, type Selection } from '@/lib/selection';
 import { generateTableSql } from '@/lib/sql/generator';
@@ -448,6 +449,7 @@ function relationshipMenu(relationshipId: string, env: MenuEnv): MenuNode[] {
   if (!r) return [];
   const name = (id: string) => s.diagram.tables.find((t) => t.id === id)?.name ?? '?';
   const query = r.query?.trim() ?? '';
+  const derived = flowDerivations(r).length;
   const select = () => {
     selectOnly(s, { relationshipId: r.id });
     s.setInspectorOpen(true);
@@ -457,7 +459,7 @@ function relationshipMenu(relationshipId: string, env: MenuEnv): MenuNode[] {
       kind: 'heading',
       id: 'head',
       label: `${name(r.sourceTableId)} → ${name(r.targetTableId)}`,
-      detail: r.kind === 'fk' ? 'Foreign key' : 'Data flow',
+      detail: [r.kind === 'fk' ? 'Foreign key' : 'Data flow', derived > 0 && plural(derived, 'derived column')].filter(Boolean).join(' · '),
     },
     { kind: 'action', id: 'edit', label: query ? 'Edit connection' : 'Edit connection / tag a query', icon: PanelRight, run: select },
     { kind: 'action', id: 'swap', label: 'Swap direction', icon: ArrowLeftRight, run: () => s.swapRelationship(r.id) },

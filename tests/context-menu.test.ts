@@ -215,6 +215,14 @@ describe('connection menu', () => {
     });
   });
 
+  it('says how many columns a flow derives', () => {
+    const d = sampleDiagram();
+    const flow = d.relationships.find((r) => r.kind === 'flow' && (r.derivations?.length ?? 0) > 0)!;
+    const { env } = makeEnv(d);
+    const items = buildContextMenu({ type: 'relationship', relationshipId: flow.id }, env);
+    expect(heading(items)).toMatchObject({ detail: `Data flow · ${flow.derivations!.length} derived columns` });
+  });
+
   it('cannot copy a query that is not there', () => {
     const d = sampleDiagram();
     const bare = d.relationships.find((r) => !r.query)!;
