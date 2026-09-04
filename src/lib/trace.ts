@@ -1,4 +1,5 @@
 import type { Diagram, Relationship, Table } from '@shared/types';
+import { externalTableIds } from './groups';
 import { quoteIdent } from './sql/dialect';
 
 export interface PathHop {
@@ -98,6 +99,16 @@ export function buildJoinQuery(d: Diagram, trace: TraceResult): string {
   const q = (s: string) => quoteIdent(s, d.dialect);
   const alias = (i: number) => `t${i}`;
   const lines: string[] = [];
+
+  // A path that leaves the schema you are designing cannot run as one query.
+  const external = externalTableIds(d);
+  const crossed = trace.tableIds.filter((id) => external.has(id));
+  if (crossed.length && crossed.length < trace.tableIds.length) {
+    const names = [...new Set(crossed.map((id) => d.tables.find((t) => t.id === id)?.name ?? '?'))];
+    lines.push(`-- Heads up: this path crosses into another database (${names.join(', ')}).`);
+    lines.push('-- The query below will not run as one statement; stage those tables first.');
+  }
+
   lines.push(`SELECT ${trace.tableIds.map((_, i) => `${alias(i)}.*`).join(', ')}`);
   lines.push(`FROM ${q(trace.from.name)} AS ${alias(0)}`);
   trace.hops.forEach((hop, i) => {

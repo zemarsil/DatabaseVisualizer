@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Column, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
+import type { Column, Diagram, Dialect, Group, Index, Note, Relationship, Table } from '@shared/types';
 import { layoutDiagram, type LayoutDirection } from '@/lib/layout';
 import {
   createColumn,
+  createGroup,
   createIndex,
   createNote,
   createRelationship,
@@ -11,8 +12,11 @@ import {
   emptyDiagram,
   pruneRelationships,
   uniqueColumnName,
+  uniqueGroupName,
   uniqueTableName,
 } from '@/lib/model';
+import { nextGroupPosition } from '@/lib/groups';
+import { PALETTE } from '@/lib/palette';
 import { translateType } from '@/lib/sql/dialect';
 import { findPath, type TraceResult } from '@/lib/trace';
 import { parseDiagramFile, serializeDiagram } from '@/lib/io';
@@ -26,6 +30,12 @@ export interface Selection {
   tableIds: string[];
   relationshipId: string | null;
   noteId: string | null;
+  groupId: string | null;
+}
+
+/** A fresh empty selection; always call it so nothing shares an object. */
+export function noSelection(): Selection {
+  return { tableIds: [], relationshipId: null, noteId: null, groupId: null };
 }
 
 export interface TraceState {
@@ -106,6 +116,15 @@ interface Actions {
   deleteRelationship: (id: string) => void;
   swapRelationship: (id: string) => void;
 
+  // groups
+  addGroup: (opts?: { name?: string; tableIds?: string[]; external?: boolean; color?: string; note?: string }) => string;
+  updateGroup: (id: string, patch: Partial<Omit<Group, 'id'>>) => void;
+  /** Removes the region. The tables stay unless withTables is true. */
+  deleteGroup: (id: string, withTables?: boolean) => void;
+  setTableGroup: (tableIds: string[], groupId: string | null) => void;
+  /** Drag a region: its member tables move with it, in one history step. */
+  moveGroup: (id: string, moves: { id: string; position: { x: number; y: number } }[], anchor: { x: number; y: number }) => void;
+
   // notes
   addNote: (position?: { x: number; y: number }) => string;
   updateNote: (id: string, patch: Partial<Omit<Note, 'id'>>) => void;
@@ -120,11 +139,17 @@ interface Actions {
   setLayoutDirection: (direction: LayoutDirection) => void;
   requestFitView: () => void;
   focusTable: (id: string | null) => void;
-  importTables: (tables: Table[], relationships: Relationship[], mode: 'merge' | 'replace') => void;
+  importTables: (
+    tables: Table[],
+    relationships: Relationship[],
+    mode: 'merge' | 'replace',
+    group?: { name: string; external: boolean; note?: string },
+  ) => void;
 
   // selection
   setSelection: (sel: Partial<Selection>) => void;
   selectTable: (id: string, additive?: boolean) => void;
+  selectGroup: (id: string | null) => void;
   clearSelection: () => void;
 
   // trace
@@ -167,6 +192,8 @@ function loadTheme(): Theme {
   return 'dark';
 }
 
+const PALETTE_KEYS = PALETTE.map((p) => p.key);
+
 const dragSnapshot: { diagram: Diagram | null } = { diagram: null };
 
 export const useStore = create<Store>()(
@@ -197,7 +224,7 @@ export const useStore = create<Store>()(
       past: [],
       future: [],
       nodeSizes: {},
-      selection: { tableIds: [], relationshipId: null, noteId: null },
+      selection: noSelection(),
       trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
       theme: loadTheme(),
       drawer: { open: false, tab: 'sql' },
@@ -238,7 +265,7 @@ export const useStore = create<Store>()(
           s.diagram = d;
           s.past = [];
           s.future = [];
-          s.selection = { tableIds: [], relationshipId: null, noteId: null };
+          s.selection = noSelection();
           s.trace = { fromId: null, toId: null, result: null, searched: false, picking: false };
           s.nodeSizes = {};
           s.dirty = false;
@@ -268,7 +295,7 @@ export const useStore = create<Store>()(
           dd.tables.push(t);
         });
         set((s) => {
-          s.selection = { tableIds: [t.id], relationshipId: null, noteId: null };
+          s.selection = { ...noSelection(), tableIds: [t.id] };
           s.inspectorOpen = true;
         });
         return t.id;
@@ -313,7 +340,7 @@ export const useStore = create<Store>()(
           dd.tables.push(copy);
         });
         set((s) => {
-          s.selection = { tableIds: [copy.id], relationshipId: null, noteId: null };
+          s.selection = { ...noSelection(), tableIds: [copy.id] };
         });
       },
       addColumn: (tableId, partial) => {
@@ -384,7 +411,7 @@ export const useStore = create<Store>()(
           d.relationships.push(r);
         });
         set((s) => {
-          s.selection = { tableIds: [], relationshipId: r.id, noteId: null };
+          s.selection = { ...noSelection(), relationshipId: r.id };
           s.inspectorOpen = true;
           invalidateTrace(s);
         });
@@ -412,6 +439,78 @@ export const useStore = create<Store>()(
           [r.sourceColumnIds, r.targetColumnIds] = [r.targetColumnIds, r.sourceColumnIds];
         }),
 
+      /* ---------------- groups ---------------- */
+      addGroup: (opts = {}) => {
+        const d = get().diagram;
+        const g = createGroup({
+          name: uniqueGroupName(d, opts.name?.trim() || 'New group'),
+          external: opts.external ?? false,
+          color: opts.color ?? PALETTE_KEYS[d.groups.length % PALETTE_KEYS.length],
+          note: opts.note,
+          position: nextGroupPosition(d, get().nodeSizes),
+        });
+        const ids = new Set(opts.tableIds ?? []);
+        mutate((dd) => {
+          dd.groups.push(g);
+          for (const t of dd.tables) if (ids.has(t.id)) t.groupId = g.id;
+        });
+        set((s) => {
+          s.selection = { ...noSelection(), groupId: g.id };
+          s.inspectorOpen = true;
+        });
+        return g.id;
+      },
+      updateGroup: (id, patch) =>
+        mutate((d) => {
+          const g = d.groups.find((x) => x.id === id);
+          if (g) Object.assign(g, patch);
+        }),
+      deleteGroup: (id, withTables) => {
+        const doomed = withTables ? get().diagram.tables.filter((t) => t.groupId === id).map((t) => t.id) : [];
+        mutate((d) => {
+          d.groups = d.groups.filter((g) => g.id !== id);
+          if (withTables) {
+            const idSet = new Set(doomed);
+            d.tables = d.tables.filter((t) => !idSet.has(t.id));
+            const pruned = pruneRelationships(d);
+            d.relationships = pruned.relationships;
+            d.tables = pruned.tables;
+          } else {
+            for (const t of d.tables) if (t.groupId === id) t.groupId = undefined;
+          }
+        });
+        set((s) => {
+          if (s.selection.groupId === id) s.selection.groupId = null;
+          if (doomed.length) {
+            const idSet = new Set(doomed);
+            s.selection.tableIds = s.selection.tableIds.filter((x) => !idSet.has(x));
+            if (s.trace.fromId && idSet.has(s.trace.fromId)) s.trace.fromId = null;
+            if (s.trace.toId && idSet.has(s.trace.toId)) s.trace.toId = null;
+            invalidateTrace(s);
+          }
+        });
+      },
+      setTableGroup: (tableIds, groupId) => {
+        if (!tableIds.length) return;
+        const ids = new Set(tableIds);
+        mutate((d) => {
+          for (const t of d.tables) if (ids.has(t.id)) t.groupId = groupId ?? undefined;
+        });
+      },
+      moveGroup: (id, moves, anchor) =>
+        mutate(
+          (d) => {
+            const byId = new Map(moves.map((m) => [m.id, m.position]));
+            for (const t of d.tables) {
+              const p = byId.get(t.id);
+              if (p) t.position = p;
+            }
+            const g = d.groups.find((x) => x.id === id);
+            if (g) g.position = anchor;
+          },
+          { history: false },
+        ),
+
       /* ---------------- notes ---------------- */
       addNote: (position) => {
         const n = createNote({ position: position ?? { x: 120, y: 120 } });
@@ -419,7 +518,7 @@ export const useStore = create<Store>()(
           d.notes.push(n);
         });
         set((s) => {
-          s.selection = { tableIds: [], relationshipId: null, noteId: n.id };
+          s.selection = { ...noSelection(), noteId: n.id };
         });
         return n.id;
       },
@@ -485,16 +584,27 @@ export const useStore = create<Store>()(
       setLayoutDirection: (direction) => set((s) => void (s.layoutDirection = direction)),
       requestFitView: () => set((s) => void s.fitViewNonce++),
       focusTable: (id) => set((s) => void (s.focusTableId = id)),
-      importTables: (tables, relationships, mode) => {
-        const { layoutDirection, nodeSizes } = get();
+      importTables: (tables, relationships, mode, group) => {
+        const { layoutDirection, nodeSizes, diagram } = get();
+        const newGroup = group
+          ? createGroup({
+              name: uniqueGroupName(mode === 'replace' ? { ...diagram, groups: [] } : diagram, group.name.trim() || 'Imported'),
+              external: group.external,
+              note: group.note,
+              color: PALETTE_KEYS[(mode === 'replace' ? 0 : diagram.groups.length) % PALETTE_KEYS.length],
+            })
+          : null;
+        if (newGroup) for (const t of tables) t.groupId = newGroup.id;
         mutate((d) => {
           if (mode === 'replace') {
             d.tables = tables;
             d.relationships = relationships;
             d.notes = [];
+            d.groups = newGroup ? [newGroup] : [];
           } else {
             d.tables.push(...tables);
             d.relationships.push(...relationships);
+            if (newGroup) d.groups.push(newGroup);
           }
           // Lay everything out in the same history step so one undo removes the import.
           const positions = layoutDiagram(d as Diagram, { direction: layoutDirection, sizes: nodeSizes });
@@ -504,7 +614,7 @@ export const useStore = create<Store>()(
           }
         });
         set((s) => {
-          s.selection = { tableIds: [], relationshipId: null, noteId: null };
+          s.selection = noSelection();
           invalidateTrace(s);
           s.fitViewNonce++;
         });
@@ -527,9 +637,14 @@ export const useStore = create<Store>()(
           s.selection.noteId = null;
           s.inspectorOpen = true;
         }),
+      selectGroup: (id) =>
+        set((s) => {
+          s.selection = { ...noSelection(), groupId: id };
+          if (id) s.inspectorOpen = true;
+        }),
       clearSelection: () =>
         set((s) => {
-          s.selection = { tableIds: [], relationshipId: null, noteId: null };
+          s.selection = noSelection();
         }),
 
       /* ---------------- trace ---------------- */
@@ -629,3 +744,5 @@ export const selectSelectedRelationship = (s: Store): Relationship | undefined =
   s.selection.relationshipId ? s.diagram.relationships.find((r) => r.id === s.selection.relationshipId) : undefined;
 export const selectSelectedNote = (s: Store): Note | undefined =>
   s.selection.noteId ? s.diagram.notes.find((n) => n.id === s.selection.noteId) : undefined;
+export const selectSelectedGroup = (s: Store): Group | undefined =>
+  s.selection.groupId ? s.diagram.groups.find((g) => g.id === s.selection.groupId) : undefined;

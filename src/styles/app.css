@@ -33,6 +33,9 @@
   --node-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
   --edge: #6b7590;
   --edge-strong: #aab3cc;
+  --group-fill: 7%;
+  --group-stroke: 46%;
+  --minimap-group: rgba(143, 155, 179, 0.22);
   --shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
   --radius: 10px;
   --radius-sm: 6px;
@@ -72,6 +75,9 @@
   --node-shadow: 0 4px 16px rgba(30, 40, 70, 0.14);
   --edge: #7c869e;
   --edge-strong: #3d465c;
+  --group-fill: 9%;
+  --group-stroke: 52%;
+  --minimap-group: rgba(120, 132, 158, 0.2);
   --shadow: 0 10px 30px rgba(30, 40, 70, 0.18);
   color-scheme: light;
 }
@@ -624,6 +630,49 @@ a {
   color: var(--text-muted);
   line-height: 1.5;
 }
+.sidebar__group {
+  --hue: #8f9bb3;
+  margin: 6px 0 2px;
+  border-left: 2px solid color-mix(in srgb, var(--hue) 55%, transparent);
+  padding-left: 4px;
+}
+.sidebar__group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.sidebar__group-head:hover {
+  background: var(--bg-hover);
+}
+.sidebar__group-head--active {
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.sidebar__group-head svg {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  color: var(--hue);
+}
+.sidebar__ext {
+  padding: 0 4px;
+  border-radius: 3px;
+  border: 1px solid var(--border-strong);
+  color: var(--text-faint);
+  font-size: 9px;
+}
 .panel-toggle {
   position: absolute;
   top: 10px;
@@ -945,6 +994,93 @@ a {
   opacity: 0 !important;
 }
 
+/* ---- group region ---- */
+/* The wrapper lets clicks through so the canvas underneath keeps working; only
+   the title bar takes the pointer, which is also the drag handle. */
+.react-flow__node-tablegroup {
+  pointer-events: none !important;
+  cursor: default;
+}
+.group-node {
+  --hue: #8f9bb3;
+  width: 100%;
+  height: 100%;
+  border-radius: 14px;
+  border: 1.5px solid color-mix(in srgb, var(--hue) var(--group-stroke), transparent);
+  background: color-mix(in srgb, var(--hue) var(--group-fill), transparent);
+  position: relative;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.group-node--external {
+  border-style: dashed;
+  background: repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--hue) 7%, transparent) 0 10px,
+      transparent 10px 22px
+    ),
+    color-mix(in srgb, var(--hue) var(--group-fill), transparent);
+}
+.group-node--selected {
+  border-color: var(--hue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--hue) 26%, transparent);
+}
+.group-node--drop {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.group-node--dim {
+  opacity: 0.3;
+}
+.group-node__header {
+  pointer-events: all;
+  cursor: grab;
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--hue) 45%, var(--node-border));
+  background: color-mix(in srgb, var(--hue) 18%, var(--node-bg));
+  color: var(--text);
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+}
+.group-node__header:active {
+  cursor: grabbing;
+}
+.group-node__header svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--hue);
+}
+.group-node__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.group-node__count {
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.group-node__badge {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--hue) 30%, transparent);
+  color: var(--text-muted);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 /* ---- note node ---- */
 .note-node {
   --hue: #e0af68;
@@ -1208,6 +1344,10 @@ a {
   background: var(--accent-soft);
   border-color: var(--accent);
   color: var(--accent);
+}
+.chip--external {
+  border-style: dashed;
+  border-color: var(--border-strong);
 }
 .list-item {
   padding: 8px;

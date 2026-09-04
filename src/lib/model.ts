@@ -1,9 +1,9 @@
-import type { Column, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
+import type { Column, Diagram, Dialect, Group, Index, Note, Relationship, Table } from '@shared/types';
 import { newId } from './ids';
 import { colorForName } from './palette';
 
 export function emptyDiagram(dialect: Dialect = 'postgresql', name = 'Untitled diagram'): Diagram {
-  return { version: 1, name, dialect, tables: [], relationships: [], notes: [] };
+  return { version: 1, name, dialect, tables: [], relationships: [], notes: [], groups: [] };
 }
 
 export function createColumn(partial: Partial<Column> & { name: string }): Column {
@@ -40,6 +40,10 @@ export function createRelationship(partial: Omit<Relationship, 'id'> & { id?: st
   return { id: newId('rel'), onDelete: 'NO ACTION', onUpdate: 'NO ACTION', ...partial };
 }
 
+export function createGroup(partial: Partial<Group> = {}): Group {
+  return { id: newId('grp'), name: 'New group', color: 'slate', external: false, position: { x: 0, y: 0 }, ...partial };
+}
+
 export function createNote(partial: Partial<Note> = {}): Note {
   return { id: newId('note'), text: 'New note', position: { x: 0, y: 0 }, width: 220, height: 120, color: 'yellow', ...partial };
 }
@@ -51,6 +55,15 @@ export function uniqueTableName(d: Diagram, base = 'new_table'): string {
   let i = 2;
   while (names.has(`${base}_${i}`)) i++;
   return `${base}_${i}`;
+}
+
+/** Next free group name like "Source DB 2". */
+export function uniqueGroupName(d: Diagram, base = 'New group'): string {
+  const names = new Set(d.groups.map((g) => g.name.toLowerCase()));
+  if (!names.has(base.toLowerCase())) return base;
+  let i = 2;
+  while (names.has(`${base} ${i}`.toLowerCase())) i++;
+  return `${base} ${i}`;
 }
 
 export function uniqueColumnName(t: Table, base = 'column'): string {

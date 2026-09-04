@@ -1,20 +1,23 @@
-import { PanelRightClose, Route, Trash2 } from 'lucide-react';
-import { selectSelectedNote, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
+import { Boxes, PanelRightClose, Route, Trash2 } from 'lucide-react';
+import { selectSelectedGroup, selectSelectedNote, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
 import { TableEditor } from './TableEditor';
 import { RelationshipEditor } from './RelationshipEditor';
 import { NoteEditor } from './NoteEditor';
+import { GroupEditor } from './GroupEditor';
 import { DiagramPanel } from './DiagramPanel';
 
 export function Inspector() {
   const table = useStore(selectSelectedTable);
   const relationship = useStore(selectSelectedRelationship);
   const note = useStore(selectSelectedNote);
+  const group = useStore(selectSelectedGroup);
   const multi = useStore((s) => s.selection.tableIds);
   const tables = useStore((s) => s.diagram.tables);
   const setInspectorOpen = useStore((s) => s.setInspectorOpen);
   const deleteTables = useStore((s) => s.deleteTables);
   const setTraceEndpoints = useStore((s) => s.setTraceEndpoints);
   const runTrace = useStore((s) => s.runTrace);
+  const addGroup = useStore((s) => s.addGroup);
 
   let title = 'Diagram';
   let body: React.ReactNode;
@@ -27,6 +30,9 @@ export function Inspector() {
   } else if (note) {
     title = 'Note';
     body = <NoteEditor note={note} />;
+  } else if (group) {
+    title = group.external ? 'External group' : 'Group';
+    body = <GroupEditor group={group} />;
   } else if (multi.length > 1) {
     title = `${multi.length} tables selected`;
     const names = multi.map((id) => tables.find((t) => t.id === id)?.name ?? '?');
@@ -39,6 +45,9 @@ export function Inspector() {
             </span>
           ))}
         </div>
+        <button className="btn" onClick={() => addGroup({ tableIds: multi })}>
+          <Boxes /> Group these {multi.length} tables
+        </button>
         <button
           className="btn"
           onClick={() => {

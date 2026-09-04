@@ -71,6 +71,13 @@ function HelpContent() {
         handle next to a column to a column in another table to create a foreign key. Drag from the orange handle in a table header to another table to add a
         data-flow link, then tag it with the query that moves the data.
       </p>
+      <h4>Grouping tables</h4>
+      <p>
+        Press <K k="G" /> (or the group button in the top bar) to draw a region around the selected tables, so a second database&apos;s tables stay visually
+        apart from the schema you are designing. Drag a table into or out of a region to change what is in it, and drag a region by its title bar to move
+        everything inside it. Tick <em>These tables live in another database</em> in the inspector and the group turns external: the generated script documents
+        those tables instead of creating them, and nothing runs against them when you apply the schema. Detangle keeps each group together.
+      </p>
       <h4>Working with SQL</h4>
       <p>
         The SQL tab shows the CREATE TABLE script for the whole diagram (or the selected table). The Import tab turns CREATE TABLE statements into tables.
@@ -112,6 +119,10 @@ function HelpContent() {
           <K k="N" />
         </span>
         <span>Add note</span>
+        <span>
+          <K k="G" />
+        </span>
+        <span>Group the selected tables</span>
         <span>
           <K k="L" />
         </span>
