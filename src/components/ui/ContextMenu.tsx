@@ -119,21 +119,24 @@ function ContextMenuView({ menu }: { menu: OpenMenu }) {
     el.focus({ preventScroll: true });
   }, [menu.x, menu.y]);
 
-  /* Dismissal: a click elsewhere, scrolling, resizing or leaving the window. */
+  /* Dismissal: a click elsewhere, a wheel, a resize, or leaving the window.
+     Deliberately not the scroll event: focusing the clicked node makes React
+     Flow scroll it into view, which would close the menu as it opens. */
   useEffect(() => {
+    const outside = (e: Event) => !ref.current?.contains(e.target as Node);
     const onPointerDown = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) closeContextMenu();
+      if (outside(e)) closeContextMenu();
     };
-    const onScroll = (e: Event) => {
-      if (!ref.current?.contains(e.target as Node)) closeContextMenu();
+    const onWheel = (e: WheelEvent) => {
+      if (outside(e)) closeContextMenu();
     };
     window.addEventListener('mousedown', onPointerDown, true);
-    window.addEventListener('scroll', onScroll, true);
+    window.addEventListener('wheel', onWheel, true);
     window.addEventListener('resize', closeContextMenu);
     window.addEventListener('blur', closeContextMenu);
     return () => {
       window.removeEventListener('mousedown', onPointerDown, true);
-      window.removeEventListener('scroll', onScroll, true);
+      window.removeEventListener('wheel', onWheel, true);
       window.removeEventListener('resize', closeContextMenu);
       window.removeEventListener('blur', closeContextMenu);
     };

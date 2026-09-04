@@ -27,6 +27,7 @@ import {
   Plus,
   Redo2,
   Route,
+  Shapes,
   Shuffle,
   SquareDashedMousePointer,
   StickyNote,
@@ -37,6 +38,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import type { Column, Relationship, Table } from '@shared/types';
+import { customTypeByName } from '@/lib/model';
 import { generateTableSql } from '@/lib/sql/generator';
 import type { Store } from '@/store/useStore';
 
@@ -174,6 +176,7 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
     { kind: 'action', id: 'redo', label: 'Redo', icon: Redo2, hint: 'Ctrl+Shift+Z', disabled: s.future.length === 0, run: () => s.redo() },
     sep('s3'),
     { kind: 'action', id: 'sql', label: 'SQL script', icon: Code2, run: () => s.openDrawer('sql') },
+    { kind: 'action', id: 'types', label: 'Custom types', icon: Shapes, run: () => s.openDrawer('types') },
     { kind: 'action', id: 'import', label: 'Import SQL…', icon: FileDown, run: () => s.openDrawer('import') },
     { kind: 'action', id: 'database', label: 'Docker & database', icon: Database, run: () => s.openDrawer('database') },
   );
@@ -274,12 +277,13 @@ function columnMenu(table: Table, column: Column, env: MenuEnv): MenuNode[] {
   const patch = (p: Partial<Column>) => s.updateColumn(table.id, column.id, p);
   const index = table.columns.findIndex((c) => c.id === column.id);
   const isFk = s.diagram.relationships.some((r) => r.kind === 'fk' && r.sourceColumnIds.includes(column.id));
+  const customType = customTypeByName(s.diagram, column.type);
   return [
     {
       kind: 'heading',
       id: 'head',
       label: `${table.name}.${column.name}`,
-      detail: `${column.type}${isFk ? ' · foreign key' : ''}`,
+      detail: [column.type, customType && (customType.kind === 'enum' ? 'enum' : 'struct'), isFk && 'foreign key'].filter(Boolean).join(' · '),
     },
     { kind: 'action', id: 'pk', label: 'Primary key', icon: KeyRound, checked: column.primaryKey, run: () => patch({ primaryKey: !column.primaryKey }) },
     { kind: 'action', id: 'nn', label: 'Not null', checked: !column.nullable, run: () => patch({ nullable: !column.nullable }) },
@@ -298,6 +302,9 @@ function columnMenu(table: Table, column: Column, env: MenuEnv): MenuNode[] {
       run: () => s.moveColumn(table.id, column.id, 1),
     },
     { kind: 'action', id: 'copy-name', label: 'Copy column name', icon: ClipboardCopy, run: () => env.copy(column.name, 'Copied the column name.') },
+    ...(customType
+      ? [{ kind: 'action' as const, id: 'edit-type', label: `Edit type "${customType.name}"`, icon: Shapes, run: () => s.openDrawer('types') }]
+      : []),
     sep('s2'),
     {
       kind: 'action',

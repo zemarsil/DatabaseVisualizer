@@ -58,7 +58,9 @@ describe('canvas background menu', () => {
     const d = sampleDiagram();
     const { env, actions } = makeEnv(d);
     const items = buildContextMenu({ type: 'pane', flowPosition: { x: 500, y: 300 } }, env);
-    expect(ids(items)).toEqual(expect.arrayContaining(['add-table', 'add-note', 'select-all', 'detangle', 'fit', 'undo', 'redo', 'sql', 'import', 'database']));
+    expect(ids(items)).toEqual(
+      expect.arrayContaining(['add-table', 'add-note', 'select-all', 'detangle', 'fit', 'undo', 'redo', 'sql', 'types', 'import', 'database']),
+    );
     action(items, 'add-table').run();
     expect(actions.addTable).toHaveBeenCalledWith({ x: 380, y: 280 });
   });
@@ -128,6 +130,25 @@ describe('column menu', () => {
     action(items, 'pk').run();
     expect(actions.updateColumn).toHaveBeenCalledWith(orders.id, pk.id, { primaryKey: !pk.primaryKey });
     expect(action(items, 'delete').label).toBe('Delete column');
+  });
+});
+
+describe('custom types', () => {
+  it('offers a jump to the type a column is declared with', () => {
+    const d = sampleDiagram();
+    const orders = d.tables.find((t) => t.name === 'orders')!;
+    const status = orders.columns.find((c) => c.name === 'status')!;
+    d.customTypes = [{ id: 'ct1', name: 'order_status', kind: 'enum', values: ['pending', 'shipped'] }];
+    status.type = 'order_status';
+    const { env, actions } = makeEnv(d);
+    const items = buildContextMenu({ type: 'table', tableId: orders.id, columnId: status.id }, env);
+    expect(heading(items)).toMatchObject({ detail: 'order_status · enum' });
+    action(items, 'edit-type').run();
+    expect(actions.openDrawer).toHaveBeenCalledWith('types');
+
+    // a plain SQL type gets no such entry
+    const plain = buildContextMenu({ type: 'table', tableId: orders.id, columnId: orders.columns[0].id }, env);
+    expect(ids(plain)).not.toContain('edit-type');
   });
 });
 
