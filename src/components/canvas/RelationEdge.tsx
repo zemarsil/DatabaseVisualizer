@@ -16,6 +16,9 @@ export interface RelationEdgeData extends Record<string, unknown> {
   attached: boolean;
   /** Source column is nullable -> optional relationship (drawn with a circle on the "one" side). */
   optional: boolean;
+  /** Position of this edge among others sharing the same source/target anchor points (for bowing duplicates apart). */
+  siblingIndex: number;
+  siblingCount: number;
 }
 
 export type RelationEdgeType = Edge<RelationEdgeData, 'relation'>;
@@ -24,6 +27,7 @@ type Side = 'left' | 'right';
 
 const MARKER = 16; // px reserved for the crow's foot / bar between node edge and curve start
 const GAP = 28;
+const BOW_SPACING = 26; // px separation between duplicate edges sharing the same anchor points
 
 interface Geometry {
   sx: number;
@@ -42,6 +46,7 @@ function computeGeometry(
   t: { x: number; y: number; w: number; h: number },
   sy: number,
   ty: number,
+  bowOffset: number,
 ): Geometry {
   let sSide: Side;
   let tSide: Side;
@@ -71,9 +76,11 @@ function computeGeometry(
   const bend = sameSide ? 70 + Math.min(120, Math.abs(sy - ty) * 0.25) : Math.max(48, Math.min(180, dist * 0.45));
   const c1x = p0x + sDir * bend;
   const c2x = p3x + tDir * bend;
-  const path = `M ${p0x} ${sy} C ${c1x} ${sy}, ${c2x} ${ty}, ${p3x} ${ty}`;
+  const c1y = sy + bowOffset;
+  const c2y = ty + bowOffset;
+  const path = `M ${p0x} ${sy} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${p3x} ${ty}`;
   const labelX = (p0x + 3 * c1x + 3 * c2x + p3x) / 8;
-  const labelY = (sy + 3 * sy + 3 * ty + ty) / 8;
+  const labelY = (sy + 3 * c1y + 3 * c2y + ty) / 8;
   return { sx, sy, tx, ty, sSide, tSide, path, labelX, labelY };
 }
 
@@ -117,7 +124,8 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   };
   const sy = s.y + (data.sourceRow >= 0 ? rowCenterY(data.sourceRow) : HEADER_HEIGHT / 2);
   const ty = t.y + (data.targetRow >= 0 ? rowCenterY(data.targetRow) : HEADER_HEIGHT / 2);
-  const g = computeGeometry(s, t, sy, ty);
+  const bowOffset = data.siblingCount > 1 ? (data.siblingIndex - (data.siblingCount - 1) / 2) * BOW_SPACING : 0;
+  const g = computeGeometry(s, t, sy, ty, bowOffset);
   const sDir = g.sSide === 'right' ? 1 : -1;
   const tDir = g.tSide === 'right' ? 1 : -1;
 
