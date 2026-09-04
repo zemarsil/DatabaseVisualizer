@@ -1,4 +1,15 @@
-import { AGGREGATE_FUNCTIONS, type AggregateFunction, type CustomType, type Derivation, type Diagram, type Note, type Relationship, type Table } from '@shared/types';
+import {
+  AGGREGATE_FUNCTIONS,
+  isRelationshipKind,
+  normalizeVerb,
+  type AggregateFunction,
+  type CustomType,
+  type Derivation,
+  type Diagram,
+  type Note,
+  type Relationship,
+  type Table,
+} from '@shared/types';
 import { emptyDiagram } from './model';
 import { newId } from './ids';
 
@@ -102,9 +113,13 @@ export function parseDiagramFile(text: string): Diagram {
     if (!rr || typeof rr !== 'object') continue;
     const r = rr as Record<string, unknown>;
     if (typeof r.id !== 'string' || typeof r.sourceTableId !== 'string' || typeof r.targetTableId !== 'string') continue;
+    const kind = isRelationshipKind(r.kind) ? r.kind : 'fk';
     rels.push({
       id: r.id,
-      kind: r.kind === 'flow' ? 'flow' : 'fk',
+      kind,
+      // Files written before verbs existed (and any verb that does not fit the
+      // kind) fall back to the kind's default.
+      verb: normalizeVerb(kind, r.verb),
       sourceTableId: r.sourceTableId,
       targetTableId: r.targetTableId,
       sourceColumnIds: strArray(r.sourceColumnIds),

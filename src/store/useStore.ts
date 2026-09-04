@@ -1,6 +1,16 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import type { Column, CustomType, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
+import {
+  normalizeVerb,
+  type Column,
+  type CustomType,
+  type Diagram,
+  type Dialect,
+  type Index,
+  type Note,
+  type Relationship,
+  type Table,
+} from '@shared/types';
 import { layoutDiagram, type LayoutDirection } from '@/lib/layout';
 import {
   createColumn,
@@ -489,7 +499,11 @@ export const useStore = create<Store>()(
       updateRelationship: (id, patch) =>
         mutate((d) => {
           const r = d.relationships.find((x) => x.id === id);
-          if (r) Object.assign(r, patch);
+          if (!r) return;
+          Object.assign(r, patch);
+          // Changing the kind can strand a verb that no longer applies (a "feeds"
+          // on a foreign key); drop it back to the new kind's default.
+          r.verb = normalizeVerb(r.kind, r.verb);
         }),
       deleteRelationship: (id) => removeElements({ relationshipIds: [id] }),
       swapRelationship: (id) =>
@@ -498,6 +512,12 @@ export const useStore = create<Store>()(
           if (!r) return;
           [r.sourceTableId, r.targetTableId] = [r.targetTableId, r.sourceTableId];
           [r.sourceColumnIds, r.targetColumnIds] = [r.targetColumnIds, r.sourceColumnIds];
+          // An embed's column belongs to the container. After a swap the container
+          // is the other table, so the old choice no longer means anything.
+          if (r.kind === 'embed') {
+            r.sourceColumnIds = [];
+            r.targetColumnIds = [];
+          }
         }),
 
       /* ---------------- notes ---------------- */

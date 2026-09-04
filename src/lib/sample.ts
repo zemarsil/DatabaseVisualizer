@@ -1,4 +1,4 @@
-import type { Diagram } from '@shared/types';
+import type { Diagram, RelationshipVerb } from '@shared/types';
 import { layoutDiagram } from './layout';
 import { createDerivation, createNote, createRelationship, emptyDiagram } from './model';
 import { importSql } from './sql/import';
@@ -33,7 +33,8 @@ CREATE TABLE orders (
   customer_id INTEGER NOT NULL REFERENCES customers(id),
   ship_to_id INTEGER REFERENCES addresses(id) ON DELETE SET NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'pending',
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  items_snapshot JSONB
 );
 CREATE INDEX idx_orders_customer ON orders (customer_id);
 
@@ -64,6 +65,19 @@ export function sampleDiagram(): Diagram {
   const orderItems = d.tables.find((t) => t.name === 'order_items');
   const daily = d.tables.find((t) => t.name === 'daily_sales');
   const orders = d.tables.find((t) => t.name === 'orders');
+
+  // Show what each reading of a foreign key looks like: customers *has*
+  // addresses, orders *contains* its items, orders merely *uses* an address.
+  const setVerb = (tableName: string, columnName: string, verb: RelationshipVerb) => {
+    const t = d.tables.find((x) => x.name === tableName);
+    const col = t?.columns.find((c) => c.name === columnName);
+    const rel = col && d.relationships.find((r) => r.kind === 'fk' && r.sourceTableId === t!.id && r.sourceColumnIds[0] === col.id);
+    if (rel) rel.verb = verb;
+  };
+  setVerb('addresses', 'customer_id', 'belongs-to');
+  setVerb('order_items', 'order_id', 'part-of');
+  setVerb('orders', 'ship_to_id', 'uses');
+
   if (orderItems && daily && orders) {
     const dailyCol = (name: string) => daily.columns.find((c) => c.name === name)?.id ?? '';
     // Two derived columns off one flow, both rolled up the same way. The free-text
@@ -92,6 +106,26 @@ WHERE o.placed_at::date = CURRENT_DATE - 1
   AND o.status = 'paid'
 GROUP BY 1, 2;`,
       }),
+      createRelationship({
+        kind: 'embed',
+        verb: 'serializes',
+        name: 'priced-at-purchase copy',
+        sourceTableId: orders.id,
+        sourceColumnIds: [orders.columns.find((c) => c.name === 'items_snapshot')?.id ?? ''].filter(Boolean),
+        targetTableId: orderItems.id,
+        targetColumnIds: [],
+        note: 'Frozen JSON copy of the lines as they were when the order was placed. No constraint enforces it.',
+      }),
+      createRelationship({
+        kind: 'dependency',
+        verb: 'uses',
+        name: 'rollup reads placed_at / status',
+        sourceTableId: daily.id,
+        sourceColumnIds: [],
+        targetTableId: orders.id,
+        targetColumnIds: [],
+        note: 'The nightly job joins orders for the date and the paid filter, but no column of daily_sales points at it.',
+      }),
     );
   }
 
@@ -100,7 +134,7 @@ GROUP BY 1, 2;`,
 
   d.notes.push(
     createNote({
-      text: 'Tip: drag from a column handle to another column to add a foreign key. Select an edge to tag it with a query.',
+      text: 'Tip: drag from a column handle to another column to add a foreign key. Select any edge to change its kind (foreign key, data flow, serialized, dependency) and how it reads.',
       position: { x: 40, y: -140 },
       width: 300,
       height: 90,

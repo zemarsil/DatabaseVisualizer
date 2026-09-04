@@ -1,4 +1,5 @@
 import { PanelRightClose, Route, Trash2 } from 'lucide-react';
+import { kindMeta } from '@shared/types';
 import { selectSelectedNote, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
 import { TableEditor } from './TableEditor';
 import { RelationshipEditor } from './RelationshipEditor';
@@ -27,7 +28,7 @@ export function Inspector() {
     title = 'Table';
     body = <TableEditor table={table} />;
   } else if (relationship) {
-    title = relationship.kind === 'fk' ? 'Foreign key' : 'Data flow';
+    title = kindMeta(relationship.kind).label;
     body = <RelationshipEditor relationship={relationship} />;
   } else if (note) {
     title = 'Note';
