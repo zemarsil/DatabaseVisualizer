@@ -1,9 +1,9 @@
-import type { Column, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
+import type { Column, CustomType, CustomTypeField, Diagram, Dialect, Index, Note, Relationship, Table } from '@shared/types';
 import { newId } from './ids';
 import { colorForName } from './palette';
 
 export function emptyDiagram(dialect: Dialect = 'postgresql', name = 'Untitled diagram'): Diagram {
-  return { version: 1, name, dialect, tables: [], relationships: [], notes: [] };
+  return { version: 1, name, dialect, tables: [], relationships: [], notes: [], customTypes: [] };
 }
 
 export function createColumn(partial: Partial<Column> & { name: string }): Column {
@@ -45,6 +45,34 @@ export function createRelationship(partial: Omit<Relationship, 'id'> & { id?: st
 export function createNote(partial: Partial<Note> = {}): Note {
   const { id, ...rest } = partial;
   return { id: id ?? newId('note'), text: 'New note', position: { x: 0, y: 0 }, width: 220, height: 120, color: 'yellow', ...rest };
+}
+
+export function createCustomTypeField(partial: Partial<CustomTypeField> & { name: string }): CustomTypeField {
+  return { id: newId('ctf'), type: 'TEXT', ...partial, name: partial.name };
+}
+
+export function createCustomType(partial: Partial<CustomType> & { name: string; kind: CustomType['kind'] }): CustomType {
+  return {
+    id: newId('ctype'),
+    values: partial.kind === 'enum' ? ['value_1'] : undefined,
+    fields: partial.kind === 'composite' ? [createCustomTypeField({ name: 'field_1' })] : undefined,
+    ...partial,
+    name: partial.name,
+  };
+}
+
+/** Next free custom type name like "my_type_2". Names live in the same namespace as SQL types, case-insensitive. */
+export function uniqueCustomTypeName(d: Diagram, base = 'my_type'): string {
+  const names = new Set(d.customTypes.map((t) => t.name.toLowerCase()));
+  if (!names.has(base.toLowerCase())) return base;
+  let i = 2;
+  while (names.has(`${base}_${i}`.toLowerCase())) i++;
+  return `${base}_${i}`;
+}
+
+export function customTypeByName(d: Diagram, type: string): CustomType | undefined {
+  const bare = type.trim().replace(/^["'`]|["'`]$/g, '');
+  return d.customTypes.find((t) => t.name.toLowerCase() === bare.toLowerCase());
 }
 
 /** Next free table name like "table_3". */

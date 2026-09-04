@@ -16,7 +16,7 @@ import {
 } from '@xyflow/react';
 import { Crosshair, X } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { openContextMenu } from '../ui/ContextMenu';
+import { openContextMenu } from '@/components/ui/ContextMenu';
 import { paletteHue } from '@/lib/palette';
 import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode';
 import { NoteNode, type NoteNodeType } from './NoteNode';
