@@ -24,6 +24,7 @@ export function introspectionToDiagram(res: IntrospectResponse, dialect: Diagram
   const dropSchema = schemas.size <= 1; // everything in one schema (public / the database) -> keep names short
   const parsed: ParseResult = {
     enums: [],
+    compositeTypes: [],
     errors: [],
     warnings: [],
     statementCount: res.tables.length,
