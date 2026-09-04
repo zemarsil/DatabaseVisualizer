@@ -4,6 +4,7 @@ import { SqlPanel } from './SqlPanel';
 import { ImportPanel } from './ImportPanel';
 import { DatabasePanel } from './DatabasePanel';
 import { TracePanel } from './TracePanel';
+import { ResizeHandle } from '@/components/ui/ResizeHandle';
 import { TypesPanel } from './TypesPanel';
 
 const TABS: { id: DrawerTab; label: string; icon: React.ReactNode }[] = [
@@ -19,10 +20,12 @@ export function Drawer() {
   const openDrawer = useStore((s) => s.openDrawer);
   const closeDrawer = useStore((s) => s.closeDrawer);
   const traceResult = useStore((s) => s.trace.result);
+  const resizePanel = useStore((s) => s.resizePanel);
   const typeCount = useStore((s) => s.diagram.customTypes.length);
 
   return (
     <section className={`drawer${open ? '' : ' drawer--collapsed'}`}>
+      {open && <ResizeHandle orientation="horizontal" className="resize-handle--start" onResize={(delta) => resizePanel('drawerH', -delta)} />}
       <div className="drawer__tabs">
         {TABS.map((t) => (
           <button key={t.id} className={`drawer__tab${open && tab === t.id ? ' drawer__tab--active' : ''}`} onClick={() => (open && tab === t.id ? closeDrawer() : openDrawer(t.id))}>

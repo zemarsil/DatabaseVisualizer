@@ -53,7 +53,22 @@ export interface NodeSize {
 
 const AUTOSAVE_KEY = 'dbviz:autosave';
 const THEME_KEY = 'dbviz:theme';
+const PANEL_SIZES_KEY = 'dbviz:panelSizes';
 const HISTORY_LIMIT = 100;
+
+export interface PanelSizes {
+  sidebarW: number;
+  inspectorW: number;
+  drawerH: number;
+}
+
+const PANEL_SIZE_LIMITS: Record<keyof PanelSizes, [number, number]> = {
+  sidebarW: [180, 480],
+  inspectorW: [260, 560],
+  drawerH: [140, 640],
+};
+
+const DEFAULT_PANEL_SIZES: PanelSizes = { sidebarW: 240, inspectorW: 360, drawerH: 320 };
 
 interface State {
   diagram: Diagram;
@@ -66,6 +81,7 @@ interface State {
   drawer: { open: boolean; tab: DrawerTab };
   sidebarOpen: boolean;
   inspectorOpen: boolean;
+  panelSizes: PanelSizes;
   toasts: Toast[];
   dirty: boolean;
   layoutDirection: LayoutDirection;
@@ -148,6 +164,7 @@ interface Actions {
   toggleDrawer: (tab?: DrawerTab) => void;
   setSidebarOpen: (open: boolean) => void;
   setInspectorOpen: (open: boolean) => void;
+  resizePanel: (key: keyof PanelSizes, delta: number) => void;
   toast: (kind: Toast['kind'], message: string) => void;
   dismissToast: (id: string) => void;
   markSaved: () => void;
@@ -173,6 +190,19 @@ function loadTheme(): Theme {
     /* ignore */
   }
   return 'dark';
+}
+
+function loadPanelSizes(): PanelSizes {
+  try {
+    const raw = localStorage.getItem(PANEL_SIZES_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as Partial<PanelSizes>;
+      return { ...DEFAULT_PANEL_SIZES, ...parsed };
+    }
+  } catch {
+    /* ignore */
+  }
+  return { ...DEFAULT_PANEL_SIZES };
 }
 
 const dragSnapshot: { diagram: Diagram | null } = { diagram: null };
@@ -211,6 +241,7 @@ export const useStore = create<Store>()(
       drawer: { open: false, tab: 'sql' },
       sidebarOpen: true,
       inspectorOpen: true,
+      panelSizes: loadPanelSizes(),
       toasts: [],
       dirty: false,
       layoutDirection: 'LR',
@@ -645,6 +676,18 @@ export const useStore = create<Store>()(
         }),
       setSidebarOpen: (open) => set((s) => void (s.sidebarOpen = open)),
       setInspectorOpen: (open) => set((s) => void (s.inspectorOpen = open)),
+      resizePanel: (key, delta) => {
+        const [min, max] = PANEL_SIZE_LIMITS[key];
+        set((s) => {
+          const next = s.panelSizes[key] + delta;
+          s.panelSizes[key] = Math.min(max, Math.max(min, next));
+        });
+        try {
+          localStorage.setItem(PANEL_SIZES_KEY, JSON.stringify(get().panelSizes));
+        } catch {
+          /* ignore */
+        }
+      },
       toast: (kind, message) => {
         const id = newId('toast');
         set((s) => {
