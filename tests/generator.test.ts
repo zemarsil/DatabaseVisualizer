@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { Diagram } from '../src/shared/types';
-import { generateDropStatements, generateSchema, generateTableSql, orderTables } from '../src/lib/sql/generator';
+import { generateDropStatements, generateFlowSql, generateSchema, generateTableSql, orderTables } from '../src/lib/sql/generator';
 import { importSql } from '../src/lib/sql/import';
 import { parseSql } from '../src/lib/sql/parser';
 import { translateType } from '../src/lib/sql/dialect';
-import { emptyDiagram, createRelationship } from '../src/lib/model';
+import { createDerivation, createRelationship, emptyDiagram } from '../src/lib/model';
+import { sampleDiagram } from '../src/lib/sample';
 
 function diagramFrom(sql: string, dialect: Diagram['dialect']): Diagram {
   const d = emptyDiagram(dialect, 'test');
@@ -122,6 +123,65 @@ describe('generateSchema', () => {
     expect(out.statements).toHaveLength(2);
     expect(out.script).toContain('-- src -> dst (rollup)');
     expect(out.script).toContain('--   INSERT INTO dst SELECT id FROM src;');
+  });
+
+  it('builds an INSERT ... SELECT skeleton from structured derivations', () => {
+    const out = generateSchema(sampleDiagram());
+    expect(out.warnings).toEqual([]);
+    // one statement for both columns, because they share the grouping and the filter
+    expect(out.script).toContain('--   INSERT INTO daily_sales (product_id, day, units_sold, revenue_cents)');
+    expect(out.script).toContain('--   SELECT product_id, day, SUM(quantity), SUM(quantity * unit_price_cents)');
+    expect(out.script).toContain('--   FROM order_items');
+    expect(out.script).toContain("--   WHERE status = 'paid'");
+    expect(out.script).toContain('--   GROUP BY product_id, day;');
+    // the readable per-column summary comes along with it
+    expect(out.script).toContain("--     revenue_cents = SUM(quantity * unit_price_cents) GROUP BY product_id, day WHERE status = 'paid'");
+    // ... and the free-text query is still there, side by side, still not executed
+    expect(out.script).toContain('--   Tagged query:');
+    expect(out.script).toContain('--   JOIN orders o ON o.id = oi.order_id');
+    expect(out.statements.some((st) => st.startsWith('INSERT'))).toBe(false);
+  });
+
+  it('splits derivations with different groupings and quotes identifiers', () => {
+    const d = diagramFrom(
+      `CREATE TABLE src (id INT PRIMARY KEY, amount INT, kind TEXT);
+       CREATE TABLE dst (kind TEXT, "select" INT, total INT, row_count INT);`,
+      'postgresql',
+    );
+    const [src, dst] = [d.tables.find((t) => t.name === 'src')!, d.tables.find((t) => t.name === 'dst')!];
+    const col = (name: string) => dst.columns.find((c) => c.name === name)!.id;
+    const rel = createRelationship({
+      kind: 'flow',
+      sourceTableId: src.id,
+      sourceColumnIds: [],
+      targetTableId: dst.id,
+      targetColumnIds: [],
+      derivations: [
+        createDerivation({ targetColumnId: col('total'), expression: 'amount', aggregate: 'SUM', groupBy: ['kind'] }),
+        createDerivation({ targetColumnId: '', expression: 'orphan' }),
+        createDerivation({ targetColumnId: col('select'), expression: 'amount', aggregate: 'MAX', groupBy: ['kind'] }),
+        createDerivation({ targetColumnId: col('row_count'), aggregate: 'COUNT', groupBy: [] }),
+      ],
+    });
+    d.relationships.push(rel);
+    const sql = generateFlowSql(d, rel.id);
+    expect(sql.split(';').filter((s2) => s2.trim())).toHaveLength(2);
+    expect(sql).toContain('INSERT INTO dst (kind, total, "select")');
+    expect(sql).toContain('SELECT kind, SUM(amount), MAX(amount)');
+    expect(sql).toContain('GROUP BY kind;');
+    expect(sql).toContain('INSERT INTO dst (row_count)\nSELECT COUNT(*)\nFROM src;');
+    // the entry with no target column is reported instead of silently dropped
+    expect(generateSchema(d).warnings).toEqual(['Data flow src -> dst has an incomplete derivation; it was left out of the generated snippet.']);
+  });
+
+  it('leaves flows without derivations exactly as before', () => {
+    const d = diagramFrom(`CREATE TABLE src (id INT PRIMARY KEY); CREATE TABLE dst (id INT PRIMARY KEY);`, 'postgresql');
+    const rel = createRelationship({ kind: 'flow', sourceTableId: d.tables[0].id, sourceColumnIds: [], targetTableId: d.tables[1].id, targetColumnIds: [], query: 'INSERT INTO dst SELECT id FROM src;' });
+    d.relationships.push(rel);
+    const out = generateSchema(d);
+    expect(generateFlowSql(d, rel.id)).toBe('');
+    expect(out.script).not.toContain('Derived columns:');
+    expect(out.script).not.toContain('Tagged query:');
   });
 
   it('generates per-table SQL and drop statements', () => {

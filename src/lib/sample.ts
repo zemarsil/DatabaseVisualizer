@@ -1,6 +1,6 @@
 import type { Diagram } from '@shared/types';
 import { layoutDiagram } from './layout';
-import { createNote, createRelationship, emptyDiagram } from './model';
+import { createDerivation, createNote, createRelationship, emptyDiagram } from './model';
 import { importSql } from './sql/import';
 
 const SAMPLE_SQL = `
@@ -65,6 +65,11 @@ export function sampleDiagram(): Diagram {
   const daily = d.tables.find((t) => t.name === 'daily_sales');
   const orders = d.tables.find((t) => t.name === 'orders');
   if (orderItems && daily && orders) {
+    const dailyCol = (name: string) => daily.columns.find((c) => c.name === name)?.id ?? '';
+    // Two derived columns off one flow, both rolled up the same way. The free-text
+    // query below says the same thing plus the join to orders, which the structured
+    // form does not model - the two are meant to be read side by side.
+    const rollup = { groupBy: ['product_id', 'day'], filter: "status = 'paid'", aggregate: 'SUM' as const };
     d.relationships.push(
       createRelationship({
         kind: 'flow',
@@ -74,6 +79,10 @@ export function sampleDiagram(): Diagram {
         targetTableId: daily.id,
         targetColumnIds: [],
         note: 'Runs at 02:00 via cron; replaces the previous day.',
+        derivations: [
+          createDerivation({ ...rollup, targetColumnId: dailyCol('units_sold'), expression: 'quantity' }),
+          createDerivation({ ...rollup, targetColumnId: dailyCol('revenue_cents'), expression: 'quantity * unit_price_cents' }),
+        ],
         query: `INSERT INTO daily_sales (day, product_id, units_sold, revenue_cents)
 SELECT o.placed_at::date, oi.product_id,
        SUM(oi.quantity), SUM(oi.quantity * oi.unit_price_cents)
