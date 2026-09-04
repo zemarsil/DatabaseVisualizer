@@ -66,8 +66,8 @@ export function Sidebar() {
             {notes.map((n) => (
               <button
                 key={n.id}
-                className={`sidebar__item${selection.noteId === n.id ? ' sidebar__item--active' : ''}`}
-                onClick={() => setSelection({ noteId: n.id, tableIds: [], relationshipId: null })}
+                className={`sidebar__item${selection.noteIds.includes(n.id) ? ' sidebar__item--active' : ''}`}
+                onClick={() => setSelection({ noteIds: [n.id], tableIds: [], relationshipId: null })}
               >
                 <StickyNote size={13} style={{ color: paletteHue(n.color) }} />
                 <span className="sidebar__name muted">{n.text.split('\n')[0] || 'Empty note'}</span>
