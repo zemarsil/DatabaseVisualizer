@@ -113,7 +113,7 @@ export function SeedSection() {
       </div>
       {mismatch && <div className="warn small" style={{ marginBottom: 8 }}>The script is written for {dialectLabel(diagram.dialect)} but the connection is {dialectLabel(conn.dialect)}. Switch the diagram dialect in the top bar to run it.</div>}
       {results && (
-        <div style={{ marginBottom: 8, maxHeight: 200, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
+        <div className="result-box">
           {results.map((r) => (
             <div key={r.index} className="result-row">
               <span className={r.ok ? 'success' : 'danger'}>{r.ok ? '✓' : '✖'}</span>

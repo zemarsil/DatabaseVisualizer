@@ -159,14 +159,15 @@ export function MigrateSection() {
                   {cmp.changes.length} change{cmp.changes.length === 1 ? '' : 's'}: {summary.safe} safe, {summary.risky} to check, {summary.destructive} destructive
                 </span>
                 <span className="grow" />
-                <button className="btn btn--sm btn--ghost" onClick={() => selectRisk(['safe'])}>
-                  Safe only
+                <span className="muted">Select:</span>
+                <button className="btn btn--sm btn--ghost" onClick={() => selectRisk(['safe'])} title="Only changes that cannot lose data">
+                  safe
                 </button>
-                <button className="btn btn--sm btn--ghost" onClick={() => selectRisk(['safe', 'risky'])}>
-                  All but destructive
+                <button className="btn btn--sm btn--ghost" onClick={() => selectRisk(['safe', 'risky'])} title="Everything except drops">
+                  non-destructive
                 </button>
-                <button className="btn btn--sm btn--ghost" onClick={() => selectRisk(['safe', 'risky', 'destructive'])}>
-                  Everything
+                <button className="btn btn--sm btn--ghost" onClick={() => selectRisk(['safe', 'risky', 'destructive'])} title="Every change, including drops">
+                  all
                 </button>
               </div>
               <div className="migrate-list">
@@ -218,7 +219,7 @@ export function MigrateSection() {
         </>
       )}
       {results && (
-        <div style={{ marginBottom: 8, maxHeight: 200, overflow: 'auto', border: '1px solid var(--border)', borderRadius: 6 }}>
+        <div className="result-box">
           {results.map((r) => (
             <div key={r.index} className="result-row">
               <span className={r.ok ? 'success' : 'danger'}>{r.ok ? '✓' : '✖'}</span>

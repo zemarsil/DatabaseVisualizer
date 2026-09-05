@@ -105,30 +105,32 @@ function ColumnRow({ table, column, index, fk, embed, register, drag, setDrag }:
         setDrag(null);
       }}
     >
-      <span
-        className="col-row__grip"
-        title="Drag to reorder"
-        draggable
-        onDragStart={(e) => {
-          e.dataTransfer.effectAllowed = 'move';
-          e.dataTransfer.setData('text/plain', column.id);
-          setDrag({ id: column.id, over: null });
-        }}
-        onDragEnd={() => setDrag(null)}
-      >
-        <GripVertical />
-      </span>
-      <input
-        ref={(el) => register(column.id, el)}
-        className="input input--sm"
-        value={column.name}
-        onChange={(e) => patch({ name: e.target.value })}
-        onKeyDown={onKeyDown}
-        placeholder="column"
-        spellCheck={false}
-        title={fk ? 'Referenced by a foreign key' : embed ? 'Holds another table serialized' : undefined}
-        style={fk ? { borderColor: 'var(--accent)' } : embed ? { borderColor: 'var(--embed)' } : undefined}
-      />
+      <div className="col-row__name">
+        <span
+          className="col-row__grip"
+          title="Drag to reorder"
+          draggable
+          onDragStart={(e) => {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', column.id);
+            setDrag({ id: column.id, over: null });
+          }}
+          onDragEnd={() => setDrag(null)}
+        >
+          <GripVertical />
+        </span>
+        <input
+          ref={(el) => register(column.id, el)}
+          className="input input--sm"
+          value={column.name}
+          onChange={(e) => patch({ name: e.target.value })}
+          onKeyDown={onKeyDown}
+          placeholder="column"
+          spellCheck={false}
+          title={fk ? 'Referenced by a foreign key' : embed ? 'Holds another table serialized' : undefined}
+          style={fk ? { borderColor: 'var(--accent)' } : embed ? { borderColor: 'var(--embed)' } : undefined}
+        />
+      </div>
       <input
         className="input input--sm input--mono"
         value={column.type}

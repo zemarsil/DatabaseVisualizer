@@ -448,9 +448,9 @@ export function TopBar() {
               <CheckItem on={drawerOpen} label="Bottom drawer" onToggle={() => toggleDrawer()} />
               <CheckItem on={theme === 'dark'} label="Dark theme" onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
               <div className="menu__sep" />
-              <CheckItem on={showCardinality} label="Cardinality labels on connections" onToggle={() => setShowCardinality(!showCardinality)} />
-              <CheckItem on={snapToGrid} label="Snap tables to the grid" onToggle={() => setSnapToGrid(!snapToGrid)} />
-              <CheckItem on={warnOnClose} label="Warn before closing with unsaved changes" onToggle={() => setWarnOnClose(!warnOnClose)} />
+              <CheckItem on={showCardinality} label="Cardinality labels" onToggle={() => setShowCardinality(!showCardinality)} />
+              <CheckItem on={snapToGrid} label="Snap to grid" onToggle={() => setSnapToGrid(!snapToGrid)} />
+              <CheckItem on={warnOnClose} label="Warn before closing unsaved" onToggle={() => setWarnOnClose(!warnOnClose)} />
               <div className="menu__sep" />
               <div className="menu__label">All tables</div>
               <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, undefined))}>

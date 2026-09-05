@@ -166,6 +166,16 @@
   color: var(--text-muted);
 }
 
+.col-row__name {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.col-row__name .input {
+  flex: 1;
+  min-width: 0;
+}
 .col-row__grip {
   display: inline-flex;
   align-items: center;
