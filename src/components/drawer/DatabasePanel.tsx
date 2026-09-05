@@ -1,31 +1,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Box, CheckCircle2, CloudDownload, Play, Plug, RefreshCw, Square, Trash2, Upload, XCircle } from 'lucide-react';
-import { DIALECTS, type ConnectionConfig, type ContainerInfo, type Dialect, type StatementResult } from '@shared/types';
+import { DIALECTS, SERVER_DIALECTS, dialectLabel, isServerDialect, type ContainerInfo, type Dialect, type ServerDialect, type StatementResult } from '@shared/types';
 import { api, type DockerStatus } from '@/lib/api';
 import { useStore } from '@/store/useStore';
+import { defaultConnection, useConnection } from '@/store/useConnection';
+import { backendFor } from '@/lib/backend';
 import { generateDropStatements, generateSchema } from '@/lib/sql/generator';
 import { introspectionToDiagram } from '@/lib/introspectImport';
 import { confirmDialog } from '../ui/Modal';
-
-const CONN_KEY = 'dbviz:connection';
-
-function defaultConnection(dialect: Dialect): ConnectionConfig {
-  const d = DIALECTS.find((x) => x.id === dialect)!;
-  return { dialect, host: '127.0.0.1', port: d.defaultPort, user: d.defaultUser, password: '', database: 'app' };
-}
-
-function loadConnection(dialect: Dialect): ConnectionConfig {
-  try {
-    const raw = localStorage.getItem(CONN_KEY);
-    if (raw) {
-      const c = JSON.parse(raw) as ConnectionConfig;
-      if (c && c.dialect === dialect) return c;
-    }
-  } catch {
-    /* ignore */
-  }
-  return defaultConnection(dialect);
-}
+import { MigrateSection } from './database/MigrateSection';
+import { SeedSection } from './database/SeedSection';
+import { SqliteSection } from './database/SqliteSection';
 
 export function DatabasePanel() {
   const diagram = useStore((s) => s.diagram);
@@ -38,17 +23,24 @@ export function DatabasePanel() {
   const [loadingContainers, setLoadingContainers] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
+  const initialServerDialect: ServerDialect = isServerDialect(diagram.dialect) ? diagram.dialect : 'postgresql';
   const [form, setForm] = useState(() => ({
-    dialect: diagram.dialect,
-    name: `dbviz-${diagram.dialect}`,
-    hostPort: DIALECTS.find((d) => d.id === diagram.dialect)!.defaultPort,
+    dialect: initialServerDialect,
+    name: `dbviz-${initialServerDialect}`,
+    hostPort: DIALECTS.find((d) => d.id === initialServerDialect)!.defaultPort,
     password: 'secret',
     database: 'app',
-    image: DIALECTS.find((d) => d.id === diagram.dialect)!.image,
+    image: DIALECTS.find((d) => d.id === initialServerDialect)!.image,
   }));
 
-  const [conn, setConn] = useState<ConnectionConfig>(() => loadConnection(diagram.dialect));
-  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const conn = useConnection((s) => s.conn);
+  const setConn = useConnection((s) => s.setConn);
+  const setConnField = useConnection((s) => s.setField);
+  const setConnDialect = useConnection((s) => s.setDialect);
+  const testResult = useConnection((s) => s.testResult);
+  const setTestResult = useConnection((s) => s.setTestResult);
+  const backend = useMemo(() => backendFor(conn), [conn]);
+  const isSqlite = !isServerDialect(conn.dialect);
   const [dropFirst, setDropFirst] = useState(false);
   const [stopOnError, setStopOnError] = useState(true);
   const [results, setResults] = useState<StatementResult[] | null>(null);
@@ -59,21 +51,13 @@ export function DatabasePanel() {
   const [importGroupName, setImportGroupName] = useState('');
   const [importGroupExternal, setImportGroupExternal] = useState(true);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(CONN_KEY, JSON.stringify(conn));
-    } catch {
-      /* ignore */
-    }
-  }, [conn]);
-
   const refresh = useCallback(async () => {
     setLoadingContainers(true);
     try {
       // When the app runs inside Docker, the server tells us how to reach host-published ports.
       const health = await api.health();
       if (health.defaultDbHost && health.defaultDbHost !== '127.0.0.1') {
-        setConn((c) => (c.host === '127.0.0.1' ? { ...c, host: health.defaultDbHost! } : c));
+        if (useConnection.getState().conn.host === '127.0.0.1') useConnection.getState().setField('host', health.defaultDbHost);
       }
       const status = await api.docker.status();
       setDocker(status);
@@ -91,17 +75,14 @@ export function DatabasePanel() {
   }, [refresh]);
 
   const generated = useMemo(() => generateSchema(diagram), [diagram]);
-  const dialectLabel = (d: Dialect) => DIALECTS.find((x) => x.id === d)?.label ?? d;
 
   const useContainer = (c: ContainerInfo) => {
     if (!c.connection || !c.dialect) return;
-    const next: ConnectionConfig = { ...defaultConnection(c.dialect), ...c.connection, dialect: c.dialect } as ConnectionConfig;
-    setConn(next);
-    setTestResult(null);
+    setConn({ ...defaultConnection(c.dialect), ...c.connection, dialect: c.dialect });
     if (c.dialect !== diagram.dialect) toast('info', `This container runs ${dialectLabel(c.dialect)} but the diagram is ${dialectLabel(diagram.dialect)}. Switch the dialect before creating the schema.`);
   };
 
-  const waitForDb = async (target: ConnectionConfig, attempts = 30) => {
+  const waitForDb = async (target: typeof conn, attempts = 30) => {
     for (let i = 0; i < attempts; i++) {
       const r = await api.db.test(target);
       if (r.ok) return r.serverVersion ?? 'ready';
@@ -156,8 +137,7 @@ export function DatabasePanel() {
     setBusy('test');
     setTestResult(null);
     try {
-      const r = await api.db.test(conn);
-      setTestResult(r.ok ? { ok: true, message: r.serverVersion ?? 'Connected' } : { ok: false, message: r.error ?? 'Failed' });
+      setTestResult(await backend.test());
     } catch (e) {
       setTestResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
     } finally {
@@ -183,14 +163,14 @@ export function DatabasePanel() {
       return;
     }
     const ok = await confirmDialog({
-      title: `Run ${statements.length} statements on ${conn.database || conn.user}@${conn.host}:${conn.port}?`,
+      title: `Run ${statements.length} statements on ${backend.label}?`,
       message: (
         <div className="stack">
           <span>
             {generated.statements.length} schema statements{dropFirst ? ` plus ${statements.length - generated.statements.length} DROP statements (existing tables and their data will be destroyed)` : ''}.
           </span>
           {generated.warnings.length > 0 && <span className="warn">{generated.warnings.join(' ')}</span>}
-          {stopOnError && conn.dialect === 'postgresql' && <span className="muted small">Runs inside one transaction: on failure nothing is kept.</span>}
+          {stopOnError && conn.dialect !== 'mariadb' && <span className="muted small">Runs inside one transaction: on failure nothing is kept.</span>}
           {conn.dialect === 'mariadb' && <span className="muted small">MariaDB commits DDL immediately, so statements before a failure stay applied.</span>}
         </div>
       ),
@@ -201,7 +181,7 @@ export function DatabasePanel() {
     setBusy('apply');
     setResults(null);
     try {
-      const res = await api.db.apply({ connection: conn, statements, stopOnError });
+      const res = await backend.apply(statements, stopOnError);
       setResults(res.results);
       const failed = res.results.filter((r) => !r.ok).length;
       if (res.ok) toast('success', `Schema created: ${res.results.length} statements ran.`);
@@ -216,7 +196,7 @@ export function DatabasePanel() {
   const importFromDb = async () => {
     setBusy('introspect');
     try {
-      const res = await api.db.introspect(conn);
+      const res = await backend.introspect();
       if (conn.dialect !== diagram.dialect) setDialect(conn.dialect, false);
       const converted = introspectionToDiagram(res, conn.dialect, importMode === 'merge' ? diagram : null);
       if (converted.tables.length === 0) {
@@ -229,7 +209,7 @@ export function DatabasePanel() {
           ? {
               name: importGroupName.trim() || conn.database || 'Imported database',
               external: importGroupExternal,
-              note: `${conn.dialect === 'mariadb' ? 'MariaDB' : 'PostgreSQL'} ${conn.database} on ${conn.host}:${conn.port}`,
+              note: backend.label,
             }
           : undefined,
       });
@@ -240,11 +220,6 @@ export function DatabasePanel() {
     } finally {
       setBusy(null);
     }
-  };
-
-  const setConnField = <K extends keyof ConnectionConfig>(k: K, v: ConnectionConfig[K]) => {
-    setConn((c) => ({ ...c, [k]: v }));
-    setTestResult(null);
   };
 
   return (
@@ -265,7 +240,7 @@ export function DatabasePanel() {
         </div>
         {docker && !docker.available && (
           <div className="small warn" style={{ marginBottom: 8 }}>
-            {docker.error ?? 'Docker is not reachable.'} You can still connect to any database by hand on the right.
+            {docker.error ?? 'Docker is not reachable.'} You can still connect to any database by hand on the right, or pick SQLite to work entirely in the browser.
           </div>
         )}
         {docker === null && <div className="small muted">Checking the API server…</div>}
@@ -315,12 +290,12 @@ export function DatabasePanel() {
                   className="select select--sm"
                   value={form.dialect}
                   onChange={(e) => {
-                    const d = e.target.value as Dialect;
+                    const d = e.target.value as ServerDialect;
                     const meta = DIALECTS.find((x) => x.id === d)!;
                     setForm((f) => ({ ...f, dialect: d, hostPort: meta.defaultPort, image: meta.image, name: `dbviz-${d}` }));
                   }}
                 >
-                  {DIALECTS.map((d) => (
+                  {SERVER_DIALECTS.map((d) => (
                     <option key={d.id} value={d.id}>
                       {d.label}
                     </option>
@@ -364,7 +339,7 @@ export function DatabasePanel() {
         <div className="form-grid">
           <div className="field">
             <span className="field__label">Engine</span>
-            <select className="select select--sm" value={conn.dialect} onChange={(e) => setConn({ ...defaultConnection(e.target.value as Dialect), password: conn.password })}>
+            <select className="select select--sm" value={conn.dialect} onChange={(e) => setConnDialect(e.target.value as Dialect)}>
               {DIALECTS.map((d) => (
                 <option key={d.id} value={d.id}>
                   {d.label}
@@ -372,28 +347,33 @@ export function DatabasePanel() {
               ))}
             </select>
           </div>
-          <div className="field">
-            <span className="field__label">Host</span>
-            <input className="input input--sm" value={conn.host} onChange={(e) => setConnField('host', e.target.value)} spellCheck={false} />
-          </div>
-          <div className="field">
-            <span className="field__label">Port</span>
-            <input className="input input--sm" type="number" value={conn.port} onChange={(e) => setConnField('port', Number(e.target.value))} />
-          </div>
-          <div className="field">
-            <span className="field__label">Database</span>
-            <input className="input input--sm" value={conn.database} onChange={(e) => setConnField('database', e.target.value)} spellCheck={false} />
-          </div>
-          <div className="field">
-            <span className="field__label">User</span>
-            <input className="input input--sm" value={conn.user} onChange={(e) => setConnField('user', e.target.value)} spellCheck={false} autoComplete="off" />
-          </div>
-          <div className="field">
-            <span className="field__label">Password</span>
-            <input className="input input--sm" type="password" value={conn.password} onChange={(e) => setConnField('password', e.target.value)} autoComplete="off" />
-          </div>
+          {!isSqlite && (
+            <>
+              <div className="field">
+                <span className="field__label">Host</span>
+                <input className="input input--sm" value={conn.host} onChange={(e) => setConnField('host', e.target.value)} spellCheck={false} />
+              </div>
+              <div className="field">
+                <span className="field__label">Port</span>
+                <input className="input input--sm" type="number" value={conn.port} onChange={(e) => setConnField('port', Number(e.target.value))} />
+              </div>
+              <div className="field">
+                <span className="field__label">Database</span>
+                <input className="input input--sm" value={conn.database} onChange={(e) => setConnField('database', e.target.value)} spellCheck={false} />
+              </div>
+              <div className="field">
+                <span className="field__label">User</span>
+                <input className="input input--sm" value={conn.user} onChange={(e) => setConnField('user', e.target.value)} spellCheck={false} autoComplete="off" />
+              </div>
+              <div className="field">
+                <span className="field__label">Password</span>
+                <input className="input input--sm" type="password" value={conn.password} onChange={(e) => setConnField('password', e.target.value)} autoComplete="off" />
+              </div>
+            </>
+          )}
         </div>
-        <div className="row row--wrap" style={{ marginBottom: 8 }}>
+        {isSqlite && <SqliteSection />}
+        <div className="row row--wrap" style={{ marginBottom: 8, marginTop: isSqlite ? 8 : 0 }}>
           <button className="btn" onClick={testConnection} disabled={busy !== null}>
             <Plug /> {busy === 'test' ? 'Testing…' : 'Test connection'}
           </button>
@@ -433,6 +413,12 @@ export function DatabasePanel() {
             ))}
           </div>
         )}
+
+        <div className="divider" />
+        <MigrateSection />
+
+        <div className="divider" />
+        <SeedSection />
 
         <div className="divider" />
         <h3>Import from the database</h3>

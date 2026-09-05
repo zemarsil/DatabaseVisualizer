@@ -1,0 +1,79 @@
+/* Problems tab: lint findings and foreign-key suggestions. */
+.problems {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+}
+.problems .drawer__split {
+  flex: 1;
+  min-height: 0;
+}
+.problems__list {
+  overflow: auto;
+}
+.problems__group {
+  margin-bottom: 10px;
+}
+.problems__group-title {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 6px 0 4px;
+}
+.problem {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  margin-bottom: 6px;
+  background: var(--bg-elev);
+}
+.problem__icon {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  margin-top: 2px;
+}
+.problem__icon--error {
+  color: var(--danger);
+}
+.problem__icon--warning {
+  color: var(--warn);
+}
+.problem__icon--info {
+  color: var(--text-muted);
+}
+.problem__icon--suggest {
+  color: var(--accent);
+}
+.problem__body {
+  min-width: 0;
+  flex: 1;
+}
+.problem__message {
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.problem__message code {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.problems__empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--success);
+  font-size: 13px;
+  padding: 8px 0;
+}
+.problems__empty svg {
+  width: 18px;
+  height: 18px;
+}
+.badge--warn {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+}

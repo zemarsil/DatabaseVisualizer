@@ -61,8 +61,21 @@ export interface ParsedCompositeType {
   fields: { name: string; type: string }[];
 }
 
+export interface ParsedView {
+  schema?: string;
+  name: string;
+  /** Explicit column list, when the statement had one. */
+  columns: string[];
+  /** Raw SELECT body, as written. */
+  sql: string;
+  /** Table names referenced after FROM / JOIN (best effort). */
+  sources: string[];
+  materialized?: boolean;
+}
+
 export interface ParseResult {
   tables: ParsedTable[];
+  views: ParsedView[];
   enums: { name: string; values: string[] }[];
   compositeTypes: ParsedCompositeType[];
   errors: ParseMessage[];
@@ -75,7 +88,7 @@ export interface ParseResult {
 /* ------------------------------------------------------------------ */
 
 const CONSTRAINT_STARTERS = new Set([
-  'NOT', 'NULL', 'PRIMARY', 'UNIQUE', 'DEFAULT', 'REFERENCES', 'CHECK', 'CONSTRAINT', 'AUTO_INCREMENT',
+  'NOT', 'NULL', 'PRIMARY', 'UNIQUE', 'DEFAULT', 'REFERENCES', 'CHECK', 'CONSTRAINT', 'AUTO_INCREMENT', 'AUTOINCREMENT',
   'GENERATED', 'COLLATE', 'COMMENT', 'KEY', 'ON', 'INVISIBLE', 'VISIBLE', 'AS', 'CHARSET', 'DEFERRABLE',
   'INITIALLY', 'FIRST', 'AFTER', 'STORAGE', 'COMPRESSION', 'ENCODE',
 ]);
@@ -107,7 +120,7 @@ const ACTIONS: Record<string, ReferentialAction> = {
 
 class Parser {
   private pos = 0;
-  readonly result: ParseResult = { tables: [], enums: [], compositeTypes: [], errors: [], warnings: [], statementCount: 0 };
+  readonly result: ParseResult = { tables: [], views: [], enums: [], compositeTypes: [], errors: [], warnings: [], statementCount: 0 };
 
   constructor(private readonly sql: string, private readonly tokens: Token[], private readonly dialect: Dialect) {}
 
@@ -368,6 +381,7 @@ class Parser {
       case 'LOCK':
       case 'UNLOCK':
       case 'SELECT':
+      case 'PRAGMA':
         this.skipStatement();
         return;
       case 'DROP':
@@ -383,11 +397,39 @@ class Parser {
     const start = this.expectWord('CREATE');
     if (this.acceptWord('OR')) this.expectWord('REPLACE');
     let unique = false;
-    while (this.isWord('TEMP', 'TEMPORARY', 'UNLOGGED', 'GLOBAL', 'LOCAL', 'UNIQUE')) {
-      if (this.next().upper === 'UNIQUE') unique = true;
+    let materialized = false;
+    for (;;) {
+      if (this.isWord('TEMP', 'TEMPORARY', 'UNLOGGED', 'GLOBAL', 'LOCAL', 'UNIQUE', 'MATERIALIZED', 'RECURSIVE')) {
+        const w = this.next().upper;
+        if (w === 'UNIQUE') unique = true;
+        if (w === 'MATERIALIZED') materialized = true;
+        continue;
+      }
+      // MariaDB view prefixes: ALGORITHM = MERGE, DEFINER = user@host, SQL SECURITY DEFINER
+      if (this.isWord('ALGORITHM', 'DEFINER')) {
+        this.next();
+        this.acceptPunct('=');
+        this.next();
+        while (this.isPunct('@')) {
+          this.next();
+          this.next();
+        }
+        continue;
+      }
+      if (this.isWord('SQL') && this.peek(1).type === 'word' && this.peek(1).upper === 'SECURITY') {
+        this.next();
+        this.next();
+        this.next();
+        continue;
+      }
+      break;
     }
     if (this.isWord('TABLE')) {
       this.parseCreateTable();
+      return;
+    }
+    if (this.isWord('VIEW')) {
+      this.parseCreateView(materialized);
       return;
     }
     if (this.isWord('INDEX')) {
@@ -401,6 +443,94 @@ class Parser {
     const what = this.peek().type === 'word' ? this.peek().upper : '?';
     this.warn(`Skipped CREATE ${what} statement`, start);
     this.skipStatement();
+  }
+
+  /** True at a top-level WITH that starts `WITH [CASCADED|LOCAL] CHECK OPTION`. */
+  private atCheckOption(): boolean {
+    if (!this.isWord('WITH')) return false;
+    const n1 = this.peek(1);
+    if (n1.type !== 'word') return false;
+    if (n1.upper === 'CHECK') return true;
+    return (n1.upper === 'CASCADED' || n1.upper === 'LOCAL') && this.peek(2).type === 'word' && this.peek(2).upper === 'CHECK';
+  }
+
+  /** Words that cannot start a table reference after FROM / JOIN. */
+  private static readonly NOT_A_TABLE = new Set([
+    'SELECT', 'WHERE', 'ON', 'USING', 'GROUP', 'ORDER', 'LIMIT', 'OFFSET', 'HAVING', 'UNION', 'INTERSECT', 'EXCEPT', 'JOIN', 'LEFT', 'RIGHT',
+    'INNER', 'OUTER', 'FULL', 'CROSS', 'NATURAL', 'WITH', 'AS', 'AND', 'OR', 'NOT', 'CASE', 'WHEN', 'VALUES', 'WINDOW', 'FETCH', 'FOR',
+  ]);
+
+  /** Consume `[schema.]table [alias]` after FROM / JOIN and record the reference. Returns false when there is none (subquery, function). */
+  private readTableRef(sources: string[]): boolean {
+    this.acceptWord('ONLY', 'LATERAL');
+    const t = this.peek();
+    if (!this.isIdent(t)) return false;
+    if (t.type === 'word' && Parser.NOT_A_TABLE.has(t.upper)) return false;
+    if (this.isPunct('(', 1)) return false; // function call
+    const { schema, name } = this.parseQualifiedName();
+    const full = schema ? `${schema}.${name}` : name;
+    if (!sources.includes(full)) sources.push(full);
+    // optional alias
+    if (this.acceptWord('AS')) {
+      if (this.isIdent()) this.next();
+    } else if (this.isIdent() && !(this.peek().type === 'word' && Parser.NOT_A_TABLE.has(this.peek().upper))) {
+      this.next();
+    }
+    return true;
+  }
+
+  private parseCreateView(materialized: boolean): void {
+    const start = this.expectWord('VIEW');
+    if (this.acceptWord('IF')) {
+      this.expectWord('NOT');
+      this.expectWord('EXISTS');
+    }
+    const { schema, name } = this.parseQualifiedName();
+    const columns = this.isPunct('(') ? this.parseColumnList() : [];
+    if (this.isWord('WITH') && this.isPunct('(', 1)) {
+      this.next();
+      this.parseParenRaw();
+    }
+    if (!this.isWord('AS')) {
+      this.warn(`Skipped CREATE VIEW ${name}: expected AS`, start);
+      this.skipStatement();
+      return;
+    }
+    this.next();
+    const first = this.peek();
+    const sources: string[] = [];
+    let depth = 0;
+    for (;;) {
+      const t = this.peek();
+      if (t.type === 'eof') break;
+      if (t.type === 'punct') {
+        if (t.value === '(') depth++;
+        else if (t.value === ')') depth = Math.max(0, depth - 1);
+        else if (t.value === ';' && depth === 0) break;
+      }
+      if (depth === 0 && this.atCheckOption()) break;
+      if (t.type === 'word' && (t.upper === 'FROM' || t.upper === 'JOIN')) {
+        this.next();
+        if (this.readTableRef(sources) && t.upper === 'FROM') {
+          while (this.isPunct(',')) {
+            this.next();
+            if (!this.readTableRef(sources)) break;
+          }
+        }
+        continue;
+      }
+      this.next();
+    }
+    const last = this.tokens[this.pos - 1];
+    const sql = last && last.end > first.start ? this.sql.slice(first.start, last.end).trim() : '';
+    this.skipStatement();
+    if (!sql) {
+      this.warn(`CREATE VIEW ${name} has no SELECT body`, start);
+      return;
+    }
+    const existing = this.result.views.findIndex((v) => v.name.toLowerCase() === name.toLowerCase());
+    if (existing !== -1) this.result.views.splice(existing, 1);
+    this.result.views.push({ schema, name, columns, sql, sources, materialized: materialized || undefined });
   }
 
   private parseCreateTable(): void {
@@ -640,6 +770,7 @@ class Parser {
           }
           continue;
         case 'AUTO_INCREMENT':
+        case 'AUTOINCREMENT':
           this.next();
           col.autoIncrement = true;
           continue;
@@ -1020,10 +1151,10 @@ class Parser {
 export function parseSql(sql: string, dialect: Dialect): ParseResult {
   let tokens: Token[];
   try {
-    tokens = tokenize(sql);
+    tokens = tokenize(sql, { bracketIdentifiers: dialect === 'sqlite' });
   } catch (e) {
     if (e instanceof SqlSyntaxError) {
-      return { tables: [], enums: [], compositeTypes: [], errors: [{ message: e.message, line: e.line, col: e.col }], warnings: [], statementCount: 0 };
+      return { tables: [], views: [], enums: [], compositeTypes: [], errors: [{ message: e.message, line: e.line, col: e.col }], warnings: [], statementCount: 0 };
     }
     throw e;
   }

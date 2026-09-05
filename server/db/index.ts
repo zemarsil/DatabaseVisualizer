@@ -1,4 +1,4 @@
-import type { ConnectionConfig, IntrospectResponse, StatementResult } from '../../src/shared/types';
+import type { ConnectionConfig, IntrospectResponse, QueryResult, StatementResult } from '../../src/shared/types';
 import * as postgres from './postgres';
 import * as maria from './mariadb';
 
@@ -6,7 +6,10 @@ export function validateConnection(input: unknown): ConnectionConfig {
   if (!input || typeof input !== 'object') throw new Error('Connection settings are required.');
   const o = input as Record<string, unknown>;
   const dialect = o.dialect === 'mariadb' ? 'mariadb' : o.dialect === 'postgresql' ? 'postgresql' : null;
-  if (!dialect) throw new Error('dialect must be "postgresql" or "mariadb".');
+  if (!dialect) {
+    if (o.dialect === 'sqlite') throw new Error('SQLite runs inside the browser; the API server only talks to PostgreSQL and MariaDB.');
+    throw new Error('dialect must be "postgresql" or "mariadb".');
+  }
   const host = typeof o.host === 'string' && o.host.trim() ? o.host.trim() : '127.0.0.1';
   const port = Number(o.port);
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('port must be between 1 and 65535.');
@@ -36,4 +39,15 @@ export function applyStatements(cfg: ConnectionConfig, statements: string[], sto
 
 export function introspect(cfg: ConnectionConfig): Promise<IntrospectResponse> {
   return cfg.dialect === 'postgresql' ? postgres.introspect(cfg) : maria.introspect(cfg);
+}
+
+export interface QueryOptions {
+  maxRows: number;
+  allowWrites: boolean;
+}
+
+export { isReadOnlySql } from './values';
+
+export function runQuery(cfg: ConnectionConfig, sql: string, opts: QueryOptions): Promise<QueryResult> {
+  return cfg.dialect === 'postgresql' ? postgres.runQuery(cfg, sql, opts) : maria.runQuery(cfg, sql, opts);
 }

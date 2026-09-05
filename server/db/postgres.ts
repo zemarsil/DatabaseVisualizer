@@ -1,5 +1,7 @@
 import pg from 'pg';
-import type { ConnectionConfig, IntrospectResponse, IntrospectedTable, ReferentialAction, StatementResult } from '../../src/shared/types';
+import type { ConnectionConfig, IntrospectResponse, IntrospectedTable, QueryResult, ReferentialAction, StatementResult } from '../../src/shared/types';
+import type { QueryOptions } from './index';
+import { serializeRows, splitStatements } from './values';
 
 const { Client } = pg;
 
@@ -63,10 +65,11 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
   try {
     const version = String((await c.query('SELECT version() AS v')).rows[0].v);
 
-    const tables = await c.query<{ schema: string; name: string; comment: string | null }>(
-      `SELECT n.nspname AS schema, c.relname AS name, obj_description(c.oid, 'pg_class') AS comment
+    const tables = await c.query<{ schema: string; name: string; comment: string | null; relkind: string; view_sql: string | null }>(
+      `SELECT n.nspname AS schema, c.relname AS name, obj_description(c.oid, 'pg_class') AS comment, c.relkind,
+              CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid, true) ELSE NULL END AS view_sql
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE c.relkind IN ('r', 'p') AND ${SYSTEM_SCHEMAS}
+       WHERE c.relkind IN ('r', 'p', 'v', 'm') AND ${SYSTEM_SCHEMAS}
        ORDER BY 1, 2`,
     );
 
@@ -90,7 +93,7 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
        JOIN pg_class c ON c.oid = a.attrelid
        JOIN pg_namespace n ON n.oid = c.relnamespace
        LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
-       WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p') AND ${SYSTEM_SCHEMAS}
+       WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p', 'v', 'm') AND ${SYSTEM_SCHEMAS}
        ORDER BY n.nspname, c.relname, a.attnum`,
     );
 
@@ -139,9 +142,30 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
        ORDER BY 1, 2, 3`,
     );
 
+    const enums = await c.query<{ schema: string; name: string; values: string[] }>(
+      `SELECT n.nspname AS schema, t.typname AS name, array_agg(e.enumlabel ORDER BY e.enumsortorder) AS values
+       FROM pg_type t
+       JOIN pg_enum e ON e.enumtypid = t.oid
+       JOIN pg_namespace n ON n.oid = t.typnamespace
+       WHERE ${SYSTEM_SCHEMAS}
+       GROUP BY 1, 2 ORDER BY 1, 2`,
+    );
+
     const byKey = new Map<string, IntrospectedTable>();
     for (const t of tables.rows) {
-      byKey.set(`${t.schema}.${t.name}`, { schema: t.schema, name: t.name, comment: t.comment, columns: [], primaryKey: [], uniques: [], indexes: [], foreignKeys: [] });
+      const isView = t.relkind === 'v' || t.relkind === 'm';
+      byKey.set(`${t.schema}.${t.name}`, {
+        schema: t.schema,
+        name: t.name,
+        kind: isView ? 'view' : 'table',
+        viewSql: isView ? (t.view_sql ?? '').trim().replace(/;$/, '') : undefined,
+        comment: t.comment,
+        columns: [],
+        primaryKey: [],
+        uniques: [],
+        indexes: [],
+        foreignKeys: [],
+      });
     }
     for (const col of columns.rows) {
       const t = byKey.get(`${col.schema}.${col.table}`);
@@ -178,7 +202,46 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
       if (!t || !ix.columns || ix.columns.length === 0) continue; // expression indexes are skipped
       t.indexes.push({ name: ix.name, columns: ix.columns, unique: ix.unique });
     }
-    return { serverVersion: version, tables: [...byKey.values()] };
+    return { serverVersion: version, tables: [...byKey.values()], enums: enums.rows.map((e) => ({ schema: e.schema, name: e.name, values: e.values ?? [] })) };
+  } finally {
+    await c.end();
+  }
+}
+
+/**
+ * Run an ad-hoc script inside one transaction. Without allowWrites the
+ * transaction is READ ONLY and rolled back at the end, so a stray UPDATE can
+ * neither run nor stick; with it, the transaction commits. The row cap is
+ * applied after the fetch (no server cursor), which is fine for the sizes the
+ * grid can show anyway.
+ */
+export async function runQuery(cfg: ConnectionConfig, sql: string, opts: QueryOptions): Promise<QueryResult> {
+  const c = clientFor(cfg);
+  await c.connect();
+  const t0 = Date.now();
+  try {
+    await c.query('BEGIN');
+    if (!opts.allowWrites) await c.query('SET TRANSACTION READ ONLY');
+    let last: pg.QueryArrayResult | null = null;
+    for (const statement of splitStatements(sql)) {
+      const res = await c.query({ text: statement, rowMode: 'array' });
+      if (!last || res.fields.length || !last.fields.length) last = res;
+    }
+    await c.query(opts.allowWrites ? 'COMMIT' : 'ROLLBACK');
+    if (!last) return { columns: [], rows: [], rowCount: 0, truncated: false, durationMs: Date.now() - t0 };
+    const rows = serializeRows(last.rows as unknown[][]);
+    const truncated = rows.length > opts.maxRows;
+    return {
+      columns: last.fields.map((f) => f.name),
+      rows: truncated ? rows.slice(0, opts.maxRows) : rows,
+      rowCount: last.fields.length ? rows.length : (last.rowCount ?? 0),
+      truncated,
+      durationMs: Date.now() - t0,
+      command: last.command,
+    };
+  } catch (e) {
+    await c.query('ROLLBACK').catch(() => undefined);
+    throw e;
   } finally {
     await c.end();
   }

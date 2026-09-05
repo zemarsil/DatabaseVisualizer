@@ -1,4 +1,18 @@
-import { Boxes, PanelRightClose, Route, Trash2 } from 'lucide-react';
+import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalDistributeCenter,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalDistributeCenter,
+  Boxes,
+  PanelRightClose,
+  Route,
+  Trash2,
+} from 'lucide-react';
+import { alignTables, distributeTables, type AlignMode } from '@/lib/canvasOps';
 import { kindMeta } from '@shared/types';
 import { selectSelectedGroup, selectSelectedNote, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
 import { TableEditor } from './TableEditor';
@@ -23,7 +37,26 @@ export function Inspector() {
   const setTraceEndpoints = useStore((s) => s.setTraceEndpoints);
   const runTrace = useStore((s) => s.runTrace);
   const addGroup = useStore((s) => s.addGroup);
+  const nodeSizes = useStore((s) => s.nodeSizes);
+  const beginDrag = useStore((s) => s.beginDrag);
+  const moveItems = useStore((s) => s.moveItems);
+  const endDrag = useStore((s) => s.endDrag);
   const count = selectedTableIds.length + selectedNoteIds.length;
+  const selectedTables = tables.filter((t) => selectedTableIds.includes(t.id));
+  const arrange = (moves: { id: string; position: { x: number; y: number } }[]) => {
+    if (!moves.length) return;
+    beginDrag();
+    moveItems(moves);
+    endDrag();
+  };
+  const alignButtons: { mode: AlignMode; title: string; icon: React.ReactNode }[] = [
+    { mode: 'left', title: 'Align left edges', icon: <AlignStartVertical /> },
+    { mode: 'centerX', title: 'Align centres', icon: <AlignCenterVertical /> },
+    { mode: 'right', title: 'Align right edges', icon: <AlignEndVertical /> },
+    { mode: 'top', title: 'Align top edges', icon: <AlignStartHorizontal /> },
+    { mode: 'centerY', title: 'Align middles', icon: <AlignCenterHorizontal /> },
+    { mode: 'bottom', title: 'Align bottom edges', icon: <AlignEndHorizontal /> },
+  ];
 
   let title = 'Diagram';
   let body: React.ReactNode;
@@ -55,6 +88,25 @@ export function Inspector() {
             </span>
           ))}
         </div>
+        {selectedTableIds.length > 1 && (
+          <div className="field">
+            <span className="field__label">Arrange</span>
+            <div className="arrange-row">
+              {alignButtons.map((b) => (
+                <button key={b.mode} className="btn btn--sm btn--icon" title={b.title} onClick={() => arrange(alignTables(selectedTables, nodeSizes, b.mode))}>
+                  {b.icon}
+                </button>
+              ))}
+              <button className="btn btn--sm btn--icon" title="Distribute horizontally (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange(distributeTables(selectedTables, nodeSizes, 'x'))}>
+                <AlignHorizontalDistributeCenter />
+              </button>
+              <button className="btn btn--sm btn--icon" title="Distribute vertically (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange(distributeTables(selectedTables, nodeSizes, 'y'))}>
+                <AlignVerticalDistributeCenter />
+              </button>
+            </div>
+            <span className="field__hint">Arrow keys nudge the selection; Shift moves further.</span>
+          </div>
+        )}
         {selectedTableIds.length > 1 && (
           <button className="btn" onClick={() => addGroup({ tableIds: selectedTableIds })}>
             <Boxes /> Group these {selectedTableIds.length} tables

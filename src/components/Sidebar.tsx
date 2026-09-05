@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Boxes, Database, PanelLeftClose, Plus, Search, StickyNote } from 'lucide-react';
+import { Boxes, Database, Eye, PanelLeftClose, Plus, Search, StickyNote } from 'lucide-react';
 import type { Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { paletteHue } from '@/lib/palette';
@@ -56,7 +56,7 @@ export function Sidebar() {
         }}
         title={t.comment || t.name}
       >
-        <span className="sidebar__dot" style={{ background: paletteHue(t.color) }} />
+        {t.kind === 'view' ? <Eye size={12} style={{ color: paletteHue(t.color), flex: 'none' }} /> : <span className="sidebar__dot" style={{ background: paletteHue(t.color) }} />}
         <span className="sidebar__name">{t.name}</span>
         <span className="sidebar__count">{t.columns.length}</span>
       </button>

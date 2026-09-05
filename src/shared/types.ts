@@ -6,12 +6,36 @@
  * edges.
  */
 
-export type Dialect = 'postgresql' | 'mariadb';
+export type Dialect = 'postgresql' | 'mariadb' | 'sqlite';
 
-export const DIALECTS: { id: Dialect; label: string; defaultPort: number; defaultUser: string; image: string }[] = [
-  { id: 'postgresql', label: 'PostgreSQL', defaultPort: 5432, defaultUser: 'postgres', image: 'postgres:16' },
-  { id: 'mariadb', label: 'MariaDB', defaultPort: 3306, defaultUser: 'root', image: 'mariadb:11' },
+/** Dialects that run as a server the API talks to (everything except the in-browser SQLite engine). */
+export type ServerDialect = Exclude<Dialect, 'sqlite'>;
+
+export interface DialectMeta {
+  id: Dialect;
+  label: string;
+  /** False for SQLite, which runs inside the browser (sql.js) and needs no server or Docker. */
+  server: boolean;
+  defaultPort: number;
+  defaultUser: string;
+  image: string;
+}
+
+export const DIALECTS: DialectMeta[] = [
+  { id: 'postgresql', label: 'PostgreSQL', server: true, defaultPort: 5432, defaultUser: 'postgres', image: 'postgres:16' },
+  { id: 'mariadb', label: 'MariaDB', server: true, defaultPort: 3306, defaultUser: 'root', image: 'mariadb:11' },
+  { id: 'sqlite', label: 'SQLite (in browser)', server: false, defaultPort: 0, defaultUser: '', image: '' },
 ];
+
+export const SERVER_DIALECTS = DIALECTS.filter((d) => d.server);
+
+export function isServerDialect(d: Dialect): d is ServerDialect {
+  return d !== 'sqlite';
+}
+
+export function dialectLabel(d: Dialect): string {
+  return DIALECTS.find((x) => x.id === d)?.label ?? d;
+}
 
 export type ReferentialAction = 'NO ACTION' | 'RESTRICT' | 'CASCADE' | 'SET NULL' | 'SET DEFAULT';
 
@@ -70,10 +94,20 @@ export interface CustomType {
   comment?: string;
 }
 
+/** table -> a real table. view -> CREATE VIEW; its SELECT lives in viewSql and its inputs are flow links. */
+export type TableKind = 'table' | 'view';
+
+/** How much of a table the canvas shows. Undefined means every column. */
+export type TableDisplay = 'keys' | 'header';
+
 export interface Table {
   id: string;
   name: string;
   schema?: string;
+  /** Defaults to 'table' when absent. */
+  kind?: TableKind;
+  /** The SELECT body of a view (without CREATE VIEW ... AS). Ignored for tables. */
+  viewSql?: string;
   columns: Column[];
   indexes: Index[];
   /** Table-level CHECK constraints (bodies only). */
@@ -84,6 +118,8 @@ export interface Table {
   comment?: string;
   /** Group this table belongs to, if any (see Group). */
   groupId?: string;
+  /** Collapsed rendering on the canvas; saved with the diagram because it is part of how a big schema is read. */
+  collapsed?: TableDisplay;
 }
 
 /**
@@ -478,6 +514,28 @@ export interface ApplySchemaResponse {
   results: StatementResult[];
 }
 
+/** Run an ad-hoc query. The server wraps it in a transaction that is rolled back unless allowWrites is set. */
+export interface QueryRequest {
+  connection: ConnectionConfig;
+  sql: string;
+  /** Cap on returned rows (default 500). The result reports whether it was hit. */
+  maxRows?: number;
+  /** Permit statements other than SELECT/WITH/EXPLAIN/SHOW/DESCRIBE/VALUES and commit their effect. Default false. */
+  allowWrites?: boolean;
+}
+
+/** One result set. Cell values are JSON-safe: bigints, dates and buffers are rendered to strings. */
+export interface QueryResult {
+  columns: string[];
+  rows: unknown[][];
+  /** Rows returned (after the cap) or rows affected for a statement that returns none. */
+  rowCount: number;
+  truncated: boolean;
+  durationMs: number;
+  /** Statement tag when the driver reports one, e.g. "SELECT" or "INSERT". */
+  command?: string;
+}
+
 /** Normalised schema returned by /api/db/introspect. */
 export interface IntrospectedColumn {
   name: string;
@@ -501,6 +559,10 @@ export interface IntrospectedForeignKey {
 export interface IntrospectedTable {
   schema: string;
   name: string;
+  /** Absent means a plain table. */
+  kind?: 'table' | 'view';
+  /** The view's SELECT, for kind === 'view'. */
+  viewSql?: string | null;
   comment: string | null;
   columns: IntrospectedColumn[];
   primaryKey: string[];
@@ -512,4 +574,6 @@ export interface IntrospectedTable {
 export interface IntrospectResponse {
   serverVersion: string;
   tables: IntrospectedTable[];
+  /** Named enum types (PostgreSQL only). */
+  enums?: { schema: string; name: string; values: string[] }[];
 }

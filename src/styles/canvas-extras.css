@@ -1,0 +1,124 @@
+/* Canvas additions: collapse modes, views, cardinality, focus, drop overlay, inline rename. */
+
+.table-node__collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.table-node__collapse svg {
+  width: 13px;
+  height: 13px;
+}
+.table-node:hover .table-node__collapse,
+.table-node--selected .table-node__collapse {
+  opacity: 1;
+}
+.table-node__collapse:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.table-node__more {
+  padding: 4px 12px 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  cursor: pointer;
+  text-align: center;
+}
+.table-node__more:hover {
+  color: var(--accent);
+}
+.table-node--header .table-node__rows {
+  min-height: 0;
+}
+
+.table-node--view .table-node__header {
+  border-bottom: 1px dashed var(--border-strong);
+}
+.table-node__kind-icon {
+  width: 13px;
+  height: 13px;
+  color: var(--text-muted);
+  margin-right: 4px;
+  flex: none;
+}
+.table-node__badge--view {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.table-node__badge--join {
+  background: color-mix(in srgb, var(--flow) 22%, transparent);
+  color: var(--flow);
+}
+
+.table-node__rename {
+  flex: 1;
+  min-width: 60px;
+  font: inherit;
+  font-weight: 600;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-elev);
+  color: var(--text);
+  outline: none;
+}
+
+.edge-cardinality {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--canvas-bg);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  user-select: none;
+}
+
+.canvas__focus-banner strong {
+  font-weight: 600;
+}
+
+.canvas__drop {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  border: 2px dashed var(--accent);
+  pointer-events: none;
+}
+.canvas__drop-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  border-radius: var(--radius);
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  box-shadow: var(--shadow);
+  font-size: 14px;
+}
+.canvas__drop-card svg {
+  width: 20px;
+  height: 20px;
+  color: var(--accent);
+}
+
+.arrange-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}

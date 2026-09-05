@@ -20,6 +20,8 @@ export interface RelationEdgeData extends Record<string, unknown> {
   /** Position of this edge among others sharing the same source/target anchor points (for bowing duplicates apart). */
   siblingIndex: number;
   siblingCount: number;
+  /** Cardinality text at each end of a foreign key ("1", "N", "0..1", "0..N"); null hides the labels. */
+  cardinality: { source: string; target: string } | null;
 }
 
 export type RelationEdgeType = Edge<RelationEdgeData, 'relation'>;
@@ -199,6 +201,16 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
           <path d={crowsFoot(g.sx, g.sy, sDir)} style={markerStyle} />
           <path d={oneBar(g.tx, g.ty, tDir)} style={markerStyle} />
           {data.optional && <circle cx={g.sx + sDir * (MARKER + 5)} cy={g.sy} r={3.5} style={{ ...markerStyle, fill: 'var(--canvas-bg)' }} />}
+          {data.cardinality && !data.dimmed && (
+            <>
+              <text className="edge-cardinality" x={g.sx + sDir * (MARKER + 6)} y={g.sy - 7} textAnchor={sDir > 0 ? 'start' : 'end'} style={{ fill: color }}>
+                {data.cardinality.source}
+              </text>
+              <text className="edge-cardinality" x={g.tx + tDir * (MARKER + 6)} y={g.ty - 7} textAnchor={tDir > 0 ? 'start' : 'end'} style={{ fill: color }}>
+                {data.cardinality.target}
+              </text>
+            </>
+          )}
         </>
       )}
       {kind === 'flow' && (

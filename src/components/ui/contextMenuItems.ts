@@ -8,15 +8,27 @@
  * ContextMenu.tsx instantiates.
  */
 import {
+  AlignCenterHorizontal,
+  AlignCenterVertical,
+  AlignEndHorizontal,
+  AlignEndVertical,
+  AlignHorizontalDistributeCenter,
+  AlignStartHorizontal,
+  AlignStartVertical,
+  AlignVerticalDistributeCenter,
   ArrowDown,
   ArrowLeftRight,
   ArrowUp,
+  Boxes,
   ClipboardCopy,
+  ClipboardPaste,
   Code2,
   Copy,
   Crosshair,
   Database,
+  Eye,
   FileDown,
+  Focus,
   KeyRound,
   ListPlus,
   Maximize,
@@ -25,9 +37,11 @@ import {
   Plus,
   Redo2,
   Route,
+  Scissors,
   Shapes,
   Shuffle,
   SquareDashedMousePointer,
+  TextCursorInput,
   Ungroup,
   StickyNote,
   Trash2,
@@ -36,11 +50,15 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type Table } from '@shared/types';
+import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
 import { flowDerivations } from '@/lib/derivation';
-import { customTypeByName, relationshipKindPatch } from '@/lib/model';
+import { createGroup, customTypeByName, relationshipKindPatch, uniqueGroupName } from '@/lib/model';
 import { emptySelection, selectionSize, type Selection } from '@/lib/selection';
 import { generateTableSql } from '@/lib/sql/generator';
+import { alignTables, distributeTables, groupBySchema, type AlignMode } from '@/lib/canvasOps';
+import { copySelectionToClipboard, cutSelection, pasteFromClipboard } from '@/lib/canvasActions';
+import { PALETTE } from '@/lib/palette';
+import { useUi } from '@/store/useUi';
 import type { Store } from '@/store/useStore';
 
 /** What the user right-clicked. */
@@ -107,6 +125,8 @@ export interface MenuEnv {
   remove: (ids: { tableIds?: string[]; noteIds?: string[] }) => void;
   /** Delete a group's region together with its tables, confirming first. */
   removeGroup: (groupId: string) => void;
+  /** Paste the clipboard at a canvas position (defaults to the shared clipboard action). */
+  pasteAt?: (at: { x: number; y: number }) => void;
 }
 
 const sep = (id: string): MenuSeparator => ({ kind: 'separator', id });
@@ -144,12 +164,120 @@ function inGroup(store: Store, kind: 'table' | 'note', id: string): boolean {
 }
 
 /* ------------------------------------------------------------------ */
+/* Shared rows: collapse modes and arrange                             */
+/* ------------------------------------------------------------------ */
+
+const DISPLAY_MODES: { id: string; label: string; value: TableDisplay | undefined }[] = [
+  { id: 'show-full', label: 'All columns', value: undefined },
+  { id: 'show-keys', label: 'Keys only', value: 'keys' },
+  { id: 'show-header', label: 'Header only', value: 'header' },
+];
+
+/** "Show: All columns / Keys only / Header only" for one or more tables. */
+function displayItems(store: Store, tableIds: string[]): MenuNode[] {
+  const tables = store.diagram.tables.filter((t) => tableIds.includes(t.id));
+  const current = tables.length && tables.every((t) => (t.collapsed ?? null) === (tables[0].collapsed ?? null)) ? (tables[0].collapsed ?? undefined) : null;
+  return [
+    { kind: 'caption', id: 'show-caption', text: tableIds.length > 1 ? `Show (${tableIds.length} tables)` : 'Show' },
+    ...DISPLAY_MODES.map((m) => ({
+      kind: 'action' as const,
+      id: m.id,
+      label: m.label,
+      checked: current !== null && current === m.value,
+      disabled: tables.length === 0,
+      run: () => store.setTableDisplay(tableIds, m.value),
+    })),
+  ];
+}
+
+const ALIGN_ITEMS: { id: string; label: string; icon: LucideIcon; mode: AlignMode }[] = [
+  { id: 'align-left', label: 'Align left edges', icon: AlignStartVertical, mode: 'left' },
+  { id: 'align-center-x', label: 'Align centres (vertical axis)', icon: AlignCenterVertical, mode: 'centerX' },
+  { id: 'align-right', label: 'Align right edges', icon: AlignEndVertical, mode: 'right' },
+  { id: 'align-top', label: 'Align top edges', icon: AlignStartHorizontal, mode: 'top' },
+  { id: 'align-center-y', label: 'Align middles (horizontal axis)', icon: AlignCenterHorizontal, mode: 'centerY' },
+  { id: 'align-bottom', label: 'Align bottom edges', icon: AlignEndHorizontal, mode: 'bottom' },
+];
+
+/** One undo step for a set of moves. */
+function applyMoves(store: Store, moves: { id: string; position: { x: number; y: number } }[]): void {
+  if (!moves.length) return;
+  store.beginDrag();
+  store.moveItems(moves);
+  store.endDrag();
+}
+
+function arrangeItems(store: Store, tableIds: string[]): MenuNode[] {
+  const tables = store.diagram.tables.filter((t) => tableIds.includes(t.id));
+  return [
+    { kind: 'caption', id: 'arrange-caption', text: 'Arrange' },
+    ...ALIGN_ITEMS.map((a) => ({
+      kind: 'action' as const,
+      id: a.id,
+      label: a.label,
+      icon: a.icon,
+      disabled: tables.length < 2,
+      run: () => applyMoves(store, alignTables(tables, store.nodeSizes, a.mode)),
+    })),
+    {
+      kind: 'action',
+      id: 'distribute-x',
+      label: 'Distribute horizontally',
+      icon: AlignHorizontalDistributeCenter,
+      disabled: tables.length < 3,
+      hint: tables.length < 3 ? 'needs 3+' : undefined,
+      run: () => applyMoves(store, distributeTables(tables, store.nodeSizes, 'x')),
+    },
+    {
+      kind: 'action',
+      id: 'distribute-y',
+      label: 'Distribute vertically',
+      icon: AlignVerticalDistributeCenter,
+      disabled: tables.length < 3,
+      hint: tables.length < 3 ? 'needs 3+' : undefined,
+      run: () => applyMoves(store, distributeTables(tables, store.nodeSizes, 'y')),
+    },
+  ];
+}
+
+function focusItem(store: Store, tableId: string): MenuAction {
+  const ui = useUi.getState();
+  const focused = ui.focus?.tableId === tableId;
+  return {
+    kind: 'action',
+    id: focused ? 'unfocus' : 'focus',
+    label: focused ? 'Clear focus' : 'Focus neighborhood',
+    icon: Focus,
+    hint: '.',
+    disabled: !focused && store.diagram.relationships.every((r) => r.sourceTableId !== tableId && r.targetTableId !== tableId),
+    run: () => ui.setFocus(focused ? null : { tableId, hops: 1 }),
+  };
+}
+
+/** Create one region per schema name, in a single undo step. */
+export function createGroupsBySchema(store: Store): number {
+  const specs = groupBySchema(store.diagram);
+  if (!specs.length) return 0;
+  store.mutate((d) => {
+    for (const spec of specs) {
+      const g = createGroup({ name: uniqueGroupName(d, spec.name), color: PALETTE[d.groups.length % PALETTE.length].key });
+      d.groups.push(g);
+      const ids = new Set(spec.tableIds);
+      for (const t of d.tables) if (ids.has(t.id)) t.groupId = g.id;
+    }
+  });
+  return specs.length;
+}
+
+/* ------------------------------------------------------------------ */
 /* Canvas background                                                   */
 /* ------------------------------------------------------------------ */
 
 function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
   const s = env.store;
   const tables = s.diagram.tables;
+  const ui = useUi.getState();
+  const schemaGroups = groupBySchema(s.diagram).length;
   const items: MenuNode[] = [
     {
       kind: 'action',
@@ -161,11 +289,26 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
     },
     {
       kind: 'action',
+      id: 'add-view',
+      label: 'Add view here',
+      icon: Eye,
+      run: () => s.addTable({ x: Math.round(at.x - 120), y: Math.round(at.y - 20) }, { kind: 'view' }),
+    },
+    {
+      kind: 'action',
       id: 'add-note',
       label: 'Add note here',
       icon: StickyNote,
       hint: 'N',
       run: () => s.addNote({ x: Math.round(at.x - 110), y: Math.round(at.y - 60) }),
+    },
+    {
+      kind: 'action',
+      id: 'paste',
+      label: 'Paste here',
+      icon: ClipboardPaste,
+      hint: 'Ctrl+V',
+      run: () => (env.pasteAt ? env.pasteAt(at) : void pasteFromClipboard(at)),
     },
     sep('s1'),
     {
@@ -186,6 +329,22 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
       run: () => s.applyLayout(),
     },
     { kind: 'action', id: 'fit', label: 'Fit to window', icon: Maximize, hint: 'F', run: () => s.requestFitView() },
+    {
+      kind: 'action',
+      id: 'group-by-schema',
+      label: 'Group tables by schema',
+      icon: Boxes,
+      disabled: schemaGroups === 0,
+      hint: schemaGroups ? `${schemaGroups} schema${schemaGroups === 1 ? '' : 's'}` : 'no schemas',
+      run: () => {
+        const n = createGroupsBySchema(s);
+        s.toast('success', `Created ${n} group${n === 1 ? '' : 's'} from schema names.`);
+      },
+    },
+    sep('s-canvas'),
+    { kind: 'caption', id: 'canvas-caption', text: 'Canvas' },
+    { kind: 'action', id: 'snap', label: 'Snap to grid', checked: ui.snapToGrid, run: () => ui.setSnapToGrid(!ui.snapToGrid) },
+    { kind: 'action', id: 'cardinality', label: 'Cardinality labels', checked: ui.showCardinality, run: () => ui.setShowCardinality(!ui.showCardinality) },
   ];
 
   if (s.trace.picking) {
@@ -263,21 +422,47 @@ function tableMenu(table: Table, env: MenuEnv): MenuNode[] {
       },
     },
     { kind: 'action', id: 'rename', label: 'Rename…', icon: Pencil, run: () => env.renameTable(table.id) },
+    { kind: 'action', id: 'rename-inline', label: 'Rename in place', icon: TextCursorInput, hint: 'F2', run: () => useUi.getState().setRenamingTableId(table.id) },
     { kind: 'action', id: 'add-column', label: 'Add column', icon: Plus, run: () => s.addColumn(table.id) },
     sep('s1'),
     { kind: 'swatches', id: 'color', label: 'Color', value: table.color, pick: (key) => s.updateTable(table.id, { color: key }) },
     sep('s2'),
     { kind: 'action', id: 'duplicate', label: 'Duplicate table', icon: Copy, run: () => s.duplicateTable(table.id) },
+    { kind: 'action', id: 'copy', label: 'Copy table', icon: ClipboardCopy, hint: 'Ctrl+C', run: () => void copySelectionToClipboard([table.id]) },
+    {
+      kind: 'action',
+      id: 'cut',
+      label: 'Cut table',
+      icon: Scissors,
+      hint: 'Ctrl+X',
+      run: () => {
+        selectOnly(s, { tableIds: [table.id] });
+        cutSelection();
+      },
+    },
     {
       kind: 'action',
       id: 'copy-sql',
-      label: 'Copy CREATE TABLE',
+      label: table.kind === 'view' ? 'Copy CREATE VIEW' : 'Copy CREATE TABLE',
       icon: Code2,
-      run: () => env.copy(generateTableSql(s.diagram, table.id), `Copied the CREATE TABLE for ${table.name}.`),
+      run: () => env.copy(generateTableSql(s.diagram, table.id), `Copied the ${table.kind === 'view' ? 'CREATE VIEW' : 'CREATE TABLE'} for ${table.name}.`),
+    },
+    {
+      kind: 'action',
+      id: 'show-sql',
+      label: 'Show in SQL tab',
+      icon: Code2,
+      run: () => {
+        selectOnly(s, { tableIds: [table.id] });
+        s.openDrawer('sql');
+      },
     },
     { kind: 'action', id: 'copy-name', label: 'Copy table name', icon: ClipboardCopy, run: () => env.copy(table.name, 'Copied the table name.') },
+    sep('s-show'),
+    ...displayItems(s, [table.id]),
     sep('s3'),
-    { kind: 'action', id: 'focus', label: 'Zoom to table', icon: Crosshair, run: () => s.focusTable(table.id) },
+    focusItem(s, table.id),
+    { kind: 'action', id: 'zoom', label: 'Zoom to table', icon: Crosshair, run: () => s.focusTable(table.id) },
     {
       kind: 'action',
       id: 'select-connected',
@@ -374,6 +559,17 @@ function selectionMenu(env: MenuEnv): MenuNode[] {
         ]
       : []),
     { kind: 'swatches', id: 'color', label: 'Color for all', value: null, pick: (key) => s.colorElements({ tableIds, noteIds }, key) },
+    ...(tableIds.length
+      ? [
+          sep('s-show'),
+          ...displayItems(s, tableIds),
+          sep('s-arrange'),
+          ...arrangeItems(s, tableIds),
+          sep('s-clip'),
+          { kind: 'action' as const, id: 'copy', label: `Copy ${plural(tableIds.length, 'table')}`, icon: ClipboardCopy, hint: 'Ctrl+C', run: () => void copySelectionToClipboard(tableIds) },
+          { kind: 'action' as const, id: 'cut', label: `Cut ${plural(tableIds.length, 'table')}`, icon: Scissors, hint: 'Ctrl+X', run: () => cutSelection() },
+        ]
+      : []),
     sep('s2'),
     { kind: 'action', id: 'clear', label: 'Clear selection', icon: X, hint: 'Esc', run: () => s.clearSelection() },
     {
@@ -523,6 +719,7 @@ function groupMenu(groupId: string, env: MenuEnv): MenuNode[] {
       run: () => s.updateGroup(groupId, { external: !group.external }),
     },
     { kind: 'action', id: 'inspector', label: 'Edit group…', icon: PanelRight, run: () => s.selectGroup(groupId) },
+    ...(members.length ? [sep('s-show'), ...displayItems(s, ids)] : []),
     sep('s1'),
     {
       kind: 'action',

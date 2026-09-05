@@ -17,14 +17,31 @@ import {
 } from '@xyflow/react';
 import { Crosshair, X } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { openContextMenu } from '@/components/ui/ContextMenu';
+import { useUi } from '@/store/useUi';
+import { isContextMenuOpen, openContextMenu } from '@/components/ui/ContextMenu';
 import type { SelectionChange } from '@/lib/selection';
 import { paletteHue } from '@/lib/palette';
 import { GROUP_STICKINESS, groupAtPoint, groupBounds, inflate, rectCenter, rectContains, tableRect, type Rect } from '@/lib/groups';
+import { effectiveDisplay, visibleColumns } from '@/lib/visibleColumns';
+import { isJoinTable, relationshipCardinality } from '@/lib/schemaInfo';
+import { reachableTables } from '@/lib/trace';
+import { copySelectionToClipboard, cutSelection, openDroppedFiles, pasteText } from '@/lib/canvasActions';
 import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode';
 import { NoteNode, type NoteNodeType } from './NoteNode';
 import { GroupNode, GROUP_DRAG_HANDLE, type GroupNodeType } from './GroupNode';
 import { RelationEdge, type RelationEdgeType } from './RelationEdge';
+import { FocusBanner, MAX_FOCUS_HOPS } from './FocusBanner';
+import { DropOverlay } from './DropOverlay';
+import '@/styles/canvas-extras.css';
+
+/** Below this zoom every table collapses to its header so a big schema stays legible. */
+const LOD_ZOOM = 0.35;
+
+function isEditable(el: EventTarget | null): boolean {
+  if (!(el instanceof HTMLElement)) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+}
 
 const nodeTypes = { table: TableNode, note: NoteNode, tablegroup: GroupNode };
 const edgeTypes = { relation: RelationEdge };
@@ -102,9 +119,22 @@ export function Canvas() {
   const openDrawer = useStore((s) => s.openDrawer);
   const moveGroup = useStore((s) => s.moveGroup);
   const selectGroup = useStore((s) => s.selectGroup);
+  const viewportNonce = useStore((s) => s.viewportNonce);
+  const setViewportInStore = useStore((s) => s.setViewport);
+  const nudgeSelection = useStore((s) => s.nudgeSelection);
 
-  const { fitView, screenToFlowPosition } = useReactFlow();
+  const focus = useUi((s) => s.focus);
+  const snapToGrid = useUi((s) => s.snapToGrid);
+  const showCardinality = useUi((s) => s.showCardinality);
+  const lodCollapsed = useUi((s) => s.lodCollapsed);
+  const setLodCollapsed = useUi((s) => s.setLodCollapsed);
+  const renamingTableId = useUi((s) => s.renamingTableId);
+  const setRenamingTableId = useUi((s) => s.setRenamingTableId);
+
+  const { fitView, screenToFlowPosition, setViewport, getViewport } = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const [dropping, setDropping] = useState(false);
+  const dragDepth = useRef(0);
   /*
    * True while a marquee (shift + drag) is being dragged. React Flow marks every edge
    * touching a boxed node as selected, and an edge selection replaces the node selection,
@@ -177,6 +207,23 @@ export function Canvas() {
   const traceRels = useMemo(() => new Set(trace.result?.relationshipIds ?? []), [trace.result]);
   const selectedTableId = selection.tableIds.length === 1 ? selection.tableIds[0] : null;
 
+  /* ---------- collapse modes, focus, cardinality ---------- */
+
+  const shownColumns = useMemo(() => {
+    const m = new Map<string, ReturnType<typeof visibleColumns>>();
+    for (const t of diagram.tables) m.set(t.id, visibleColumns(t, effectiveDisplay(t, lodCollapsed), new Set(fkColumnsByTable.get(t.id) ?? [])));
+    return m;
+  }, [diagram.tables, fkColumnsByTable, lodCollapsed]);
+
+  // Neighborhood focus: tables within N hops of the focused one; a trace wins while it is active.
+  const focusSet = useMemo(() => {
+    if (!focus || tracing || !tableMap.has(focus.tableId)) return null;
+    const dist = reachableTables(diagram, focus.tableId);
+    return new Set([...dist.entries()].filter(([, d]) => d <= focus.hops).map(([id]) => id));
+  }, [focus, tracing, diagram, tableMap]);
+
+  const joinTables = useMemo(() => new Set(diagram.tables.filter((t) => isJoinTable(diagram, t)).map((t) => t.id)), [diagram]);
+
   const nodes = useMemo<CanvasNode[]>(() => {
     const tableNodes: TableNodeType[] = diagram.tables.map((t) => {
       const role = !trace.result
@@ -196,9 +243,14 @@ export function Canvas() {
           table: t,
           fkColumnIds: fkColumnsByTable.get(t.id) ?? [],
           embedColumnIds: embedColumnsByTable.get(t.id) ?? [],
-          dimmed: tracing && !traceTables.has(t.id),
+          visibleColumns: shownColumns.get(t.id) ?? t.columns,
+          display: effectiveDisplay(t, lodCollapsed),
+          lod: lodCollapsed,
+          joinTable: joinTables.has(t.id),
+          dimmed: (tracing && !traceTables.has(t.id)) || (focusSet !== null && !focusSet.has(t.id)),
           traceRole: role,
           picking: trace.picking,
+          renaming: renamingTableId === t.id,
         },
         selected: selection.tableIds.includes(t.id),
         measured: nodeSizes[t.id],
@@ -210,7 +262,7 @@ export function Canvas() {
       position: n.position,
       width: n.width,
       height: n.height,
-      data: { note: n, dimmed: tracing },
+      data: { note: n, dimmed: tracing || focusSet !== null },
       selected: selection.noteIds.includes(n.id),
       measured: nodeSizes[n.id],
     }));
@@ -228,7 +280,7 @@ export function Canvas() {
           group: g,
           tableCount: groupTableCounts[g.id] ?? 0,
           selected: selection.groupId === g.id,
-          dimmed: tracing,
+          dimmed: tracing || focusSet !== null,
           dropTarget: dropTargetId === g.id,
         },
         selectable: false,
@@ -256,6 +308,11 @@ export function Canvas() {
     groupTableCounts,
     dropTargetId,
     embedColumnsByTable,
+    shownColumns,
+    lodCollapsed,
+    joinTables,
+    focusSet,
+    renamingTableId,
   ]);
 
   const edges = useMemo<RelationEdgeType[]>(() => {
@@ -263,8 +320,11 @@ export function Canvas() {
       const src = tableMap.get(r.sourceTableId);
       const tgt = tableMap.get(r.targetTableId);
       if (!src || !tgt) return null;
-      const sourceRow = r.sourceColumnIds.length ? src.columns.findIndex((c) => c.id === r.sourceColumnIds[0]) : -1;
-      const targetRow = r.targetColumnIds.length ? tgt.columns.findIndex((c) => c.id === r.targetColumnIds[0]) : -1;
+      // Rows are indexes into the columns actually drawn; a hidden column anchors the edge at the header.
+      const srcShown = shownColumns.get(src.id) ?? src.columns;
+      const tgtShown = shownColumns.get(tgt.id) ?? tgt.columns;
+      const sourceRow = r.sourceColumnIds.length ? srcShown.findIndex((c) => c.id === r.sourceColumnIds[0]) : -1;
+      const targetRow = r.targetColumnIds.length ? tgtShown.findIndex((c) => c.id === r.targetColumnIds[0]) : -1;
       const srcCol = src.columns.find((c) => c.id === r.sourceColumnIds[0]);
       // Relationships sharing identical anchor points would otherwise render as fully overlapping curves.
       const anchorKey = `${r.sourceTableId}#${sourceRow}->${r.targetTableId}#${targetRow}`;
@@ -282,6 +342,8 @@ export function Canvas() {
       const { r, src, sourceRow, targetRow, srcCol, anchorKey } = p;
       const siblingIndex = anchorSeen.get(anchorKey) ?? 0;
       anchorSeen.set(anchorKey, siblingIndex + 1);
+      const card = showCardinality && r.kind === 'fk' ? relationshipCardinality(diagram, r) : null;
+      const inFocus = focusSet === null || (focusSet.has(r.sourceTableId) && focusSet.has(r.targetTableId));
       out.push({
         id: r.id,
         type: 'relation',
@@ -293,17 +355,18 @@ export function Canvas() {
           sourceRow,
           targetRow,
           hue: paletteHue(src.color),
-          dimmed: tracing && !traceRels.has(r.id),
+          dimmed: (tracing && !traceRels.has(r.id)) || !inFocus,
           traced: traceRels.has(r.id),
           attached: selectedTableId !== null && (r.sourceTableId === selectedTableId || r.targetTableId === selectedTableId),
           optional: r.kind === 'fk' && Boolean(srcCol?.nullable),
           siblingIndex,
           siblingCount: anchorCounts.get(anchorKey) ?? 1,
+          cardinality: card ? { source: card.source === 'N' ? (card.sourceOptional ? '0..N' : 'N') : card.sourceOptional ? '0..1' : '1', target: '1' } : null,
         },
       });
     }
     return out;
-  }, [diagram.relationships, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId]);
+  }, [diagram, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet]);
 
   /* ---------- change handlers ---------- */
 
@@ -396,7 +459,11 @@ export function Canvas() {
       const a = parseHandle(c.sourceHandle);
       const b = parseHandle(c.targetHandle);
       if (!a || !b || !c.source || !c.target) return;
-      if (a.kind === 'column' && b.kind === 'column') {
+      const touchesView = tableMap.get(c.source)?.kind === 'view' || tableMap.get(c.target)?.kind === 'view';
+      if (touchesView && a.kind === 'column' && b.kind === 'column') {
+        toast('info', 'Views cannot have foreign keys; a data-flow link was added instead.');
+      }
+      if (a.kind === 'column' && b.kind === 'column' && !touchesView) {
         const dup = diagram.relationships.find(
           (r) => r.kind === 'fk' && r.sourceColumnIds.length === 1 && r.sourceColumnIds[0] === a.columnId && r.targetColumnIds[0] === b.columnId,
         );
@@ -416,7 +483,7 @@ export function Canvas() {
         });
       }
     },
-    [diagram.relationships, addRelationship, toast, setSelection],
+    [diagram.relationships, addRelationship, toast, setSelection, tableMap],
   );
 
   /* ---------- dragging tables and regions ---------- */
@@ -664,10 +731,139 @@ export function Canvas() {
     focusTable(null);
   }, [focusTableId, fitView, focusTable]);
 
+  // A diagram that carried a saved viewport reopens where it was left.
+  useEffect(() => {
+    if (viewportNonce === 0) return;
+    const v = useStore.getState().diagram.viewport;
+    if (v) void setViewport(v, { duration: 0 });
+  }, [viewportNonce, setViewport]);
+
+  // Entering focus mode frames the neighborhood.
+  const focusKey = focus ? `${focus.tableId}:${focus.hops}` : '';
+  useEffect(() => {
+    if (!focusSet || !focusKey) return;
+    const t = setTimeout(() => fitView({ nodes: [...focusSet].map((id) => ({ id })), duration: 400, padding: 0.3, maxZoom: 1.1 }), 40);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusKey, fitView]);
+
+  const lodFrame = useRef<number | null>(null);
+  const onMove = useCallback(() => {
+    if (lodFrame.current !== null) return;
+    lodFrame.current = requestAnimationFrame(() => {
+      lodFrame.current = null;
+      setLodCollapsed(getViewport().zoom < LOD_ZOOM);
+    });
+  }, [getViewport, setLodCollapsed]);
+  const onMoveEnd = useCallback(() => {
+    const v = getViewport();
+    setViewportInStore({ x: Math.round(v.x), y: Math.round(v.y), zoom: Number(v.zoom.toFixed(3)) });
+  }, [getViewport, setViewportInStore]);
+
+  /* ---------- keyboard: nudge, focus, rename ---------- */
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (isEditable(e.target) || isContextMenuOpen() || e.ctrlKey || e.metaKey || e.altKey) return;
+      const s = useStore.getState();
+      const ui = useUi.getState();
+      if (e.key.startsWith('Arrow')) {
+        if (!s.selection.tableIds.length && !s.selection.noteIds.length) return;
+        const step = e.shiftKey ? 50 : 10;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        e.preventDefault();
+        nudgeSelection(dx, dy);
+        return;
+      }
+      if (e.key === '.' && s.selection.tableIds.length === 1) {
+        e.preventDefault();
+        const id = s.selection.tableIds[0];
+        ui.setFocus(ui.focus?.tableId === id ? null : { tableId: id, hops: 1 });
+        return;
+      }
+      if ((e.key === '[' || e.key === ']') && ui.focus) {
+        e.preventDefault();
+        const hops = Math.max(1, Math.min(MAX_FOCUS_HOPS, ui.focus.hops + (e.key === ']' ? 1 : -1)));
+        ui.setFocus({ tableId: ui.focus.tableId, hops });
+        return;
+      }
+      if (e.key === 'F2' && s.selection.tableIds.length === 1) {
+        e.preventDefault();
+        ui.setRenamingTableId(s.selection.tableIds[0]);
+        return;
+      }
+      if (e.key === 'Escape' && ui.focus && !s.trace.picking && !s.trace.result) {
+        ui.setFocus(null);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [nudgeSelection]);
+
+  /* ---------- copy / cut / paste ---------- */
+
+  useEffect(() => {
+    const onCopy = (e: ClipboardEvent) => {
+      if (isEditable(e.target) || !useStore.getState().selection.tableIds.length) return;
+      e.preventDefault();
+      void copySelectionToClipboard();
+    };
+    const onCut = (e: ClipboardEvent) => {
+      if (isEditable(e.target) || !useStore.getState().selection.tableIds.length) return;
+      e.preventDefault();
+      cutSelection();
+    };
+    const onPaste = (e: ClipboardEvent) => {
+      if (isEditable(e.target)) return;
+      const text = e.clipboardData?.getData('text/plain') ?? '';
+      if (!text.trim()) return;
+      const kind = pasteText(text);
+      if (kind !== 'unknown') e.preventDefault();
+    };
+    window.addEventListener('copy', onCopy);
+    window.addEventListener('cut', onCut);
+    window.addEventListener('paste', onPaste);
+    return () => {
+      window.removeEventListener('copy', onCopy);
+      window.removeEventListener('cut', onCut);
+      window.removeEventListener('paste', onPaste);
+    };
+  }, []);
+
+  /* ---------- file drop ---------- */
+
+  const hasFiles = (e: React.DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+  const onDragEnter = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current++;
+    setDropping(true);
+  };
+  const onDragOver = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  };
+  const onDragLeave = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    dragDepth.current = Math.max(0, dragDepth.current - 1);
+    if (dragDepth.current === 0) setDropping(false);
+  };
+  const onDrop = (e: React.DragEvent) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    dragDepth.current = 0;
+    setDropping(false);
+    const files = Array.from(e.dataTransfer.files);
+    const at = screenToFlowPosition({ x: e.clientX, y: e.clientY });
+    void openDroppedFiles(files, { x: Math.round(at.x), y: Math.round(at.y) });
+  };
+
   const pickingLabel = trace.picking ? (trace.fromId ? `From ${tableMap.get(trace.fromId)?.name ?? '?'}: now click the destination table` : 'Click the starting table') : null;
 
   return (
-    <div ref={wrapperRef} className="app__canvas" onDoubleClick={onPaneDoubleClick}>
+    <div ref={wrapperRef} className="app__canvas" onDoubleClick={onPaneDoubleClick} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       <ReactFlow
         className={`canvas${trace.picking ? ' picking' : ''}`}
         colorMode={theme}
@@ -694,7 +890,14 @@ export function Canvas() {
         onSelectionDragStop={onNodeDragStop}
         onSelectionStart={() => void (boxSelecting.current = true)}
         onSelectionEnd={() => void (boxSelecting.current = false)}
-        onPaneClick={() => clearSelection()}
+        onPaneClick={() => {
+          clearSelection();
+          if (renamingTableId) setRenamingTableId(null);
+        }}
+        onMove={onMove}
+        onMoveEnd={onMoveEnd}
+        snapToGrid={snapToGrid}
+        snapGrid={[20, 20]}
         connectionMode={ConnectionMode.Loose}
         connectionRadius={24}
         deleteKeyCode={['Backspace', 'Delete']}
@@ -725,6 +928,8 @@ export function Canvas() {
           maskColor="rgba(0,0,0,0.25)"
         />
       </ReactFlow>
+      {!pickingLabel && <FocusBanner />}
+      <DropOverlay visible={dropping} />
       {pickingLabel && (
         <div className="canvas__picking-banner">
           <Crosshair size={16} />

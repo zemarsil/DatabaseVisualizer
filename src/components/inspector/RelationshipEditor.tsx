@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { ArrowLeftRight, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, Play, Plus, Trash2 } from 'lucide-react';
 import {
   AGGREGATE_FUNCTIONS,
   REFERENTIAL_ACTIONS,
@@ -20,6 +20,7 @@ import { derivationSummary } from '@/lib/derivation';
 import { createDerivation, relationshipKindPatch } from '@/lib/model';
 import { generateFlowSql } from '@/lib/sql/generator';
 import { useStore } from '@/store/useStore';
+import { useUi } from '@/store/useUi';
 
 /**
  * One grouping key. Usually a source column, so the picker leads; anything else
@@ -381,7 +382,20 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
       )}
 
       <div className="field">
-        <span className="field__label">Tagged query</span>
+        <div className="row" style={{ justifyContent: 'space-between' }}>
+          <span className="field__label">Tagged query</span>
+          <button
+            className="btn btn--sm btn--ghost"
+            disabled={!r.query?.trim()}
+            title="Run this query in the Query tab against the connected database"
+            onClick={() => {
+              useUi.getState().setPendingQuery(r.query ?? '', true);
+              useStore.getState().openDrawer('query');
+            }}
+          >
+            <Play /> Run
+          </button>
+        </div>
         <textarea
           className="textarea textarea--mono"
           rows={7}

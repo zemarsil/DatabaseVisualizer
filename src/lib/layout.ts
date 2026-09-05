@@ -1,6 +1,7 @@
 import dagre from '@dagrejs/dagre';
 import type { Diagram, Relationship, RelationshipKind } from '@shared/types';
 import { estimateNodeSize } from './geometry';
+import { effectiveDisplay, visibleColumns } from './visibleColumns';
 
 /**
  * Which end of a connection should be ranked first, and how hard dagre should
@@ -45,6 +46,12 @@ export interface LayoutOptions {
  * together and no ungrouped table is dropped in the middle of a region.
  */
 export function layoutDiagram(diagram: Diagram, opts: LayoutOptions = {}): Record<string, { x: number; y: number }> {
+  const fkColumns = new Map<string, Set<string>>();
+  for (const r of diagram.relationships) {
+    if (r.kind !== 'fk') continue;
+    if (!fkColumns.has(r.sourceTableId)) fkColumns.set(r.sourceTableId, new Set());
+    for (const id of r.sourceColumnIds) fkColumns.get(r.sourceTableId)!.add(id);
+  }
   const usedGroups = new Set(diagram.tables.map((t) => t.groupId).filter((id): id is string => Boolean(id) && diagram.groups.some((g) => g.id === id)));
 
   const build = (withClusters: boolean) => {
@@ -63,7 +70,7 @@ export function layoutDiagram(diagram: Diagram, opts: LayoutOptions = {}): Recor
     g.setDefaultEdgeLabel(() => ({}));
 
     for (const t of diagram.tables) {
-      const size = opts.sizes?.[t.id] ?? estimateNodeSize(t.columns);
+      const size = opts.sizes?.[t.id] ?? estimateNodeSize(visibleColumns(t, effectiveDisplay(t, false), fkColumns.get(t.id) ?? new Set()));
       g.setNode(t.id, { width: size.width, height: size.height });
     }
 

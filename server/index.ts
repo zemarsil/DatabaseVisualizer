@@ -4,8 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_DB_HOST, createDbContainer, describeDockerError, dockerStatus, listDbContainers, removeContainer, startContainer, stopContainer } from './docker';
-import { applyStatements, friendlyDbError, introspect, testConnection, validateConnection } from './db/index';
-import type { ApplySchemaRequest, CreateContainerRequest } from '../src/shared/types';
+import { applyStatements, friendlyDbError, introspect, isReadOnlySql, runQuery, testConnection, validateConnection } from './db/index';
+import type { ApplySchemaRequest, CreateContainerRequest, QueryRequest } from '../src/shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 8787);
@@ -139,6 +139,36 @@ app.post(
     }
     try {
       res.json(await introspect(cfg));
+    } catch (e) {
+      res.status(502).json({ error: friendlyDbError(e) });
+    }
+  }),
+);
+
+app.post(
+  '/api/db/query',
+  wrap(async (req, res) => {
+    const body = req.body as Partial<QueryRequest>;
+    let cfg;
+    try {
+      cfg = validateConnection(body.connection);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+      return;
+    }
+    const sql = typeof body.sql === 'string' ? body.sql.trim() : '';
+    if (!sql) {
+      res.status(400).json({ error: 'No SQL to run.' });
+      return;
+    }
+    const allowWrites = body.allowWrites === true;
+    if (!allowWrites && !isReadOnlySql(sql)) {
+      res.status(400).json({ error: 'Only SELECT-style statements run in read-only mode. Tick "Allow writes" to run this statement.' });
+      return;
+    }
+    const maxRows = Number.isInteger(body.maxRows) && (body.maxRows as number) > 0 ? Math.min(body.maxRows as number, 5000) : 500;
+    try {
+      res.json(await runQuery(cfg, sql, { maxRows, allowWrites }));
     } catch (e) {
       res.status(502).json({ error: friendlyDbError(e) });
     }

@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { FileUp, Play, Search } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { importSql, type ImportResult } from '@/lib/sql/import';
+import { suggestForeignKeys } from '@/lib/suggest';
 import { DIALECTS } from '@shared/types';
 
 const PLACEHOLDER = `-- Paste CREATE TABLE statements (pg_dump / mysqldump output works too)
@@ -43,6 +44,8 @@ export function ImportPanel() {
     });
     const typeNote = res.customTypes.length ? ` and ${res.customTypes.length} type(s)` : '';
     toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} foreign key(s)${typeNote}.`);
+    const implied = suggestForeignKeys(useStore.getState().diagram).filter((x) => x.confidence === 'high').length;
+    if (implied) toast('info', `${implied} foreign key${implied === 1 ? ' looks' : 's look'} implied by column names. Open Problems to add them.`);
     setSql('');
     setPreview(null);
   };

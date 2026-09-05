@@ -70,7 +70,7 @@ describe('group region menu', () => {
     const { env, store } = makeEnv(d);
     const items = buildContextMenu({ type: 'group', groupId: group.id }, env);
     expect(heading(items)).toMatchObject({ label: group.name, detail: `${members.length} tables · in another database` });
-    expect(ids(items)).toEqual(['select', 'external', 'inspector', 'ungroup', 'delete']);
+    expect(ids(items)).toEqual(['select', 'external', 'inspector', 'show-full', 'show-keys', 'show-header', 'ungroup', 'delete']);
 
     action(items, 'select').run();
     expect(store.setSelection).toHaveBeenCalledWith({ tableIds: members.map((t) => t.id), noteIds: [], relationshipId: null, groupId: null });

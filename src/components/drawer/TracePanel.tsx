@@ -1,7 +1,8 @@
 import { useMemo } from 'react';
-import { ArrowRight, Copy, Crosshair, Route, X } from 'lucide-react';
+import { ArrowRight, Copy, Crosshair, Play, Route, X } from 'lucide-react';
 import { kindMeta } from '@shared/types';
 import { useStore } from '@/store/useStore';
+import { useUi } from '@/store/useUi';
 import { flowDerivations } from '@/lib/derivation';
 import { buildJoinQuery, describeHop } from '@/lib/trace';
 
@@ -124,6 +125,17 @@ export function TracePanel() {
             }}
           >
             <Copy /> Copy
+          </button>
+          <button
+            className="btn btn--sm"
+            disabled={!query}
+            title="Run the join in the Query tab"
+            onClick={() => {
+              useUi.getState().setPendingQuery(query, true);
+              useStore.getState().openDrawer('query');
+            }}
+          >
+            <Play /> Run
           </button>
         </div>
         <pre className="code-block code-block--fill">{query || '-- Trace two tables to get a SELECT that joins every table on the path.'}</pre>

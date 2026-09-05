@@ -1,0 +1,17 @@
+/* In-browser SQLite card in the Database panel. */
+.sqlite-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  margin-bottom: 8px;
+}
+.sqlite-card__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
