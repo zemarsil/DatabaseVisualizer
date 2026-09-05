@@ -46,16 +46,7 @@ export interface QueryOptions {
   allowWrites: boolean;
 }
 
-/** Statements that only read. Anything else needs allowWrites. */
-export function isReadOnlySql(sql: string): boolean {
-  const head = sql
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/--[^\n]*/g, ' ')
-    .trim()
-    .split(/\s+/)[0]
-    ?.toUpperCase();
-  return head === 'SELECT' || head === 'WITH' || head === 'EXPLAIN' || head === 'SHOW' || head === 'DESCRIBE' || head === 'DESC' || head === 'VALUES' || head === 'TABLE';
-}
+export { isReadOnlySql } from './values';
 
 export function runQuery(cfg: ConnectionConfig, sql: string, opts: QueryOptions): Promise<QueryResult> {
   return cfg.dialect === 'postgresql' ? postgres.runQuery(cfg, sql, opts) : maria.runQuery(cfg, sql, opts);

@@ -1,6 +1,7 @@
 import pg from 'pg';
 import type { ConnectionConfig, IntrospectResponse, IntrospectedTable, QueryResult, ReferentialAction, StatementResult } from '../../src/shared/types';
 import type { QueryOptions } from './index';
+import { serializeRows, splitStatements } from './values';
 
 const { Client } = pg;
 
@@ -207,7 +208,41 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
   }
 }
 
-/** Run one ad-hoc statement. Implemented with the query runner feature. */
-export async function runQuery(_cfg: ConnectionConfig, _sql: string, _opts: QueryOptions): Promise<QueryResult> {
-  throw new Error('Query execution is not implemented for PostgreSQL yet.');
+/**
+ * Run an ad-hoc script inside one transaction. Without allowWrites the
+ * transaction is READ ONLY and rolled back at the end, so a stray UPDATE can
+ * neither run nor stick; with it, the transaction commits. The row cap is
+ * applied after the fetch (no server cursor), which is fine for the sizes the
+ * grid can show anyway.
+ */
+export async function runQuery(cfg: ConnectionConfig, sql: string, opts: QueryOptions): Promise<QueryResult> {
+  const c = clientFor(cfg);
+  await c.connect();
+  const t0 = Date.now();
+  try {
+    await c.query('BEGIN');
+    if (!opts.allowWrites) await c.query('SET TRANSACTION READ ONLY');
+    let last: pg.QueryArrayResult | null = null;
+    for (const statement of splitStatements(sql)) {
+      const res = await c.query({ text: statement, rowMode: 'array' });
+      if (!last || res.fields.length || !last.fields.length) last = res;
+    }
+    await c.query(opts.allowWrites ? 'COMMIT' : 'ROLLBACK');
+    if (!last) return { columns: [], rows: [], rowCount: 0, truncated: false, durationMs: Date.now() - t0 };
+    const rows = serializeRows(last.rows as unknown[][]);
+    const truncated = rows.length > opts.maxRows;
+    return {
+      columns: last.fields.map((f) => f.name),
+      rows: truncated ? rows.slice(0, opts.maxRows) : rows,
+      rowCount: last.fields.length ? rows.length : (last.rowCount ?? 0),
+      truncated,
+      durationMs: Date.now() - t0,
+      command: last.command,
+    };
+  } catch (e) {
+    await c.query('ROLLBACK').catch(() => undefined);
+    throw e;
+  } finally {
+    await c.end();
+  }
 }
