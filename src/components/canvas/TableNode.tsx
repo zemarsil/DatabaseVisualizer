@@ -1,52 +1,134 @@
-import { memo } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import { Braces, KeyRound, Link2 } from 'lucide-react';
-import type { Table } from '@shared/types';
+import { Braces, ChevronDown, ChevronRight, ChevronUp, Eye, KeyRound, Link2 } from 'lucide-react';
+import type { Column, Table } from '@shared/types';
 import { paletteHue } from '@/lib/palette';
+import { nextDisplay, type TableDisplayMode } from '@/lib/visibleColumns';
+import { useStore } from '@/store/useStore';
+import { useUi } from '@/store/useUi';
 
 export interface TableNodeData extends Record<string, unknown> {
   table: Table;
   fkColumnIds: string[];
   /** Columns holding another table serialized inside them. */
   embedColumnIds: string[];
+  /** Columns actually drawn (all, keys only, or none when collapsed to the header). */
+  visibleColumns: Column[];
+  display: TableDisplayMode;
+  /** True while zoomed out far enough that every table shows its header only. */
+  lod: boolean;
+  joinTable: boolean;
   dimmed: boolean;
   traceRole: 'from' | 'to' | 'via' | null;
   picking: boolean;
+  renaming: boolean;
 }
 
 export type TableNodeType = Node<TableNodeData, 'table'>;
 
 export const HEADER_HANDLE_SUFFIX = '|hdr';
 
+function RenameInput({ table }: { table: Table }) {
+  const [value, setValue] = useState(table.name);
+  const ref = useRef<HTMLInputElement>(null);
+  const updateTable = useStore((s) => s.updateTable);
+  const setRenaming = useUi((s) => s.setRenamingTableId);
+  useEffect(() => {
+    ref.current?.focus();
+    ref.current?.select();
+  }, []);
+  const commit = () => {
+    const next = value.trim();
+    if (next && next !== table.name) updateTable(table.id, { name: next });
+    setRenaming(null);
+  };
+  return (
+    <input
+      ref={ref}
+      className="table-node__rename nodrag"
+      value={value}
+      onChange={(e) => setValue(e.target.value)}
+      onBlur={commit}
+      onMouseDown={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === 'Enter') commit();
+        else if (e.key === 'Escape') setRenaming(null);
+      }}
+      spellCheck={false}
+    />
+  );
+}
+
 function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
-  const { table, fkColumnIds, embedColumnIds, dimmed, traceRole, picking } = data;
+  const { table, fkColumnIds, embedColumnIds, visibleColumns, display, lod, joinTable, dimmed, traceRole, picking, renaming } = data;
   const fkSet = new Set(fkColumnIds);
   const embedSet = new Set(embedColumnIds);
+  const isView = table.kind === 'view';
   const classes = ['table-node'];
   if (selected) classes.push('table-node--selected');
   if (traceRole) classes.push('table-node--trace');
   if (dimmed) classes.push('table-node--dim');
   if (picking) classes.push('table-node--pick');
+  if (isView) classes.push('table-node--view');
+  if (display !== 'full') classes.push(`table-node--${display}`);
+  const hidden = table.columns.length - visibleColumns.length;
+
+  const cycle = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    useStore.getState().setTableDisplay([table.id], nextDisplay(table.collapsed));
+  };
+  const Chevron = display === 'full' ? ChevronUp : display === 'keys' ? ChevronRight : ChevronDown;
 
   return (
     <div className={classes.join(' ')} style={{ '--hue': paletteHue(table.color) } as React.CSSProperties} title={table.comment || undefined}>
-      <div className="table-node__header">
-        <span className="table-node__name">{table.name || 'untitled'}</span>
+      <div
+        className="table-node__header"
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          useUi.getState().setRenamingTableId(table.id);
+        }}
+      >
+        {isView && <Eye className="table-node__kind-icon" />}
+        {renaming ? <RenameInput table={table} /> : <span className="table-node__name">{table.name || 'untitled'}</span>}
         {table.schema && <span className="table-node__schema">{table.schema}</span>}
         <div className="table-node__badges">
+          {isView && <span className="table-node__badge table-node__badge--view">VIEW</span>}
+          {joinTable && !isView && (
+            <span className="table-node__badge table-node__badge--join" title="Join table: every key column references another table (many-to-many)">
+              N:M
+            </span>
+          )}
           {traceRole && <span className="table-node__badge">{traceRole === 'from' ? 'FROM' : traceRole === 'to' ? 'TO' : 'VIA'}</span>}
         </div>
+        {!lod && table.columns.length > 0 && (
+          <button
+            type="button"
+            className="table-node__collapse nodrag"
+            title={display === 'full' ? 'Show keys only' : display === 'keys' ? 'Show header only' : 'Show all columns'}
+            onClick={cycle}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            <Chevron />
+          </button>
+        )}
         <Handle
           type="source"
           position={Position.Right}
           id={`${table.id}${HEADER_HANDLE_SUFFIX}`}
           className="flow-handle"
-          title="Drag to another table to link the two tables (a data flow by default; change the kind in the inspector)"
+          title={isView ? 'Drag to another table to say what feeds this view' : 'Drag to another table to link the two tables (a data flow by default; change the kind in the inspector)'}
         />
       </div>
       <div className="table-node__rows">
-        {table.columns.length === 0 && <div className="table-node__empty">no columns yet</div>}
-        {table.columns.map((c) => {
+        {table.columns.length === 0 && <div className="table-node__empty">{isView ? (table.viewSql?.trim() ? 'columns come from the SELECT' : 'no SELECT yet') : 'no columns yet'}</div>}
+        {display === 'header' && table.columns.length > 0 && (
+          <div className="table-node__empty">
+            {table.columns.length} column{table.columns.length === 1 ? '' : 's'}
+          </div>
+        )}
+        {visibleColumns.map((c) => {
           const isFk = fkSet.has(c.id);
           const isEmbed = !c.primaryKey && !isFk && embedSet.has(c.id);
           return (
@@ -57,7 +139,7 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
               /* Read by the canvas so a right-click on this row opens the column menu. */
               data-column-id={c.id}
             >
-              <Handle type="source" position={Position.Left} id={`${c.id}|l`} className="col-handle col-handle--left" />
+              {!isView && <Handle type="source" position={Position.Left} id={`${c.id}|l`} className="col-handle col-handle--left" />}
               <span className={`col-icon${c.primaryKey ? ' col-icon--pk' : isFk ? ' col-icon--fk' : isEmbed ? ' col-icon--embed' : ''}`}>
                 {c.primaryKey ? <KeyRound /> : isFk ? <Link2 /> : isEmbed ? <Braces /> : null}
               </span>
@@ -68,10 +150,15 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
                 {c.unique && !c.primaryKey && <span className="col-flag">UQ</span>}
                 {c.autoIncrement && <span className="col-flag">AI</span>}
               </span>
-              <Handle type="source" position={Position.Right} id={`${c.id}|r`} className="col-handle col-handle--right" />
+              {!isView && <Handle type="source" position={Position.Right} id={`${c.id}|r`} className="col-handle col-handle--right" />}
             </div>
           );
         })}
+        {display === 'keys' && hidden > 0 && (
+          <div className="table-node__more" onClick={cycle} title="Show all columns">
+            +{hidden} more column{hidden === 1 ? '' : 's'}
+          </div>
+        )}
       </div>
     </div>
   );

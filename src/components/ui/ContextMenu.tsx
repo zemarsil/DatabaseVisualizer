@@ -9,6 +9,7 @@ import { Check } from 'lucide-react';
 import { PALETTE } from '@/lib/palette';
 import { useStore } from '@/store/useStore';
 import { buildContextMenu, describeElements, hasActions, type ContextTarget, type MenuEnv, type MenuNode } from './contextMenuItems';
+import { pasteFromClipboard } from '@/lib/canvasActions';
 import { confirmDialog, promptDialog } from './Modal';
 
 interface OpenMenu {
@@ -69,6 +70,7 @@ function ContextMenuView({ menu }: { menu: OpenMenu }) {
     const s = store;
     return {
       store: s,
+      pasteAt: (at) => void pasteFromClipboard(at),
       copy: (text, message) => {
         navigator.clipboard
           .writeText(text)
