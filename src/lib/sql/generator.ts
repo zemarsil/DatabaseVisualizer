@@ -636,3 +636,63 @@ export function generateDropStatements(d: Diagram): string[] {
     'SET FOREIGN_KEY_CHECKS = 1;',
   ];
 }
+
+/* ---------------- Building blocks for migrations ---------------- */
+
+/** The column's type as the script would emit it (named custom types resolved per dialect). */
+export function resolvedColumnType(d: Diagram, column: Column): string {
+  const ctx = buildCtx(d);
+  return resolveColumnType(ctx, column.type, `Column "${column.name}"`, []);
+}
+
+/** One column's definition, as used by ADD COLUMN / MODIFY COLUMN (never with an inline PRIMARY KEY unless asked). */
+export function columnDefinition(d: Diagram, column: Column, opts: { inlinePk?: boolean } = {}): string {
+  const ctx = buildCtx(d);
+  return columnLine(ctx, column, opts.inlinePk ?? false, []);
+}
+
+export interface TableDdl {
+  create: string;
+  /** CREATE INDEX statements (MariaDB keeps its KEY lines inside the CREATE TABLE). */
+  indexes: string[];
+  /** COMMENT ON statements (PostgreSQL only). */
+  comments: string[];
+}
+
+/** CREATE TABLE for one table, with or without its foreign keys inline, plus its index and comment statements. */
+export function tableDdl(d: Diagram, tableId: string, opts: { inlineFks: boolean }): TableDdl | null {
+  const ctx = buildCtx(d);
+  const t = ctx.tableById.get(tableId);
+  if (!t || t.kind === 'view') return null;
+  const fks = opts.inlineFks
+    ? d.relationships.filter((r) => r.kind === 'fk' && r.sourceTableId === tableId && !ctx.external.has(r.targetTableId) && ctx.tableById.get(r.targetTableId)?.kind !== 'view')
+    : [];
+  const { create, extras } = createTable(ctx, t, { inlineFks: fks }, []);
+  return { create, indexes: extras.filter((s) => /^CREATE /i.test(s)), comments: extras.filter((s) => /^COMMENT /i.test(s)) };
+}
+
+/** ALTER TABLE ... ADD CONSTRAINT for one foreign key (null when it is incomplete), with the constraint name the script uses. */
+export function foreignKeyStatement(d: Diagram, relationshipId: string): { sql: string; name: string } | null {
+  const ctx = buildCtx(d);
+  const r = d.relationships.find((x) => x.id === relationshipId);
+  if (!r || r.kind !== 'fk') return null;
+  const sql = alterAddFk(ctx, r);
+  return sql ? { sql, name: ctx.fkNames.get(r.id) ?? 'fk' } : null;
+}
+
+/** CREATE VIEW for one view table, or null when it has no SELECT. */
+export function createViewStatement(d: Diagram, tableId: string): string | null {
+  const ctx = buildCtx(d);
+  const t = ctx.tableById.get(tableId);
+  if (!t || t.kind !== 'view') return null;
+  return createView(ctx, t, []);
+}
+
+/** CREATE TYPE for one enum type (PostgreSQL), or null when it has no values or the dialect has no named types. */
+export function enumTypeStatement(d: Diagram, customTypeId: string): string | null {
+  const ct = d.customTypes.find((c) => c.id === customTypeId);
+  if (!ct || ct.kind !== 'enum' || d.dialect !== 'postgresql') return null;
+  const values = (ct.values ?? []).filter((v) => v.trim());
+  if (!values.length) return null;
+  return `CREATE TYPE ${quoteIdent(ct.name, d.dialect)} AS ENUM (${values.map(quoteString).join(', ')});`;
+}

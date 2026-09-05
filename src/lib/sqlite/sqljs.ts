@@ -164,11 +164,23 @@ class SqlJsEngine implements SqliteEngine {
 
   async exec(statements: string[], stopOnError: boolean): Promise<StatementResult[]> {
     const results: StatementResult[] = [];
+    // PRAGMA foreign_keys is a no-op inside a transaction, so a script that asks
+    // for it (a table rebuild does) gets it applied around the transaction instead.
+    const fkPragma = /^\s*PRAGMA\s+foreign_keys\s*=\s*(\w+)\s*;?\s*$/i;
+    const wantsFkOff = statements.some((s) => {
+      const m = fkPragma.exec(s);
+      return m && /^(off|0|false)$/i.test(m[1]);
+    });
+    if (wantsFkOff) this.db.run('PRAGMA foreign_keys = OFF');
     if (stopOnError) this.db.run('BEGIN');
     let failed = false;
     for (let i = 0; i < statements.length; i++) {
       const sql = statements[i];
       const t0 = Date.now();
+      if (fkPragma.test(sql)) {
+        results.push({ index: i, sql, ok: true, durationMs: 0 });
+        continue;
+      }
       try {
         this.db.run(sql);
         results.push({ index: i, sql, ok: true, durationMs: Date.now() - t0 });
@@ -181,6 +193,7 @@ class SqlJsEngine implements SqliteEngine {
       }
     }
     if (stopOnError) this.db.run(failed ? 'ROLLBACK' : 'COMMIT');
+    if (wantsFkOff) this.db.run('PRAGMA foreign_keys = ON');
     if (!failed || !stopOnError) this.changed();
     return results;
   }
