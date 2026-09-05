@@ -10,6 +10,7 @@ import {
   FileText,
   FolderOpen,
   HelpCircle,
+  Link,
   Maximize,
   Moon,
   PanelBottom,
@@ -31,6 +32,8 @@ import { downloadDataUrl, downloadText, fileSlug, parseDiagramFile, serializeDia
 import { exportDiagramImage } from '@/lib/exportImage';
 import { generateSchema } from '@/lib/sql/generator';
 import { generateMarkdown } from '@/lib/markdownExport';
+import { EXPORT_FORMATS, exportDiagram, type ExportFormat } from '@/lib/export';
+import { copyShareLink } from '@/lib/share';
 import { confirmDialog, useDialogStore } from './ui/Modal';
 
 function Menu({ label, icon, children, align = 'right' }: { label?: string; icon: ReactNode; children: (close: () => void) => ReactNode; align?: 'left' | 'right' }) {
@@ -153,6 +156,30 @@ export function TopBar() {
     }
     downloadText(`${fileSlug(diagram.name)}.md`, generateMarkdown(diagram), 'text/markdown');
     toast('success', 'Exported Markdown.');
+  };
+
+  const exportAs = (format: ExportFormat) => {
+    if (diagram.tables.length === 0) {
+      toast('error', 'There is nothing to export yet.');
+      return;
+    }
+    const out = exportDiagram(diagram, format);
+    downloadText(out.filename, out.text, out.mime);
+    toast('success', `Exported ${EXPORT_FORMATS.find((f) => f.id === format)?.label ?? format}.`);
+  };
+
+  const shareLink = async () => {
+    if (diagram.tables.length === 0) {
+      toast('error', 'There is nothing to share yet.');
+      return;
+    }
+    try {
+      const { warning } = await copyShareLink(diagram);
+      toast('success', 'Share link copied. Anyone who opens it gets a copy of this diagram.');
+      if (warning) toast('info', warning);
+    } catch (e) {
+      toast('error', e instanceof Error ? e.message : 'Could not copy the link.');
+    }
   };
 
   const onNew = async () => {
@@ -292,6 +319,16 @@ export function TopBar() {
               </button>
               <button className="menu__item" onClick={() => void (close(), exportMarkdown())}>
                 <FileText /> Export Markdown
+              </button>
+              <button className="menu__item" onClick={() => void (close(), exportAs('mermaid'))}>
+                <FileText /> Export Mermaid ER diagram
+              </button>
+              <button className="menu__item" onClick={() => void (close(), exportAs('dbml'))}>
+                <FileText /> Export DBML
+              </button>
+              <div className="menu__sep" />
+              <button className="menu__item" onClick={() => void (close(), shareLink())}>
+                <Link /> Copy share link
               </button>
               <div className="menu__sep" />
               <button className="menu__item" onClick={() => void (close(), loadSample())}>
