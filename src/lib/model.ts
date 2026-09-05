@@ -20,6 +20,10 @@ export function emptyDiagram(dialect: Dialect = 'postgresql', name = 'Untitled d
   return { version: 1, name, dialect, tables: [], relationships: [], notes: [], groups: [], customTypes: [] };
 }
 
+export function isView(t: Pick<Table, 'kind'>): boolean {
+  return t.kind === 'view';
+}
+
 export function createColumn(partial: Partial<Column> & { name: string }): Column {
   return {
     id: newId('col'),
@@ -213,4 +217,68 @@ export function pruneRelationships(d: Diagram): Diagram {
     indexes: t.indexes.map((i) => ({ ...i, columnIds: i.columnIds.filter((id) => columns.has(id)) })).filter((i) => i.columnIds.length > 0),
   }));
   return { ...d, tables: tablesOut, relationships };
+}
+
+/**
+ * Deep-copy tables with fresh ids (for copy/paste). Relationships are kept only
+ * when both ends are inside the copied set; their column ids are remapped.
+ * Names are made unique against `existing`, and a group membership survives
+ * only when that group exists in the destination diagram.
+ */
+export function cloneTables(
+  tables: Table[],
+  relationships: Relationship[],
+  existing: Diagram | null,
+  offset: { x: number; y: number } = { x: 40, y: 40 },
+): { tables: Table[]; relationships: Relationship[] } {
+  const tableIdMap = new Map<string, string>();
+  const columnIdMap = new Map<string, string>();
+  const scratch: Diagram = existing ? { ...existing, tables: [...existing.tables] } : emptyDiagram();
+  const groupIds = new Set((existing?.groups ?? []).map((g) => g.id));
+  const out: Table[] = [];
+  for (const t of tables) {
+    const copy: Table = {
+      ...t,
+      id: newId('tbl'),
+      name: uniqueTableName(scratch, t.name),
+      position: { x: t.position.x + offset.x, y: t.position.y + offset.y },
+      groupId: t.groupId && groupIds.has(t.groupId) ? t.groupId : undefined,
+      columns: t.columns.map((c) => {
+        const id = newId('col');
+        columnIdMap.set(c.id, id);
+        return { ...c, id };
+      }),
+      indexes: [],
+      checks: [...t.checks],
+    };
+    copy.indexes = t.indexes.map((ix) => ({ ...ix, id: newId('idx'), columnIds: ix.columnIds.map((c) => columnIdMap.get(c) ?? c) }));
+    tableIdMap.set(t.id, copy.id);
+    scratch.tables.push(copy);
+    out.push(copy);
+  }
+  const rels: Relationship[] = [];
+  for (const r of relationships) {
+    const s = tableIdMap.get(r.sourceTableId);
+    const t = tableIdMap.get(r.targetTableId);
+    if (!s || !t) continue;
+    rels.push({
+      ...r,
+      id: newId('rel'),
+      sourceTableId: s,
+      targetTableId: t,
+      sourceColumnIds: r.sourceColumnIds.map((c) => columnIdMap.get(c) ?? c),
+      targetColumnIds: r.targetColumnIds.map((c) => columnIdMap.get(c) ?? c),
+      ...(r.derivations
+        ? { derivations: r.derivations.map((dv) => ({ ...dv, id: newId('drv'), targetColumnId: columnIdMap.get(dv.targetColumnId) ?? dv.targetColumnId })) }
+        : {}),
+    });
+  }
+  return { tables: out, relationships: rels };
+}
+
+/** Custom types referenced by the given tables' column types (case-insensitive name match). */
+export function customTypesUsedBy(d: Diagram, tables: Table[]): CustomType[] {
+  const used = new Set<string>();
+  for (const t of tables) for (const c of t.columns) used.add(c.type.trim().replace(/^["'`]|["'`]$/g, '').toLowerCase());
+  return d.customTypes.filter((ct) => used.has(ct.name.toLowerCase()));
 }

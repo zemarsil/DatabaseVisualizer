@@ -1,5 +1,6 @@
 import pg from 'pg';
-import type { ConnectionConfig, IntrospectResponse, IntrospectedTable, ReferentialAction, StatementResult } from '../../src/shared/types';
+import type { ConnectionConfig, IntrospectResponse, IntrospectedTable, QueryResult, ReferentialAction, StatementResult } from '../../src/shared/types';
+import type { QueryOptions } from './index';
 
 const { Client } = pg;
 
@@ -182,4 +183,9 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
   } finally {
     await c.end();
   }
+}
+
+/** Run one ad-hoc statement. Implemented with the query runner feature. */
+export async function runQuery(_cfg: ConnectionConfig, _sql: string, _opts: QueryOptions): Promise<QueryResult> {
+  throw new Error('Query execution is not implemented for PostgreSQL yet.');
 }

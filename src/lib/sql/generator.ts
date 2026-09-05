@@ -390,7 +390,7 @@ export function generateSchema(d: Diagram): GeneratedSql {
     );
   }
 
-  const label = d.dialect === 'postgresql' ? 'PostgreSQL' : 'MariaDB';
+  const label = d.dialect === 'postgresql' ? 'PostgreSQL' : d.dialect === 'mariadb' ? 'MariaDB' : 'SQLite';
   const externalTables = d.tables.filter((t) => ctx.external.has(t.id));
   const documented = d.relationships.filter((r) => !kindMeta(r.kind).emitsDdl).length;
   const createdFks = d.relationships.filter(

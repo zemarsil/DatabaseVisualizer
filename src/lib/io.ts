@@ -10,6 +10,8 @@ import {
   type Note,
   type Relationship,
   type Table,
+  type TableDisplay,
+  type TableKind,
 } from '@shared/types';
 import { pruneGroupIds } from './groups';
 import { emptyDiagram } from './model';
@@ -70,7 +72,7 @@ export function parseDiagramFile(text: string): Diagram {
   const o = raw as Record<string, unknown>;
   if (!Array.isArray(o.tables)) throw new InvalidFile('The file has no "tables" array; is this a Database Visualizer file?');
 
-  const dialect = o.dialect === 'mariadb' ? 'mariadb' : 'postgresql';
+  const dialect = o.dialect === 'mariadb' ? 'mariadb' : o.dialect === 'sqlite' ? 'sqlite' : 'postgresql';
   const d = emptyDiagram(dialect, str(o.name, 'Untitled diagram'));
 
   const tables: Table[] = [];
@@ -79,10 +81,15 @@ export function parseDiagramFile(text: string): Diagram {
     const t = rt as Record<string, unknown>;
     if (typeof t.id !== 'string' || typeof t.name !== 'string') continue;
     const pos = (t.position ?? {}) as Record<string, unknown>;
+    const kind: TableKind | undefined = t.kind === 'view' ? 'view' : undefined;
+    const collapsed: TableDisplay | undefined = t.collapsed === 'keys' || t.collapsed === 'header' ? t.collapsed : undefined;
     tables.push({
       id: t.id,
       name: t.name,
       schema: typeof t.schema === 'string' && t.schema ? t.schema : undefined,
+      kind,
+      viewSql: kind === 'view' && typeof t.viewSql === 'string' && t.viewSql ? t.viewSql : undefined,
+      collapsed,
       comment: typeof t.comment === 'string' && t.comment ? t.comment : undefined,
       color: str(t.color, 'blue'),
       groupId: typeof t.groupId === 'string' && t.groupId ? t.groupId : undefined,

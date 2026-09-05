@@ -58,6 +58,7 @@ export const TYPE_SUGGESTIONS: Record<Dialect, string[]> = {
     'LONGTEXT', 'BINARY(16)', 'VARBINARY(255)', 'BLOB', 'LONGBLOB', 'UUID', 'DATE', 'TIME', 'DATETIME',
     'TIMESTAMP', 'YEAR', 'JSON', "ENUM('a','b')", "SET('a','b')", 'INET6', 'POINT', 'GEOMETRY',
   ],
+  sqlite: ['INTEGER', 'REAL', 'TEXT', 'BLOB', 'NUMERIC', 'BOOLEAN', 'DATE', 'DATETIME', 'VARCHAR(255)', 'DECIMAL(10,2)', 'JSON'],
 };
 
 /** Normalise a raw SQL type for comparisons: upper-case, single spaces, no space before '('. */
