@@ -1,15 +1,19 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import {
+  BookmarkPlus,
   Boxes,
+  Check,
   ChevronDown,
   Database,
   Download,
+  Eye,
   FileImage,
   FilePlus2,
   FileText,
   FolderOpen,
   HelpCircle,
+  Library,
   Link,
   Maximize,
   Moon,
@@ -19,8 +23,12 @@ import {
   Plus,
   Redo2,
   Route,
+  Rows3,
   Save,
+  Search,
+  Shapes,
   Shuffle,
+  SlidersHorizontal,
   Sparkles,
   StickyNote,
   Sun,
@@ -28,15 +36,20 @@ import {
 } from 'lucide-react';
 import { DIALECTS, type Dialect } from '@shared/types';
 import { useStore } from '@/store/useStore';
+import { useUi } from '@/store/useUi';
 import { downloadDataUrl, downloadText, fileSlug, parseDiagramFile, serializeDiagram, FILE_EXTENSION } from '@/lib/io';
 import { exportDiagramImage } from '@/lib/exportImage';
-import { generateSchema } from '@/lib/sql/generator';
-import { generateMarkdown } from '@/lib/markdownExport';
 import { EXPORT_FORMATS, exportDiagram, type ExportFormat } from '@/lib/export';
 import { copyShareLink } from '@/lib/share';
-import { confirmDialog, useDialogStore } from './ui/Modal';
+import { defaultCheckpointName, flushCurrentDiagram, installLibraryAutosave, newDiagramId, saveCheckpoint, setCurrentDiagramId } from '@/lib/library';
+import { useBeforeUnload } from '@/hooks/useBeforeUnload';
+import { confirmDialog, promptDialog, useDialogStore } from './ui/Modal';
+import { CommandPalette, type PaletteBridge } from './CommandPalette';
+import { LibraryDialog } from './LibraryDialog';
+import { CHECKPOINTS_EVENT } from './inspector/Checkpoints';
+import '@/styles/workbench.css';
 
-function Menu({ label, icon, children, align = 'right' }: { label?: string; icon: ReactNode; children: (close: () => void) => ReactNode; align?: 'left' | 'right' }) {
+function Menu({ label, icon, children, align = 'right', title }: { label?: string; icon: ReactNode; children: (close: () => void) => ReactNode; align?: 'left' | 'right'; title?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -54,7 +67,7 @@ function Menu({ label, icon, children, align = 'right' }: { label?: string; icon
   }, [open]);
   return (
     <div className="menu" ref={ref}>
-      <button className={`btn${label ? '' : ' btn--icon'}${open ? ' btn--active' : ''}`} onClick={() => setOpen((o) => !o)} title={label}>
+      <button className={`btn${label ? '' : ' btn--icon'}${open ? ' btn--active' : ''}`} onClick={() => setOpen((o) => !o)} title={title ?? label}>
         {icon}
         {label && <span>{label}</span>}
         {label && <ChevronDown size={14} />}
@@ -64,8 +77,20 @@ function Menu({ label, icon, children, align = 'right' }: { label?: string; icon
   );
 }
 
+/** A menu row with a tick that shows whether the option is on. Stays open so several can be flipped in a row. */
+function CheckItem({ on, label, onToggle, hint }: { on: boolean; label: string; onToggle: () => void; hint?: string }) {
+  return (
+    <button className="menu__item" role="menuitemcheckbox" aria-checked={on} onClick={onToggle}>
+      <Check className={`menu__check${on ? '' : ' menu__check--off'}`} /> {label}
+      {hint && <span className="kbd">{hint}</span>}
+    </button>
+  );
+}
+
 export function TopBar() {
   const diagram = useStore((s) => s.diagram);
+  const dirty = useStore((s) => s.dirty);
+  const fileBacked = useStore((s) => s.fileBacked);
   const canUndo = useStore((s) => s.past.length > 0);
   const canRedo = useStore((s) => s.future.length > 0);
   const theme = useStore((s) => s.theme);
@@ -83,7 +108,9 @@ export function TopBar() {
   const addTable = useStore((s) => s.addTable);
   const addNote = useStore((s) => s.addNote);
   const addGroup = useStore((s) => s.addGroup);
+  const addCustomType = useStore((s) => s.addCustomType);
   const applyLayout = useStore((s) => s.applyLayout);
+  const setTableDisplay = useStore((s) => s.setTableDisplay);
   const setTheme = useStore((s) => s.setTheme);
   const setSidebarOpen = useStore((s) => s.setSidebarOpen);
   const setInspectorOpen = useStore((s) => s.setInspectorOpen);
@@ -100,8 +127,22 @@ export function TopBar() {
   const setTracePicking = useStore((s) => s.setTracePicking);
   const setHelp = useDialogStore((s) => s.setHelp);
 
+  const snapToGrid = useUi((s) => s.snapToGrid);
+  const setSnapToGrid = useUi((s) => s.setSnapToGrid);
+  const showCardinality = useUi((s) => s.showCardinality);
+  const setShowCardinality = useUi((s) => s.setShowCardinality);
+  const warnOnClose = useUi((s) => s.warnOnClose);
+  const setWarnOnClose = useUi((s) => s.setWarnOnClose);
+  const setPaletteOpen = useUi((s) => s.setPaletteOpen);
+  const setLibraryOpen = useUi((s) => s.setLibraryOpen);
+
   const { getNodes, getNodesBounds } = useReactFlow();
   const fileInput = useRef<HTMLInputElement>(null);
+
+  useBeforeUnload();
+  useEffect(() => {
+    installLibraryAutosave();
+  }, []);
 
   const onDialectChange = (dialect: Dialect) => {
     if (dialect === diagram.dialect) return;
@@ -118,13 +159,20 @@ export function TopBar() {
 
   const openFile = () => fileInput.current?.click();
 
+  /** Every "replace the whole diagram" path gets its own library entry so the previous one is kept. */
+  const startFreshEntry = async () => {
+    await flushCurrentDiagram();
+    setCurrentDiagramId(newDiagramId());
+  };
+
   const onFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     try {
       const d = parseDiagramFile(await file.text());
-      setDiagram(d);
+      await startFreshEntry();
+      setDiagram(d, { fileBacked: true });
       toast('success', `Loaded "${d.name}" (${d.tables.length} tables).`);
     } catch (err) {
       toast('error', err instanceof Error ? err.message : 'Could not load the file.');
@@ -142,20 +190,6 @@ export function TopBar() {
     } catch (err) {
       toast('error', err instanceof Error ? err.message : 'Export failed.');
     }
-  };
-
-  const exportSql = () => {
-    const out = generateSchema(diagram);
-    downloadText(`${fileSlug(diagram.name)}.sql`, out.script, 'text/sql');
-  };
-
-  const exportMarkdown = () => {
-    if (diagram.tables.length === 0) {
-      toast('error', 'There is nothing to export yet.');
-      return;
-    }
-    downloadText(`${fileSlug(diagram.name)}.md`, generateMarkdown(diagram), 'text/markdown');
-    toast('success', 'Exported Markdown.');
   };
 
   const exportAs = (format: ExportFormat) => {
@@ -183,8 +217,27 @@ export function TopBar() {
   };
 
   const onNew = async () => {
-    if (diagram.tables.length && !(await confirmDialog({ title: 'Start a new diagram?', message: 'The current diagram will be replaced. Save it first if you want to keep it.', confirmLabel: 'New diagram', danger: true }))) return;
+    if (diagram.tables.length && !(await confirmDialog({ title: 'Start a new diagram?', message: 'The current diagram stays in the diagram library (File → Open recent…); a new, empty one takes its place on the canvas.', confirmLabel: 'New diagram' }))) return;
+    await startFreshEntry();
     newDiagram(diagram.dialect);
+  };
+
+  const onLoadSample = async () => {
+    if (diagram.tables.length && !(await confirmDialog({ title: 'Load the example diagram?', message: 'The current diagram stays in the diagram library (File → Open recent…); the example takes its place on the canvas.', confirmLabel: 'Load example' }))) return;
+    await startFreshEntry();
+    loadSample();
+  };
+
+  const onSaveCheckpoint = async () => {
+    const name = await promptDialog({ title: 'Save checkpoint', label: 'Name', value: defaultCheckpointName(), confirmLabel: 'Save', placeholder: 'e.g. before splitting orders' });
+    if (name === null) return;
+    try {
+      const rec = await saveCheckpoint(name);
+      toast('success', `Saved checkpoint "${rec.name}". Restore it from the Diagram panel in the inspector.`);
+      window.dispatchEvent(new Event(CHECKPOINTS_EVENT));
+    } catch (e) {
+      toast('error', e instanceof Error ? e.message : 'The checkpoint could not be saved.');
+    }
   };
 
   const onTrace = () => {
@@ -202,9 +255,23 @@ export function TopBar() {
   };
 
   useEffect(() => {
-    // expose actions to the keyboard handler in App without prop drilling
-    (window as unknown as { __dbviz: Record<string, () => void> }).__dbviz = { saveFile, openFile };
+    // expose actions to the keyboard handler in App and the command palette without prop drilling
+    const bridge: PaletteBridge = {
+      saveFile,
+      openFile,
+      newDiagram: () => void onNew(),
+      loadSample: () => void onLoadSample(),
+      exportImage: (format) => void exportImage(format),
+      exportAs,
+      shareLink: () => void shareLink(),
+      openLibrary: () => setLibraryOpen(true),
+      saveCheckpoint: () => void onSaveCheckpoint(),
+      switchDialect: onDialectChange,
+    };
+    (window as unknown as { __dbviz: PaletteBridge }).__dbviz = bridge;
   });
+
+  const allTableIds = diagram.tables.map((t) => t.id);
 
   return (
     <header className="topbar">
@@ -217,6 +284,7 @@ export function TopBar() {
         </svg>
         <span>DB Visualizer</span>
       </div>
+      {dirty && fileBacked && <span className="topbar__unsaved" title="Changed since the last save (Ctrl+S)" />}
       <input className="topbar__name" value={diagram.name} onChange={(e) => setDiagramName(e.target.value)} placeholder="Diagram name" spellCheck={false} />
       <select className="dialect-select select" value={diagram.dialect} onChange={(e) => onDialectChange(e.target.value as Dialect)} title="SQL dialect">
         {DIALECTS.map((d) => (
@@ -240,6 +308,31 @@ export function TopBar() {
         <button className="btn" onClick={() => addTable()} title="Add table (T)">
           <Plus /> Table
         </button>
+        <Menu icon={<ChevronDown />} align="left" title="More things to add">
+          {(close) => (
+            <>
+              <button className="menu__item" onClick={() => void (close(), addTable())}>
+                <Plus /> Table <span className="kbd">T</span>
+              </button>
+              <button className="menu__item" onClick={() => void (close(), addTable(undefined, { kind: 'view' }))}>
+                <Eye /> View
+              </button>
+              <button className="menu__item" onClick={() => void (close(), addNote())}>
+                <StickyNote /> Note <span className="kbd">N</span>
+              </button>
+              <button className="menu__item" onClick={() => void (close(), addGroup({ tableIds: selection.tableIds }))}>
+                <Boxes /> {selection.tableIds.length > 1 ? `Group the ${selection.tableIds.length} selected tables` : 'Group region'} <span className="kbd">G</span>
+              </button>
+              <div className="menu__sep" />
+              <button className="menu__item" onClick={() => void (close(), addCustomType('enum'), openDrawer('types'))}>
+                <Shapes /> Enum type
+              </button>
+              <button className="menu__item" onClick={() => void (close(), addCustomType('composite'), openDrawer('types'))}>
+                <Shapes /> Composite type
+              </button>
+            </>
+          )}
+        </Menu>
         <button
           className="btn btn--icon"
           onClick={() => addGroup({ tableIds: selection.tableIds })}
@@ -256,7 +349,7 @@ export function TopBar() {
         <button className="btn" onClick={() => applyLayout()} title="Auto-layout: untangle connections (L)">
           <Shuffle /> Detangle
         </button>
-        <Menu icon={<ChevronDown />}>
+        <Menu icon={<ChevronDown />} align="left" title="Layout direction">
           {(close) => (
             <>
               <div className="menu__label">Layout direction</div>
@@ -288,6 +381,10 @@ export function TopBar() {
           <Maximize />
         </button>
       </div>
+      <span className="topbar__sep" />
+      <button className="btn" onClick={() => setPaletteOpen(true)} title="Command palette: jump to a table or run any action (Ctrl+K)">
+        <Search /> <span className="kbd">Ctrl K</span>
+      </button>
 
       <span className="topbar__spacer" />
 
@@ -304,8 +401,14 @@ export function TopBar() {
               <button className="menu__item" onClick={() => void (close(), openFile())}>
                 <FolderOpen /> Open… <span className="kbd">Ctrl+O</span>
               </button>
+              <button className="menu__item" onClick={() => void (close(), setLibraryOpen(true))}>
+                <Library /> Open recent…
+              </button>
               <button className="menu__item" onClick={() => void (close(), saveFile())}>
                 <Save /> Save as .dbviz.json <span className="kbd">Ctrl+S</span>
+              </button>
+              <button className="menu__item" onClick={() => void (close(), onSaveCheckpoint())}>
+                <BookmarkPlus /> Save checkpoint…
               </button>
               <div className="menu__sep" />
               <button className="menu__item" onClick={() => void (close(), exportImage('png'))}>
@@ -314,10 +417,10 @@ export function TopBar() {
               <button className="menu__item" onClick={() => void (close(), exportImage('svg'))}>
                 <FileImage /> Export SVG
               </button>
-              <button className="menu__item" onClick={() => void (close(), exportSql())}>
+              <button className="menu__item" onClick={() => void (close(), exportAs('sql'))}>
                 <Download /> Export SQL script
               </button>
-              <button className="menu__item" onClick={() => void (close(), exportMarkdown())}>
+              <button className="menu__item" onClick={() => void (close(), exportAs('markdown'))}>
                 <FileText /> Export Markdown
               </button>
               <button className="menu__item" onClick={() => void (close(), exportAs('mermaid'))}>
@@ -331,8 +434,33 @@ export function TopBar() {
                 <Link /> Copy share link
               </button>
               <div className="menu__sep" />
-              <button className="menu__item" onClick={() => void (close(), loadSample())}>
+              <button className="menu__item" onClick={() => void (close(), onLoadSample())}>
                 <Sparkles /> Load example diagram
+              </button>
+            </>
+          )}
+        </Menu>
+        <Menu label="View" icon={<SlidersHorizontal />}>
+          {(close) => (
+            <>
+              <CheckItem on={sidebarOpen} label="Table list" onToggle={() => setSidebarOpen(!sidebarOpen)} />
+              <CheckItem on={inspectorOpen} label="Inspector" onToggle={() => setInspectorOpen(!inspectorOpen)} />
+              <CheckItem on={drawerOpen} label="Bottom drawer" onToggle={() => toggleDrawer()} />
+              <CheckItem on={theme === 'dark'} label="Dark theme" onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
+              <div className="menu__sep" />
+              <CheckItem on={showCardinality} label="Cardinality labels on connections" onToggle={() => setShowCardinality(!showCardinality)} />
+              <CheckItem on={snapToGrid} label="Snap tables to the grid" onToggle={() => setSnapToGrid(!snapToGrid)} />
+              <CheckItem on={warnOnClose} label="Warn before closing with unsaved changes" onToggle={() => setWarnOnClose(!warnOnClose)} />
+              <div className="menu__sep" />
+              <div className="menu__label">All tables</div>
+              <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, undefined))}>
+                <Rows3 /> Show every column
+              </button>
+              <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, 'keys'))}>
+                <Rows3 /> Keys only
+              </button>
+              <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, 'header'))}>
+                <Rows3 /> Headers only
               </button>
             </>
           )}
@@ -357,6 +485,8 @@ export function TopBar() {
         </button>
       </div>
       <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={onFileChosen} />
+      <CommandPalette />
+      <LibraryDialog />
     </header>
   );
 }

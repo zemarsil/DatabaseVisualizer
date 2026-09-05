@@ -2,6 +2,7 @@ import { Boxes, Code2, Database, FileDown, Plus, Route, Shuffle } from 'lucide-r
 import { DIALECTS, RELATIONSHIP_KINDS, verbsForKind, type RelationshipKind } from '@shared/types';
 import { flowDerivations } from '@/lib/derivation';
 import { useStore } from '@/store/useStore';
+import { Checkpoints } from './Checkpoints';
 
 const GLYPH_COLOR: Record<RelationshipKind, string> = {
   fk: 'var(--edge-strong)',
@@ -107,6 +108,7 @@ export function DiagramPanel() {
           </div>
         </div>
       )}
+      <Checkpoints />
       <div className="section">
         <div className="section__head">
           <span className="section__title">Quick actions</span>

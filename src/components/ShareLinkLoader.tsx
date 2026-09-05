@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useStore } from '@/store/useStore';
 import { clearSharedPayloadFromLocation, decodeDiagramFromUrl, readSharedPayloadFromLocation } from '@/lib/share';
+import { flushCurrentDiagram, newDiagramId, setCurrentDiagramId } from '@/lib/library';
 import { confirmDialog } from './ui/Modal';
 
 let handling = false;
@@ -24,6 +25,9 @@ export function ShareLinkLoader() {
             confirmLabel: 'Open',
           }));
         if (ok) {
+          // keep whatever was open as its own library entry; the shared copy gets a new one
+          await flushCurrentDiagram();
+          setCurrentDiagramId(newDiagramId());
           setDiagram(decoded);
           toast('success', `Opened "${decoded.name}" from the link.`);
         }

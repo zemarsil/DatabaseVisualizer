@@ -1,7 +1,8 @@
-import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, Braces, ChevronDown, ChevronRight, Code2, Copy, Database, GitBranch, Link2, Plus, Trash2, Waypoints } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, Braces, ChevronDown, ChevronRight, Code2, Copy, Database, Eye, GitBranch, GripVertical, Link2, Plus, Table2, Trash2, Waypoints } from 'lucide-react';
 import { verbLabel, type Column, type Index, type RelationshipKind, type Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
+import { ViewEditor } from './ViewEditor';
 import { flowDerivations } from '@/lib/derivation';
 import { PALETTE, paletteHue } from '@/lib/palette';
 import { embeddedColumnIds, foreignKeyColumnIds } from '@/lib/model';
@@ -25,21 +26,104 @@ function FlagButton({ on, label, title, className, onClick }: { on: boolean; lab
   );
 }
 
-function ColumnRow({ table, column, index, fk, embed }: { table: Table; column: Column; index: number; fk: boolean; embed: boolean }) {
+interface DragState {
+  id: string;
+  over: { id: string; where: 'above' | 'below' } | null;
+}
+
+interface ColumnRowProps {
+  table: Table;
+  column: Column;
+  index: number;
+  fk: boolean;
+  embed: boolean;
+  register: (id: string, el: HTMLInputElement | null) => void;
+  drag: DragState | null;
+  setDrag: (d: DragState | null) => void;
+}
+
+function ColumnRow({ table, column, index, fk, embed, register, drag, setDrag }: ColumnRowProps) {
   const updateColumn = useStore((s) => s.updateColumn);
   const deleteColumn = useStore((s) => s.deleteColumn);
   const moveColumn = useStore((s) => s.moveColumn);
+  const addColumn = useStore((s) => s.addColumn);
+  const reorderColumn = useStore((s) => s.reorderColumn);
+  const focusColumn = useStore((s) => s.focusColumn);
   const dialect = useStore((s) => s.diagram.dialect);
   const customType = useStore((s) => s.diagram.customTypes.find((t) => t.name.toLowerCase() === column.type.trim().toLowerCase()));
   const [open, setOpen] = useState(false);
   const patch = (p: Partial<Column>) => updateColumn(table.id, column.id, p);
 
+  /** Enter adds a column below (Shift+Enter above); Escape leaves the field; Ctrl+Backspace on an empty name removes the column. */
+  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) {
+        const prev = table.columns[index - 1];
+        if (prev) addColumn(table.id, undefined, { after: prev.id });
+        else {
+          const id = addColumn(table.id);
+          reorderColumn(table.id, id, 0);
+        }
+      } else {
+        addColumn(table.id, undefined, { after: column.id });
+      }
+    } else if (e.key === 'Escape') {
+      e.currentTarget.blur();
+    } else if (e.key === 'Backspace' && (e.ctrlKey || e.metaKey) && !column.name) {
+      e.preventDefault();
+      const prev = table.columns[index - 1];
+      deleteColumn(table.id, column.id);
+      if (prev) focusColumn(prev.id);
+    }
+  };
+
+  const dragging = drag?.id === column.id;
+  const dropWhere = drag?.over?.id === column.id ? drag.over.where : null;
+  const classes = ['col-row'];
+  if (open) classes.push('col-row--open');
+  if (dragging) classes.push('col-row--dragging');
+  if (dropWhere) classes.push(`col-row--drop-${dropWhere}`);
+
   return (
-    <div className={`col-row${open ? ' col-row--open' : ''}`}>
+    <div
+      className={classes.join(' ')}
+      onDragOver={(e) => {
+        if (!drag) return;
+        e.preventDefault();
+        const rect = e.currentTarget.getBoundingClientRect();
+        const where = e.clientY < rect.top + rect.height / 2 ? 'above' : 'below';
+        if (drag.over?.id !== column.id || drag.over.where !== where) setDrag({ ...drag, over: { id: column.id, where } });
+      }}
+      onDrop={(e) => {
+        if (!drag) return;
+        e.preventDefault();
+        const from = table.columns.findIndex((c) => c.id === drag.id);
+        let to = index + (dropWhere === 'below' ? 1 : 0);
+        if (from < to) to -= 1;
+        reorderColumn(table.id, drag.id, to);
+        setDrag(null);
+      }}
+    >
+      <span
+        className="col-row__grip"
+        title="Drag to reorder"
+        draggable
+        onDragStart={(e) => {
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', column.id);
+          setDrag({ id: column.id, over: null });
+        }}
+        onDragEnd={() => setDrag(null)}
+      >
+        <GripVertical />
+      </span>
       <input
+        ref={(el) => register(column.id, el)}
         className="input input--sm"
         value={column.name}
         onChange={(e) => patch({ name: e.target.value })}
+        onKeyDown={onKeyDown}
         placeholder="column"
         spellCheck={false}
         title={fk ? 'Referenced by a foreign key' : embed ? 'Holds another table serialized' : undefined}
@@ -49,6 +133,7 @@ function ColumnRow({ table, column, index, fk, embed }: { table: Table; column: 
         className="input input--sm input--mono"
         value={column.type}
         onChange={(e) => patch({ type: e.target.value })}
+        onKeyDown={onKeyDown}
         placeholder="TYPE"
         list={`types-${dialect}`}
         spellCheck={false}
@@ -136,7 +221,26 @@ export function TableEditor({ table }: { table: Table }) {
   const addGroup = useStore((s) => s.addGroup);
   const openDrawer = useStore((s) => s.openDrawer);
   const toast = useStore((s) => s.toast);
+  const focusColumnId = useStore((s) => s.focusColumnId);
+  const focusColumn = useStore((s) => s.focusColumn);
   const [showSql, setShowSql] = useState(false);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const inputs = useRef(new Map<string, HTMLInputElement>());
+  const register = (id: string, el: HTMLInputElement | null) => {
+    if (el) inputs.current.set(id, el);
+    else inputs.current.delete(id);
+  };
+  const isView = table.kind === 'view';
+
+  // A column added with Enter (or from a menu) gets the cursor so typing flows on.
+  useEffect(() => {
+    if (!focusColumnId) return;
+    const el = inputs.current.get(focusColumnId);
+    if (!el) return;
+    el.focus();
+    el.select();
+    focusColumn(null);
+  }, [focusColumnId, focusColumn, table.columns.length]);
 
   const fkColumns = useMemo(() => foreignKeyColumnIds(diagram, table.id), [diagram, table.id]);
   const embedColumns = useMemo(() => embeddedColumnIds(diagram, table.id), [diagram, table.id]);
@@ -158,6 +262,14 @@ export function TableEditor({ table }: { table: Table }) {
 
   return (
     <div>
+      <div className="kind-toggle">
+        <button className={`btn btn--sm${!isView ? ' btn--active' : ''}`} onClick={() => updateTable(table.id, { kind: undefined })} title="A real table with rows">
+          <Table2 /> Table
+        </button>
+        <button className={`btn btn--sm${isView ? ' btn--active' : ''}`} onClick={() => updateTable(table.id, { kind: 'view' })} title="A view: a saved SELECT over other tables">
+          <Eye /> View
+        </button>
+      </div>
       <datalist id={`types-${diagram.dialect}`}>
         {TYPE_SUGGESTIONS[diagram.dialect].map((t) => (
           <option key={t} value={t} />
@@ -226,24 +338,29 @@ export function TableEditor({ table }: { table: Table }) {
         )}
       </div>
 
+      {isView && <ViewEditor table={table} />}
+
       <div className="section">
         <div className="section__head">
-          <span className="section__title">Columns ({table.columns.length})</span>
+          <span className="section__title">
+            Columns ({table.columns.length}){isView && <span className="faint"> · optional, for display</span>}
+          </span>
           <button className="btn btn--sm" onClick={() => addColumn(table.id)}>
             <Plus /> Column
           </button>
         </div>
         <div className="col-editor">
           {table.columns.map((c, i) => (
-            <ColumnRow key={c.id} table={table} column={c} index={i} fk={fkColumns.has(c.id)} embed={embedColumns.has(c.id)} />
+            <ColumnRow key={c.id} table={table} column={c} index={i} fk={fkColumns.has(c.id)} embed={embedColumns.has(c.id)} register={register} drag={drag} setDrag={setDrag} />
           ))}
           {table.columns.length === 0 && <div className="faint small">No columns yet.</div>}
         </div>
         <div className="field__hint" style={{ marginTop: 6 }}>
-          PK primary key · NN not null · UQ unique · AI auto-increment. Expand a row for default, check and comment.
+          PK primary key · NN not null · UQ unique · AI auto-increment. Enter adds the next column, Shift+Enter one above, drag the grip to reorder. Expand a row for default, check and comment.
         </div>
       </div>
 
+      {!isView && (
       <div className="section">
         <div className="section__head">
           <span className="section__title">Indexes ({table.indexes.length})</span>
@@ -255,7 +372,9 @@ export function TableEditor({ table }: { table: Table }) {
           <IndexRow key={ix.id} table={table} index={ix} />
         ))}
       </div>
+      )}
 
+      {!isView && (
       <div className="section">
         <div className="section__head">
           <span className="section__title">Table checks ({table.checks.length})</span>
@@ -278,6 +397,7 @@ export function TableEditor({ table }: { table: Table }) {
           </div>
         ))}
       </div>
+      )}
 
       <div className="section">
         <div className="section__head">
