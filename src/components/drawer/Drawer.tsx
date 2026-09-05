@@ -8,6 +8,8 @@ import { ResizeHandle } from '@/components/ui/ResizeHandle';
 import { TypesPanel } from './TypesPanel';
 import { ProblemsPanel } from './ProblemsPanel';
 import { QueryPanel } from './QueryPanel';
+import { useMemo } from 'react';
+import { lintDiagram } from '@/lib/lint';
 
 const TABS: { id: DrawerTab; label: string; icon: React.ReactNode }[] = [
   { id: 'sql', label: 'SQL', icon: <Code2 /> },
@@ -26,6 +28,8 @@ export function Drawer() {
   const traceResult = useStore((s) => s.trace.result);
   const resizePanel = useStore((s) => s.resizePanel);
   const typeCount = useStore((s) => s.diagram.customTypes.length);
+  const diagram = useStore((s) => s.diagram);
+  const errorCount = useMemo(() => lintDiagram(diagram).filter((f) => f.severity === 'error').length, [diagram]);
 
   return (
     <section className={`drawer${open ? '' : ' drawer--collapsed'}`}>
@@ -37,6 +41,7 @@ export function Drawer() {
             {t.label}
             {t.id === 'trace' && traceResult && <span className="badge badge--trace">{traceResult.hops.length} hops</span>}
             {t.id === 'types' && typeCount > 0 && <span className="badge">{typeCount}</span>}
+            {t.id === 'problems' && errorCount > 0 && <span className="badge badge--danger">{errorCount}</span>}
           </button>
         ))}
         <span className="grow" />
