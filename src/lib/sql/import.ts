@@ -82,6 +82,30 @@ export function parseResultToDiagram(res: ParseResult, existing: Diagram | null 
     }
   }
 
+  // Views: a table of kind 'view' whose inputs are flow links from the tables it reads.
+  for (const pv of res.views) {
+    const view = createTable({ name: pv.name, schema: pv.schema, kind: 'view', viewSql: pv.sql });
+    if (existingNames.has(keyOf(view.name)) || byName.has(keyOf(view.name))) {
+      warnings.push(`View ${pv.name} clashes with an existing table name; the imported copy was renamed.`);
+      let i = 2;
+      while (existingNames.has(keyOf(view.name)) || byName.has(keyOf(view.name))) view.name = `${pv.name}_${i++}`;
+    }
+    for (const c of pv.columns) view.columns.push(createColumn({ name: c, type: 'TEXT', nullable: true }));
+    byName.set(keyOf(pv.name), view);
+    tables.push(view);
+  }
+  for (const pv of res.views) {
+    const view = byName.get(keyOf(pv.name));
+    if (!view) continue;
+    for (const src of pv.sources) {
+      const bare = src.includes('.') ? src.slice(src.lastIndexOf('.') + 1) : src;
+      const source = byName.get(keyOf(bare)) ?? existing?.tables.find((t) => keyOf(t.name) === keyOf(bare));
+      if (!source || source.id === view.id) continue;
+      if (relationships.some((r) => r.kind === 'flow' && r.sourceTableId === source.id && r.targetTableId === view.id)) continue;
+      relationships.push(createRelationship({ kind: 'flow', name: 'view source', sourceTableId: source.id, sourceColumnIds: [], targetTableId: view.id, targetColumnIds: [] }));
+    }
+  }
+
   // simple grid so tables never stack before the user runs auto-layout
   const cols = Math.max(1, Math.ceil(Math.sqrt(tables.length)));
   tables.forEach((t, i) => {

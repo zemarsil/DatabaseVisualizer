@@ -40,7 +40,12 @@ export class SqlSyntaxError extends Error {
   }
 }
 
-export function tokenize(sql: string): Token[] {
+export interface TokenizeOptions {
+  /** SQLite accepts [bracketed] identifiers (a T-SQL habit); PostgreSQL uses [] for arrays, so this is opt-in. */
+  bracketIdentifiers?: boolean;
+}
+
+export function tokenize(sql: string, opts: TokenizeOptions = {}): Token[] {
   const tokens: Token[] = [];
   let i = 0;
   let line = 1;
@@ -145,6 +150,16 @@ export function tokenize(sql: string): Token[] {
       if (!closed) throw new SqlSyntaxError('Unterminated string literal', startLine, startCol);
       push('string', out, start, i, startLine, startCol);
       continue;
+    }
+
+    // [bracketed] identifiers (SQLite only)
+    if (opts.bracketIdentifiers && ch === '[') {
+      const close = sql.indexOf(']', i + 1);
+      if (close !== -1 && !sql.slice(i + 1, close).includes('\n')) {
+        push('quoted', sql.slice(i + 1, close), start, close + 1, startLine, startCol);
+        i = close + 1;
+        continue;
+      }
     }
 
     // quoted identifiers

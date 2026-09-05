@@ -12,6 +12,7 @@ import {
 import { derivationSummaries, derivationValue, flowDerivations, groupDerivations, isDerivationComplete } from '../derivation';
 import { externalTableIds } from '../groups';
 import { isIntegerType, isSerialType, quoteIdent, quoteQualified, quoteString } from './dialect';
+import { orderViews } from './views';
 
 /** Look up a column's raw type string against the diagram's named custom types (case-insensitive, quotes stripped). */
 function findCustomType(customTypes: CustomType[], type: string): CustomType | undefined {
@@ -82,7 +83,8 @@ function columnNames(ids: string[], t: Table, dialect: Dialect): string[] {
  * along with any foreign key that touches them.
  */
 export function orderTables(d: Diagram, skip: Set<string> = new Set()): { order: Table[]; deferred: Set<string> } {
-  const buildable = skip.size ? d.tables.filter((t) => !skip.has(t.id)) : d.tables;
+  // Views are created after every table (see orderViews), so they never take part here.
+  const buildable = d.tables.filter((t) => t.kind !== 'view' && !skip.has(t.id));
   const ids = buildable.map((t) => t.id);
   const indeg = new Map<string, number>(ids.map((id) => [id, 0]));
   const out = new Map<string, string[]>(ids.map((id) => [id, []]));
@@ -133,6 +135,11 @@ function resolveColumnType(ctx: Ctx, rawType: string, columnLabel: string, warni
   const ct = findCustomType(ctx.d.customTypes, type);
   if (!ct) return type;
   if (ctx.dialect === 'postgresql') return quoteIdent(ct.name, ctx.dialect);
+  if (ctx.dialect === 'sqlite') {
+    // Enums become TEXT with a CHECK (added by columnLine); composites have no equivalent at all.
+    if (ct.kind !== 'enum') warnings.push(`${columnLabel} uses custom composite type "${ct.name}", which SQLite cannot express; emitted as TEXT.`);
+    return 'TEXT';
+  }
   // MariaDB has no named CREATE TYPE: inline enums, and fall back composites to JSON.
   if (ct.kind === 'enum') {
     const values = (ct.values ?? []).map(quoteString);
@@ -140,6 +147,19 @@ function resolveColumnType(ctx: Ctx, rawType: string, columnLabel: string, warni
   }
   warnings.push(`${columnLabel} uses custom composite type "${ct.name}", which MariaDB has no equivalent for; emitted as JSON.`);
   return 'JSON';
+}
+
+/**
+ * SQLite only accepts a literal, CURRENT_TIMESTAMP-style keywords, or a
+ * parenthesised expression after DEFAULT; now() does not exist there at all.
+ */
+function sqliteDefault(raw: string): string {
+  const v = raw.trim();
+  if (/^(now|current_timestamp|localtimestamp)\s*\(\s*\)$/i.test(v)) return 'CURRENT_TIMESTAMP';
+  if (/^(current_date|current_time)\s*\(\s*\)$/i.test(v)) return v.replace(/\s*\(\s*\)$/, '').toUpperCase();
+  if (/^-?\d+(\.\d+)?$/.test(v) || /^'(?:[^']|'')*'$/.test(v) || /^(null|true|false|current_timestamp|current_date|current_time)$/i.test(v)) return v;
+  if (/^\(.*\)$/.test(v)) return v;
+  return `(${v})`;
 }
 
 function columnLine(ctx: Ctx, c: Column, inlinePk: boolean, warnings: string[]): string {
@@ -163,6 +183,28 @@ function columnLine(ctx: Ctx, c: Column, inlinePk: boolean, warnings: string[]):
     else if (!c.nullable && !isSerialType(type)) parts.push('NOT NULL');
     if (c.defaultValue && c.defaultValue.trim()) parts.push(`DEFAULT ${c.defaultValue.trim()}`);
     if (c.unique && !inlinePk) parts.push('UNIQUE');
+    if (c.check && c.check.trim()) parts.push(`CHECK (${c.check.trim()})`);
+    return parts.join(' ');
+  }
+
+  if (dialect === 'sqlite') {
+    // AUTOINCREMENT is only legal on the exact spelling INTEGER PRIMARY KEY.
+    if (c.autoIncrement && inlinePk) {
+      if (!isIntegerType(type)) warnings.push(`Column "${c.name}" is auto-increment, so SQLite needs it to be INTEGER; its type ${type} was replaced.`);
+      parts.push('INTEGER PRIMARY KEY AUTOINCREMENT');
+    } else {
+      if (c.autoIncrement) warnings.push(`Column "${c.name}" is auto-increment but not the single primary key; SQLite only auto-increments an INTEGER PRIMARY KEY.`);
+      parts.push(isSerialType(type) ? 'INTEGER' : type);
+      if (inlinePk) parts.push('PRIMARY KEY');
+      if (!c.nullable && !inlinePk) parts.push('NOT NULL');
+    }
+    if (c.defaultValue && c.defaultValue.trim()) parts.push(`DEFAULT ${sqliteDefault(c.defaultValue.trim())}`);
+    if (c.unique && !inlinePk) parts.push('UNIQUE');
+    const ct = findCustomType(ctx.d.customTypes, c.type);
+    if (ct?.kind === 'enum') {
+      const values = (ct.values ?? []).filter((v) => v.trim());
+      if (values.length) parts.push(`CHECK (${quoteIdent(c.name, dialect)} IN (${values.map(quoteString).join(', ')}))`);
+    }
     if (c.check && c.check.trim()) parts.push(`CHECK (${c.check.trim()})`);
     return parts.join(' ');
   }
@@ -202,7 +244,7 @@ interface TableSqlOptions {
   inlineFks: Relationship[];
 }
 
-function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string[]): { create: string; extras: string[] } {
+function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string[]): { create: string; extras: string[]; notes: string[] } {
   const { dialect } = ctx;
   const pkCols = t.columns.filter((c) => c.primaryKey);
   const inlinePkId = pkCols.length === 1 ? pkCols[0].id : null;
@@ -247,6 +289,7 @@ function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string
   }
   create += ';';
 
+  const notes: string[] = [];
   if (dialect === 'postgresql') {
     if (t.comment && t.comment.trim()) extras.push(`COMMENT ON TABLE ${tableName(t, dialect)} IS ${quoteString(t.comment.trim())};`);
     for (const c of t.columns) {
@@ -254,13 +297,34 @@ function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string
         extras.push(`COMMENT ON COLUMN ${tableName(t, dialect)}.${quoteIdent(c.name, dialect)} IS ${quoteString(c.comment.trim())};`);
       }
     }
+  } else if (dialect === 'sqlite') {
+    // SQLite keeps no comments, so they live in the script as comment lines only.
+    if (t.comment && t.comment.trim()) notes.push(`-- ${t.name}: ${t.comment.trim().replace(/\r?\n/g, ' ')}`);
+    for (const c of t.columns) {
+      if (c.comment && c.comment.trim()) notes.push(`-- ${t.name}.${c.name}: ${c.comment.trim().replace(/\r?\n/g, ' ')}`);
+    }
   }
-  return { create, extras };
+  return { create, extras, notes };
+}
+
+/** CREATE VIEW for a view table; null (with a warning) when it has no SELECT yet. */
+function createView(ctx: Ctx, t: Table, warnings: string[]): string | null {
+  const sql = (t.viewSql ?? '').trim().replace(/;+$/, '');
+  if (!sql) {
+    warnings.push(`View ${t.name} has no SELECT yet and was skipped.`);
+    return null;
+  }
+  const keyword = ctx.dialect === 'mariadb' ? 'CREATE OR REPLACE VIEW' : 'CREATE VIEW';
+  return `${keyword} ${tableName(t, ctx.dialect)} AS\n${sql};`;
 }
 
 /** CREATE TYPE statements for named enum/composite types (PostgreSQL only; MariaDB inlines/falls back per-column). */
 function createTypeStatements(d: Diagram, warnings: string[]): string[] {
   if (d.customTypes.length === 0) return [];
+  if (d.dialect === 'sqlite') {
+    warnings.push('SQLite has no CREATE TYPE: enum types became CHECK constraints and composite types TEXT.');
+    return [];
+  }
   if (d.dialect !== 'postgresql') {
     warnings.push('MariaDB has no CREATE TYPE: enum types were inlined per column and composite types fell back to JSON.');
     return [];
@@ -362,10 +426,18 @@ function commentBlock(text: string): string {
 export function generateSchema(d: Diagram): GeneratedSql {
   const ctx = buildCtx(d);
   const warnings: string[] = [];
-  const { order, deferred } = orderTables(d, ctx.external);
+  const ordered = orderTables(d, ctx.external);
+  const order = ordered.order;
+  // SQLite checks foreign keys at run time, so a reference to a table created later is fine inline.
+  const deferred = d.dialect === 'sqlite' ? new Set<string>() : ordered.deferred;
   const statements: string[] = [];
   const scriptParts: string[] = [];
   const tableSql: Record<string, string> = {};
+
+  if (d.dialect === 'sqlite') {
+    const schemaed = d.tables.filter((t) => t.schema && !ctx.external.has(t.id)).map((t) => t.name);
+    if (schemaed.length) warnings.push(`SQLite has no schemas; the schema prefix was dropped for ${schemaed.join(', ')}.`);
+  }
 
   // A foreign key can only be created when both ends are in this database. One
   // that points into an external group is documented instead of executed.
@@ -373,6 +445,12 @@ export function generateSchema(d: Diagram): GeneratedSql {
   const fksBySource = new Map<string, Relationship[]>();
   for (const r of d.relationships) {
     if (r.kind !== 'fk') continue;
+    const srcTable = ctx.tableById.get(r.sourceTableId);
+    const tgtTable = ctx.tableById.get(r.targetTableId);
+    if (srcTable?.kind === 'view' || tgtTable?.kind === 'view') {
+      warnings.push(`Foreign key ${srcTable?.name ?? '?'} → ${tgtTable?.name ?? '?'} touches a view; views cannot take part in foreign keys, so it was skipped.`);
+      continue;
+    }
     if (ctx.external.has(r.sourceTableId)) continue; // the other database's business
     if (ctx.external.has(r.targetTableId)) {
       crossing.push(r);
@@ -392,15 +470,15 @@ export function generateSchema(d: Diagram): GeneratedSql {
 
   const label = d.dialect === 'postgresql' ? 'PostgreSQL' : d.dialect === 'mariadb' ? 'MariaDB' : 'SQLite';
   const externalTables = d.tables.filter((t) => ctx.external.has(t.id));
+  const views = orderViews(d).filter((v) => !ctx.external.has(v.id));
   const documented = d.relationships.filter((r) => !kindMeta(r.kind).emitsDdl).length;
-  const createdFks = d.relationships.filter(
-    (r) => r.kind === 'fk' && !ctx.external.has(r.sourceTableId) && !ctx.external.has(r.targetTableId),
-  ).length;
+  const createdFks = [...fksBySource.values()].reduce((n, list) => n + list.length, 0);
   const headLines = [
     `-- ${d.name || 'Untitled diagram'} (${label})`,
     '-- Generated by Database Visualizer',
-    `-- Tables: ${order.length}, foreign keys: ${createdFks}${documented ? `, documented connections: ${documented}` : ''}`,
+    `-- Tables: ${order.length}${views.length ? `, views: ${views.length}` : ''}, foreign keys: ${createdFks}${documented ? `, documented connections: ${documented}` : ''}`,
   ];
+  if (d.dialect === 'sqlite') headLines.push('-- Foreign keys are only enforced when the connection runs PRAGMA foreign_keys = ON (the in-browser engine does).');
   if (externalTables.length) {
     headLines.push(
       `-- ${externalTables.length} table(s) live in another database and are not created here; see "External sources" at the end.`,
@@ -416,9 +494,9 @@ export function generateSchema(d: Diagram): GeneratedSql {
 
   for (const t of order) {
     const fks = (fksBySource.get(t.id) ?? []).filter((r) => !deferred.has(r.id));
-    const { create, extras } = createTable(ctx, t, { inlineFks: fks }, warnings);
+    const { create, extras, notes } = createTable(ctx, t, { inlineFks: fks }, warnings);
     statements.push(create, ...extras);
-    const block = [create, ...extras].join('\n');
+    const block = [...notes, create, ...extras].join('\n');
     tableSql[t.id] = block;
     scriptParts.push(block);
   }
@@ -433,6 +511,18 @@ export function generateSchema(d: Diagram): GeneratedSql {
   if (deferredStatements.length) {
     statements.push(...deferredStatements);
     scriptParts.push(`-- Foreign keys that close reference cycles\n${deferredStatements.join('\n')}`);
+  }
+
+  const viewStatements: string[] = [];
+  for (const v of views) {
+    const stmt = createView(ctx, v, warnings);
+    if (!stmt) continue;
+    viewStatements.push(stmt);
+    tableSql[v.id] = stmt;
+  }
+  if (viewStatements.length) {
+    statements.push(...viewStatements);
+    scriptParts.push(`-- Views\n${viewStatements.join('\n\n')}`);
   }
 
   // Documentation-only appendix: the tables this schema reads from but does not own.
@@ -506,10 +596,11 @@ export function generateTableSql(d: Diagram, tableId: string): string {
   const ctx = buildCtx(d);
   const t = ctx.tableById.get(tableId);
   if (!t) return '';
+  if (t.kind === 'view') return createView(ctx, t, []) ?? `-- View ${t.name} has no SELECT yet.`;
   // A foreign key that would cross into another database is not real DDL.
   const fks = d.relationships.filter((r) => r.kind === 'fk' && r.sourceTableId === tableId && !ctx.external.has(r.targetTableId));
-  const { create, extras } = createTable(ctx, t, { inlineFks: fks }, []);
-  const body = [create, ...extras].join('\n');
+  const { create, extras, notes } = createTable(ctx, t, { inlineFks: fks }, []);
+  const body = [...notes, create, ...extras].join('\n');
   if (!ctx.external.has(t.id)) return body;
   const group = d.groups.find((g) => g.id === t.groupId);
   return [
@@ -521,16 +612,26 @@ export function generateTableSql(d: Diagram, tableId: string): string {
 
 /** DROP TABLE statements in reverse dependency order. */
 export function generateDropStatements(d: Diagram): string[] {
-  const { order } = orderTables(d, externalTableIds(d));
+  const external = externalTableIds(d);
+  const { order } = orderTables(d, external);
   const reversed = [...order].reverse();
+  const viewDrops = orderViews(d)
+    .filter((v) => !external.has(v.id))
+    .reverse()
+    .map((v) => `DROP VIEW IF EXISTS ${tableName(v, d.dialect)};`);
   if (d.dialect === 'postgresql') {
     return [
+      ...viewDrops,
       ...reversed.map((t) => `DROP TABLE IF EXISTS ${tableName(t, d.dialect)} CASCADE;`),
       ...d.customTypes.map((ct) => `DROP TYPE IF EXISTS ${quoteIdent(ct.name, d.dialect)};`),
     ];
   }
+  if (d.dialect === 'sqlite') {
+    return [...viewDrops, ...reversed.map((t) => `DROP TABLE IF EXISTS ${tableName(t, d.dialect)};`)];
+  }
   return [
     'SET FOREIGN_KEY_CHECKS = 0;',
+    ...viewDrops,
     ...reversed.map((t) => `DROP TABLE IF EXISTS ${tableName(t, d.dialect)};`),
     'SET FOREIGN_KEY_CHECKS = 1;',
   ];

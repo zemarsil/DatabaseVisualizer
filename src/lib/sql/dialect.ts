@@ -32,12 +32,19 @@ export function quoteIdent(name: string, dialect: Dialect): string {
     if (/^[a-z_][a-z0-9_]*$/.test(name) && !isReserved(name)) return name;
     return `"${name.replace(/"/g, '""')}"`;
   }
+  if (dialect === 'sqlite') {
+    // SQLite keeps identifier case and compares case-insensitively, so plain names stay bare.
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !isReserved(name)) return name;
+    return `"${name.replace(/"/g, '""')}"`;
+  }
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !isReserved(name)) return name;
   return '`' + name.replace(/`/g, '``') + '`';
 }
 
 /** Quote a qualified name (schema.table) part by part. */
 export function quoteQualified(name: string, schema: string | undefined, dialect: Dialect): string {
+  // SQLite has attached databases rather than schemas; a schema prefix would name a database that is not attached.
+  if (dialect === 'sqlite') return quoteIdent(name, dialect);
   return schema ? `${quoteIdent(schema, dialect)}.${quoteIdent(name, dialect)}` : quoteIdent(name, dialect);
 }
 
@@ -106,6 +113,48 @@ export function translateType(type: string, from: Dialect, to: Dialect): string 
   const { base, args, suffix } = splitType(type);
   const withArgs = (b: string, a: string | null = args) => (a ? `${b}(${a})` : b);
   const isArray = suffix.includes('[]');
+
+  if (to === 'sqlite') {
+    if (isArray) return 'TEXT';
+    switch (base) {
+      case 'INT': case 'INTEGER': case 'SMALLINT': case 'BIGINT': case 'TINYINT': case 'MEDIUMINT':
+      case 'SERIAL': case 'BIGSERIAL': case 'SMALLSERIAL': case 'INT2': case 'INT4': case 'INT8': case 'OID':
+        return args === '1' && base === 'TINYINT' ? 'BOOLEAN' : 'INTEGER';
+      case 'REAL': case 'FLOAT': case 'DOUBLE': case 'DOUBLE PRECISION': case 'FLOAT4': case 'FLOAT8': return 'REAL';
+      case 'NUMERIC': case 'DECIMAL': case 'DEC': case 'FIXED': return withArgs('NUMERIC');
+      case 'MONEY': return 'NUMERIC(19,4)';
+      case 'BOOLEAN': case 'BOOL': return 'BOOLEAN';
+      case 'BIT': return args === '1' || !args ? 'BOOLEAN' : 'INTEGER';
+      case 'VARCHAR': case 'CHARACTER VARYING': case 'NVARCHAR': return withArgs('VARCHAR');
+      case 'CHAR': case 'CHARACTER': case 'NCHAR': return withArgs('CHAR');
+      case 'TEXT': case 'TINYTEXT': case 'MEDIUMTEXT': case 'LONGTEXT': case 'CITEXT': case 'CLOB': return 'TEXT';
+      case 'JSON': case 'JSONB': case 'UUID': case 'XML': case 'TSVECTOR': case 'INTERVAL': case 'INET': case 'INET6': case 'INET4':
+      case 'CIDR': case 'MACADDR': case 'ENUM': case 'SET': case 'POINT': case 'GEOMETRY': case 'LINESTRING': case 'POLYGON': case 'HSTORE':
+        return 'TEXT';
+      case 'BYTEA': case 'BLOB': case 'TINYBLOB': case 'MEDIUMBLOB': case 'LONGBLOB': case 'VARBINARY': case 'BINARY': return 'BLOB';
+      case 'DATE': return 'DATE';
+      case 'TIME': case 'TIMETZ': case 'TIME WITH TIME ZONE': return 'TIME';
+      case 'TIMESTAMP': case 'TIMESTAMPTZ': case 'TIMESTAMP WITH TIME ZONE': case 'DATETIME': return 'DATETIME';
+      case 'YEAR': return 'INTEGER';
+      default: return type;
+    }
+  }
+  if (from === 'sqlite') {
+    const pg = to === 'postgresql';
+    switch (base) {
+      case 'INTEGER': case 'INT': return pg ? 'INTEGER' : 'INT';
+      case 'REAL': return pg ? 'DOUBLE PRECISION' : 'DOUBLE';
+      case 'TEXT': return 'TEXT';
+      case 'BLOB': return pg ? 'BYTEA' : 'LONGBLOB';
+      case 'BOOLEAN': return 'BOOLEAN';
+      case 'DATETIME': return pg ? 'TIMESTAMP' : 'DATETIME';
+      case 'NUMERIC': case 'DECIMAL': return withArgs(pg ? 'NUMERIC' : 'DECIMAL');
+      case 'VARCHAR': return withArgs('VARCHAR', args ?? '255');
+      case 'CHAR': return withArgs('CHAR');
+      case 'DATE': case 'TIME': return base;
+      default: return type;
+    }
+  }
 
   if (to === 'mariadb') {
     if (isArray) return 'JSON';

@@ -559,6 +559,10 @@ export interface IntrospectedForeignKey {
 export interface IntrospectedTable {
   schema: string;
   name: string;
+  /** Absent means a plain table. */
+  kind?: 'table' | 'view';
+  /** The view's SELECT, for kind === 'view'. */
+  viewSql?: string | null;
   comment: string | null;
   columns: IntrospectedColumn[];
   primaryKey: string[];
@@ -570,4 +574,6 @@ export interface IntrospectedTable {
 export interface IntrospectResponse {
   serverVersion: string;
   tables: IntrospectedTable[];
+  /** Named enum types (PostgreSQL only). */
+  enums?: { schema: string; name: string; values: string[] }[];
 }

@@ -2,6 +2,7 @@ import type { Diagram, IntrospectResponse } from '@shared/types';
 import { parseResultToDiagram, type ImportResult } from './sql/import';
 import type { ParseResult, ParsedTable } from './sql/parser';
 import { normalizeType } from './sql/dialect';
+import { viewSourcesFromSql } from './sql/views';
 
 /** format_type() output uses long names; prefer the short spellings people type. */
 function canonicalType(type: string, dialect: Diagram['dialect']): string {
@@ -22,13 +23,23 @@ function canonicalType(type: string, dialect: Diagram['dialect']): string {
 export function introspectionToDiagram(res: IntrospectResponse, dialect: Diagram['dialect'], existing: Diagram | null): ImportResult {
   const schemas = new Set(res.tables.map((t) => t.schema));
   const dropSchema = schemas.size <= 1; // everything in one schema (public / the database) -> keep names short
+  const tableNames = res.tables.map((t) => (dropSchema ? t.name : `${t.schema}.${t.name}`));
   const parsed: ParseResult = {
-    enums: [],
+    enums: (res.enums ?? []).map((e) => ({ name: e.name, values: e.values })),
+    views: res.tables
+      .filter((t) => t.kind === 'view')
+      .map((t) => ({
+        schema: dropSchema ? undefined : t.schema,
+        name: t.name,
+        columns: [],
+        sql: (t.viewSql ?? '').trim(),
+        sources: viewSourcesFromSql(t.viewSql ?? '', tableNames),
+      })),
     compositeTypes: [],
     errors: [],
     warnings: [],
     statementCount: res.tables.length,
-    tables: res.tables.map<ParsedTable>((t) => ({
+    tables: res.tables.filter((t) => t.kind !== 'view').map<ParsedTable>((t) => ({
       schema: dropSchema ? undefined : t.schema,
       name: t.name,
       comment: t.comment ?? undefined,
