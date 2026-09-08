@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
-import { X } from 'lucide-react';
+import { BookOpen, X } from 'lucide-react';
+import { WalkthroughBrowser } from './Walkthroughs';
 
 export interface ConfirmOptions {
   title: string;
@@ -18,18 +19,25 @@ export interface PromptOptions {
   confirmLabel?: string;
 }
 
+/** `'guide'` (the quick reference), `'list'` (every walkthrough), or a walkthrough's slug. */
+type HelpView = string;
+
 interface DialogState {
   confirm: (ConfirmOptions & { resolve: (ok: boolean) => void }) | null;
   prompt: (PromptOptions & { resolve: (value: string | null) => void }) | null;
   help: boolean;
-  setHelp: (open: boolean) => void;
+  helpView: HelpView;
+  setHelp: (open: boolean, view?: HelpView) => void;
+  setHelpView: (view: HelpView) => void;
 }
 
 export const useDialogStore = create<DialogState>((set) => ({
   confirm: null,
   prompt: null,
   help: false,
-  setHelp: (open) => set({ help: open }),
+  helpView: 'guide',
+  setHelp: (open, view) => set({ help: open, ...(open ? { helpView: view ?? 'guide' } : {}) }),
+  setHelpView: (view) => set({ helpView: view }),
 }));
 
 /** Promise-based confirm dialog: `if (await confirmDialog({...})) ...` */
@@ -95,13 +103,17 @@ export function Modal({ title, onClose, children, footer, wide }: { title: React
 }
 
 function HelpContent() {
+  const setHelpView = useDialogStore((s) => s.setHelpView);
   const K = ({ k }: { k: string }) => <span className="kbd">{k}</span>;
   return (
     <div className="help">
       <p>
-        This is the short version. <code>docs/walkthroughs/</code> in the repository has the long one: a worked guide per task — building a table,
-        connecting two, external groups, filling one table from another, Simulate, indexes, views — each shipping a diagram you can open with{' '}
-        <K k="Ctrl" /> <K k="O" />.
+        This is the short version.{' '}
+        <button className="link-btn" onClick={() => setHelpView('list')}>
+          <BookOpen size={13} /> Browse the fifteen walkthroughs
+        </button>{' '}
+        for the long one: a worked guide per task — building a table, connecting two, external groups, filling one table from another, Simulate, indexes,
+        views — each ending in a diagram you can open right from the walkthrough, or with <K k="Ctrl" /> <K k="O" /> yourself.
       </p>
       <h4>Find anything</h4>
       <p>
@@ -311,9 +323,17 @@ export function DialogHost() {
   const confirm = useDialogStore((s) => s.confirm);
   const prompt = useDialogStore((s) => s.prompt);
   const help = useDialogStore((s) => s.help);
+  const helpView = useDialogStore((s) => s.helpView);
   const setHelp = useDialogStore((s) => s.setHelp);
+  const setHelpView = useDialogStore((s) => s.setHelpView);
   return (
     <>
+      {help && (
+        <Modal title={helpView === 'guide' ? 'How to use Database Visualizer' : 'Walkthroughs'} onClose={() => setHelp(false)} wide>
+          {helpView === 'guide' ? <HelpContent /> : <WalkthroughBrowser view={helpView} onView={setHelpView} />}
+        </Modal>
+      )}
+      {/* Confirm/prompt render after help so they stack on top of it: modal-backdrops share a z-index, so with equal z-index the later sibling in the DOM wins, and a confirmDialog() opened from within the help modal (e.g. "Open this diagram") must be reachable, not hidden behind it. */}
       {confirm && (
         <Modal
           title={confirm.title}
@@ -333,11 +353,6 @@ export function DialogHost() {
         </Modal>
       )}
       {prompt && <PromptModal key={prompt.title} prompt={prompt} />}
-      {help && (
-        <Modal title="How to use Database Visualizer" onClose={() => setHelp(false)} wide>
-          <HelpContent />
-        </Modal>
-      )}
     </>
   );
 }

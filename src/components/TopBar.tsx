@@ -44,7 +44,7 @@ import { downloadDataUrl, downloadText, fileSlug, parseDiagramFile, serializeDia
 import { exportDiagramImage } from '@/lib/exportImage';
 import { EXPORT_FORMATS, exportDiagram, type ExportFormat } from '@/lib/export';
 import { copyShareLink } from '@/lib/share';
-import { defaultCheckpointName, flushCurrentDiagram, installLibraryAutosave, newDiagramId, saveCheckpoint, setCurrentDiagramId } from '@/lib/library';
+import { defaultCheckpointName, installLibraryAutosave, saveCheckpoint, startFreshDiagramEntry } from '@/lib/library';
 import { useBeforeUnload } from '@/hooks/useBeforeUnload';
 import { confirmDialog, promptDialog, useDialogStore } from './ui/Modal';
 import { CommandPalette, type PaletteBridge } from './CommandPalette';
@@ -163,19 +163,13 @@ export function TopBar() {
 
   const openFile = () => fileInput.current?.click();
 
-  /** Every "replace the whole diagram" path gets its own library entry so the previous one is kept. */
-  const startFreshEntry = async () => {
-    await flushCurrentDiagram();
-    setCurrentDiagramId(newDiagramId());
-  };
-
   const onFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     try {
       const d = parseDiagramFile(await file.text());
-      await startFreshEntry();
+      await startFreshDiagramEntry();
       setDiagram(d, { fileBacked: true });
       toast('success', `Loaded "${d.name}" (${d.tables.length} tables).`);
     } catch (err) {
@@ -222,13 +216,13 @@ export function TopBar() {
 
   const onNew = async () => {
     if (diagram.tables.length && !(await confirmDialog({ title: 'Start a new diagram?', message: 'The current diagram stays in the diagram library (File → Open recent…); a new, empty one takes its place on the canvas.', confirmLabel: 'New diagram' }))) return;
-    await startFreshEntry();
+    await startFreshDiagramEntry();
     newDiagram(diagram.dialect);
   };
 
   const onLoadSample = async () => {
     if (diagram.tables.length && !(await confirmDialog({ title: 'Load the example diagram?', message: 'The current diagram stays in the diagram library (File → Open recent…); the example takes its place on the canvas.', confirmLabel: 'Load example' }))) return;
-    await startFreshEntry();
+    await startFreshDiagramEntry();
     loadSample();
   };
 
