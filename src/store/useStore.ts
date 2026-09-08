@@ -683,6 +683,9 @@ export const useStore = create<Store>()(
           if (!r) return;
           [r.sourceTableId, r.targetTableId] = [r.targetTableId, r.sourceTableId];
           [r.sourceColumnIds, r.targetColumnIds] = [r.targetColumnIds, r.sourceColumnIds];
+          // The two labels read from opposite ends, so they follow the ends. An
+          // FK's name is its constraint name rather than a reading, so it stays.
+          if (r.kind !== 'fk') [r.name, r.inverseName] = [r.inverseName, r.name];
           // An embed's column belongs to the container. After a swap the container
           // is the other table, so the old choice no longer means anything.
           if (r.kind === 'embed') {

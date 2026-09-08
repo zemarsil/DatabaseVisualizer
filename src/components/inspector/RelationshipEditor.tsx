@@ -245,6 +245,20 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
         />
       </div>
 
+      <div className="field">
+        <span className="field__label">Reverse label</span>
+        <input
+          className="input input--sm"
+          value={r.inverseName ?? ''}
+          onChange={(e) => patch({ inverseName: e.target.value || undefined })}
+          placeholder={verb.inverse}
+          spellCheck={false}
+        />
+        <span className="field__hint">
+          Shown on the {tgt.name} end of the edge, reading {tgt.name} → {src.name}. Empty uses the verb's “{verb.inverse}”.
+        </span>
+      </div>
+
       {isFk && (
         <div className="row" style={{ alignItems: 'flex-start' }}>
           <div className="field grow">

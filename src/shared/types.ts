@@ -375,8 +375,10 @@ export interface Relationship {
   /** Referenced (parent / "one") table; the embedded shape for an embed. */
   targetTableId: string;
   targetColumnIds: string[];
-  /** Constraint name for FKs; free label for everything else. */
+  /** Constraint name for FKs; free label for everything else. Reads source -> target. */
   name?: string;
+  /** Overrides the verb's inverse phrasing on the target end, e.g. "used by" against a "has". */
+  inverseName?: string;
   onDelete?: ReferentialAction;
   onUpdate?: ReferentialAction;
   /** Optional SQL that explains how data crosses this connection. */

@@ -140,6 +140,8 @@ src/lib/sqlite/          in-browser SQLite engine (sql.js) behind the same inter
 src/store/useStore.ts    zustand store with undo/redo and autosave
 src/components/          React UI (canvas, inspector, drawer panels, command palette)
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
+scripts/                 validate-dbviz.mjs: structural check for a hand-written diagram file
+docs/                    ADVISOR_OUTPUT_FORMAT.md + an example diagram
 tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout and file format
 ```
 
@@ -147,6 +149,26 @@ tests/                   vitest unit tests for the SQL round-trip, lint, migrate
 npm test          # unit tests
 npm run typecheck # client + server
 ```
+
+## Feeding it from another tool (or an AI advisor)
+
+[`docs/ADVISOR_OUTPUT_FORMAT.md`](docs/ADVISOR_OUTPUT_FORMAT.md) is a hand-off spec you can
+paste into a database advisor agent's instructions: it tells the agent when to emit plain
+DDL (for the **Import SQL** drawer) versus a full `.dbviz.json` (for **File → Open**),
+documents every field of the diagram file, and lists the rules that keep a hand-written
+file loadable. [`docs/examples/orders-rollup.dbviz.json`](docs/examples/orders-rollup.dbviz.json)
+is a complete example.
+
+Check a generated file before opening it:
+
+```bash
+node scripts/validate-dbviz.mjs recommendation.dbviz.json
+```
+
+It flags duplicate ids, dangling table/column/group references, mismatched foreign-key
+column lists, verbs that do not fit their connection kind, dialect/type mix-ups, unknown
+colour keys and stacked table positions — all things the app loads without complaint but
+that produce a wrong diagram.
 
 ## Groups and a second database
 
