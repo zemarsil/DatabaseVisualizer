@@ -139,6 +139,8 @@ interface State {
   viewportNonce: number;
   /** Table id the canvas should scroll to. */
   focusTableId: string | null;
+  /** Relationship id the canvas should scroll to. */
+  focusRelationshipId: string | null;
   /** Column id the inspector should focus (set by addColumn so Enter-to-add keeps typing flowing). */
   focusColumnId: string | null;
 }
@@ -224,6 +226,7 @@ interface Actions {
   setLayoutDirection: (direction: LayoutDirection) => void;
   requestFitView: () => void;
   focusTable: (id: string | null) => void;
+  focusRelationship: (id: string | null) => void;
   focusColumn: (id: string | null) => void;
   importTables: (
     tables: Table[],
@@ -379,6 +382,7 @@ export const useStore = create<Store>()(
       fitViewNonce: 0,
       viewportNonce: 0,
       focusTableId: null,
+      focusRelationshipId: null,
       focusColumnId: null,
 
       /* ---------------- history ---------------- */
@@ -877,6 +881,7 @@ export const useStore = create<Store>()(
       setLayoutDirection: (direction) => set((s) => void (s.layoutDirection = direction)),
       requestFitView: () => set((s) => void s.fitViewNonce++),
       focusTable: (id) => set((s) => void (s.focusTableId = id)),
+      focusRelationship: (id) => set((s) => void (s.focusRelationshipId = id)),
       focusColumn: (id) => set((s) => void (s.focusColumnId = id)),
       importTables: (tables, relationships, mode, opts) => {
         const { layoutDirection, diagram } = get();

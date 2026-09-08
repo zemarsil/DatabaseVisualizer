@@ -22,6 +22,7 @@ export function ProblemsPanel() {
   const toast = useStore((s) => s.toast);
   const selectTable = useStore((s) => s.selectTable);
   const focusTable = useStore((s) => s.focusTable);
+  const focusRelationship = useStore((s) => s.focusRelationship);
   const setSelection = useStore((s) => s.setSelection);
   const addRelationship = useStore((s) => s.addRelationship);
 
@@ -98,6 +99,7 @@ export function ProblemsPanel() {
   const goTo = (f: LintFinding) => {
     if (f.relationshipId && !f.tableId) {
       setSelection({ ...emptySelection(), relationshipId: f.relationshipId });
+      focusRelationship(f.relationshipId);
       return;
     }
     if (f.tableId) goToTable(f.tableId);

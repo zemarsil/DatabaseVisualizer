@@ -98,6 +98,7 @@ export function Canvas() {
   const nodeSizes = useStore((s) => s.nodeSizes);
   const fitViewNonce = useStore((s) => s.fitViewNonce);
   const focusTableId = useStore((s) => s.focusTableId);
+  const focusRelationshipId = useStore((s) => s.focusRelationshipId);
   const theme = useStore((s) => s.theme);
 
   const moveItems = useStore((s) => s.moveItems);
@@ -113,6 +114,7 @@ export function Canvas() {
   const addTable = useStore((s) => s.addTable);
   const mutate = useStore((s) => s.mutate);
   const focusTable = useStore((s) => s.focusTable);
+  const focusRelationship = useStore((s) => s.focusRelationship);
   const setTraceEndpoints = useStore((s) => s.setTraceEndpoints);
   const setTracePicking = useStore((s) => s.setTracePicking);
   const runTrace = useStore((s) => s.runTrace);
@@ -794,6 +796,20 @@ export function Canvas() {
     }
     focusTable(null);
   }, [focusTableId, tableMap, nodeSizes, setCenter, focusTable]);
+
+  useEffect(() => {
+    if (!focusRelationshipId) return;
+    const r = diagram.relationships.find((rel) => rel.id === focusRelationshipId);
+    if (r) {
+      const t = setTimeout(
+        () => fitView({ nodes: [{ id: r.sourceTableId }, { id: r.targetTableId }], duration: 500, padding: 0.35, maxZoom: 1.5 }),
+        60,
+      );
+      focusRelationship(null);
+      return () => clearTimeout(t);
+    }
+    focusRelationship(null);
+  }, [focusRelationshipId, diagram.relationships, fitView, focusRelationship]);
 
   // Starting a simulation frames every table that takes part.
   const simKey = simResult ? `${simResult.targetId}:${simResult.tableIds.join(',')}` : '';
