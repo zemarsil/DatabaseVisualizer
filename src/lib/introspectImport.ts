@@ -34,6 +34,7 @@ export function introspectionToDiagram(res: IntrospectResponse, dialect: Diagram
         columns: [],
         sql: (t.viewSql ?? '').trim(),
         sources: viewSourcesFromSql(t.viewSql ?? '', tableNames),
+        materialized: t.materialized || undefined,
       })),
     compositeTypes: [],
     errors: [],

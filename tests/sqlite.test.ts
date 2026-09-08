@@ -8,6 +8,7 @@ import { quoteIdent, quoteQualified, translateType } from '../src/lib/sql/dialec
 import { getSqliteEngine } from '../src/lib/sqlite/engine';
 import { viewBody } from '../src/lib/sqlite/sqljs';
 import { introspectionToDiagram } from '../src/lib/introspectImport';
+import { parseDiagramFile, serializeDiagram } from '../src/lib/io';
 
 const PG = `
 CREATE TYPE order_status AS ENUM ('pending', 'paid');
@@ -210,5 +211,67 @@ describe('views', () => {
     expect(i2).toBeGreaterThan(i1);
     expect(out2.warnings.some((w) => w.includes('touches a view'))).toBe(true);
     expect(generateDropStatements(d).slice(0, 2)).toEqual(['DROP VIEW IF EXISTS summary;', 'DROP VIEW IF EXISTS paid_orders;']);
+  });
+
+  it('writes a materialized view on PostgreSQL and falls back to a plain view elsewhere', () => {
+    const d = emptyDiagram('postgresql');
+    const r = importSql(PG, 'postgresql');
+    d.tables = r.tables;
+    d.relationships = r.relationships;
+    d.customTypes = r.customTypes;
+    const view = d.tables.find((t) => t.name === 'paid_orders')!;
+    view.materialized = true;
+
+    const pg = generateSchema(d);
+    expect(pg.statements.some((x) => x.startsWith('CREATE MATERIALIZED VIEW paid_orders AS'))).toBe(true);
+    expect(pg.warnings.some((w) => w.includes('materialized'))).toBe(false);
+    expect(generateDropStatements(d)[0]).toBe('DROP MATERIALIZED VIEW IF EXISTS paid_orders;');
+    expect(generateTableSql(d, view.id)).toContain('CREATE MATERIALIZED VIEW paid_orders AS');
+
+    // The two dialects without materialized views degrade to a regular view and say so,
+    // and the flag survives so switching back to PostgreSQL restores the statement.
+    for (const dialect of ['mariadb', 'sqlite'] as const) {
+      const out = generateSchema({ ...d, dialect });
+      expect(out.statements.some((x) => /^CREATE (OR REPLACE )?VIEW paid_orders AS/.test(x))).toBe(true);
+      expect(out.statements.some((x) => x.includes('MATERIALIZED'))).toBe(false);
+      expect(out.warnings.some((w) => w.includes('has no materialized views'))).toBe(true);
+      // MariaDB's list opens with SET FOREIGN_KEY_CHECKS, so match on content rather than position.
+      expect(generateDropStatements({ ...d, dialect })).toContain('DROP VIEW IF EXISTS paid_orders;');
+    }
+    expect(view.materialized).toBe(true);
+    expect(generateSchema(d).statements.some((x) => x.startsWith('CREATE MATERIALIZED VIEW'))).toBe(true);
+  });
+
+  it('round-trips the materialized flag through SQL import and the diagram file', () => {
+    const imported = importSql('CREATE TABLE a (id INT PRIMARY KEY);\nCREATE MATERIALIZED VIEW mv AS SELECT count(*) FROM a;', 'postgresql');
+    const mv = imported.tables.find((t) => t.name === 'mv')!;
+    expect(mv.materialized).toBe(true);
+    expect(imported.tables.find((t) => t.name === 'a')!.materialized).toBeUndefined();
+
+    const d = emptyDiagram('postgresql');
+    d.tables = imported.tables;
+    d.relationships = imported.relationships;
+    expect(generateSchema(d).statements.some((x) => x.startsWith('CREATE MATERIALIZED VIEW mv AS'))).toBe(true);
+
+    const reloaded = parseDiagramFile(serializeDiagram(d));
+    expect(reloaded.tables.find((t) => t.name === 'mv')!.materialized).toBe(true);
+    expect(reloaded.tables.find((t) => t.name === 'a')!.materialized).toBeUndefined();
+  });
+
+  it('keeps a materialized view materialized when a live PostgreSQL schema is pulled in', () => {
+    const res = introspectionToDiagram(
+      {
+        serverVersion: 'PostgreSQL 16',
+        tables: [
+          { schema: 'public', name: 'a', kind: 'table', comment: null, columns: [{ name: 'id', type: 'integer', nullable: false, defaultValue: null, autoIncrement: false, comment: null }], primaryKey: ['id'], uniques: [], indexes: [], foreignKeys: [] },
+          { schema: 'public', name: 'mv', kind: 'view', viewSql: 'SELECT count(*) FROM a', materialized: true, comment: null, columns: [], primaryKey: [], uniques: [], indexes: [], foreignKeys: [] },
+          { schema: 'public', name: 'v', kind: 'view', viewSql: 'SELECT id FROM a', comment: null, columns: [], primaryKey: [], uniques: [], indexes: [], foreignKeys: [] },
+        ],
+      },
+      'postgresql',
+      null,
+    );
+    expect(res.tables.find((t) => t.name === 'mv')!.materialized).toBe(true);
+    expect(res.tables.find((t) => t.name === 'v')!.materialized).toBeUndefined();
   });
 });

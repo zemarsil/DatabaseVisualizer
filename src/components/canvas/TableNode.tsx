@@ -115,7 +115,7 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
         {renaming ? <RenameInput table={table} /> : <span className="table-node__name">{table.name || 'untitled'}</span>}
         {table.schema && <span className="table-node__schema">{table.schema}</span>}
         <div className="table-node__badges">
-          {isView && <span className="table-node__badge table-node__badge--view">VIEW</span>}
+          {isView && <span className="table-node__badge table-node__badge--view">{table.materialized ? 'MAT VIEW' : 'VIEW'}</span>}
           {joinTable && !isView && (
             <span className="table-node__badge table-node__badge--join" title="Join table: every key column references another table (many-to-many)">
               N:M

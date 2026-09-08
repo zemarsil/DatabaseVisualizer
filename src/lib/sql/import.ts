@@ -84,7 +84,7 @@ export function parseResultToDiagram(res: ParseResult, existing: Diagram | null 
 
   // Views: a table of kind 'view' whose inputs are flow links from the tables it reads.
   for (const pv of res.views) {
-    const view = createTable({ name: pv.name, schema: pv.schema, kind: 'view', viewSql: pv.sql });
+    const view = createTable({ name: pv.name, schema: pv.schema, kind: 'view', viewSql: pv.sql, materialized: pv.materialized || undefined });
     if (existingNames.has(keyOf(view.name)) || byName.has(keyOf(view.name))) {
       warnings.push(`View ${pv.name} clashes with an existing table name; the imported copy was renamed.`);
       let i = 2;

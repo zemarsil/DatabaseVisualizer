@@ -95,6 +95,7 @@ export function parseDiagramFile(text: string): Diagram {
       schema: typeof t.schema === 'string' && t.schema ? t.schema : undefined,
       kind,
       viewSql: kind === 'view' && typeof t.viewSql === 'string' && t.viewSql ? t.viewSql : undefined,
+      materialized: kind === 'view' && t.materialized === true ? true : undefined,
       collapsed,
       comment: typeof t.comment === 'string' && t.comment ? t.comment : undefined,
       color: str(t.color, 'blue'),
