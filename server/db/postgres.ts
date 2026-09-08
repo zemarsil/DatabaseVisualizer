@@ -158,6 +158,7 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
         schema: t.schema,
         name: t.name,
         kind: isView ? 'view' : 'table',
+        materialized: t.relkind === 'm' || undefined,
         viewSql: isView ? (t.view_sql ?? '').trim().replace(/;$/, '') : undefined,
         comment: t.comment,
         columns: [],

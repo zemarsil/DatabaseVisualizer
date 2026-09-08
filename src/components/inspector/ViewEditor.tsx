@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { ScanSearch } from 'lucide-react';
+import { Database, ScanSearch } from 'lucide-react';
 import type { Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { viewSourcesFromSql } from '@/lib/sql/views';
@@ -37,6 +37,13 @@ export function ViewEditor({ table }: { table: Table }) {
     toast(added ? 'success' : 'info', added ? `Linked ${added} source table${added === 1 ? '' : 's'} to the view.` : found.length ? 'Every table in the SELECT is already linked.' : 'No table names from the diagram were found in the SELECT.');
   };
 
+  const materialized = table.materialized === true;
+  // PostgreSQL is the only dialect here with materialized views; the checkbox
+  // stays visible on the others so the flag is not silently lost when a diagram
+  // is switched over and back, but it says what the script will actually say.
+  const supportsMaterialized = diagram.dialect === 'postgresql';
+  const engine = diagram.dialect === 'mariadb' ? 'MariaDB' : 'SQLite';
+
   return (
     <>
       <div className="field">
@@ -49,7 +56,26 @@ export function ViewEditor({ table }: { table: Table }) {
           placeholder={`SELECT o.id, c.email\nFROM orders o\nJOIN customers c ON c.id = o.customer_id`}
           spellCheck={false}
         />
-        <span className="field__hint">Written into the script as CREATE VIEW after every table. Columns below are optional and only affect how the node is drawn.</span>
+        <span className="field__hint">
+          Written into the script as {materialized && supportsMaterialized ? 'CREATE MATERIALIZED VIEW' : 'CREATE VIEW'} after every table. Columns below are
+          optional and only affect how the node is drawn.
+        </span>
+      </div>
+      <div className="field">
+        <label className="checkbox">
+          <input type="checkbox" checked={materialized} onChange={(e) => updateTable(table.id, { materialized: e.target.checked || undefined })} />
+          <span>
+            <Database size={13} style={{ verticalAlign: '-2px', marginRight: 4 }} />
+            Materialized (store the rows, refresh on demand)
+          </span>
+        </label>
+        <div className="field__hint">
+          {materialized
+            ? supportsMaterialized
+              ? 'Rows are stored and only change on REFRESH MATERIALIZED VIEW: reads are as cheap as a table, at the cost of showing the data as of the last refresh.'
+              : `${engine} has no materialized views, so the script falls back to a plain CREATE VIEW and the rows are recomputed on every query. The setting is kept for when you switch back to PostgreSQL.`
+            : 'Off: the SELECT runs afresh on every query, so results are always current.'}
+        </div>
       </div>
       <div className="field">
         <div className="row" style={{ justifyContent: 'space-between' }}>
