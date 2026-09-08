@@ -800,14 +800,7 @@ export function Canvas() {
   useEffect(() => {
     if (!focusRelationshipId) return;
     const r = diagram.relationships.find((rel) => rel.id === focusRelationshipId);
-    if (r) {
-      const t = setTimeout(
-        () => fitView({ nodes: [{ id: r.sourceTableId }, { id: r.targetTableId }], duration: 500, padding: 0.35, maxZoom: 1.5 }),
-        60,
-      );
-      focusRelationship(null);
-      return () => clearTimeout(t);
-    }
+    if (r) void fitView({ nodes: [{ id: r.sourceTableId }, { id: r.targetTableId }], duration: 500, padding: 0.35, maxZoom: 1.5 });
     focusRelationship(null);
   }, [focusRelationshipId, diagram.relationships, fitView, focusRelationship]);
 
