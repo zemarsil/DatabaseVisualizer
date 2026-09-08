@@ -2013,6 +2013,20 @@ a {
   font-size: 11.5px;
   color: var(--text-muted);
 }
+.wt-detail {
+  max-width: 760px;
+}
+.wt-panel-empty {
+  margin: auto;
+  max-width: 280px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-muted);
+}
 .wt-detail__title {
   font-size: 18px;
   font-weight: 700;

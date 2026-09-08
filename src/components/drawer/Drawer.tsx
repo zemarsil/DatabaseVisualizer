@@ -1,10 +1,11 @@
-import { ChevronDown, ChevronUp, Code2, Database, FileDown, Play, Route, Shapes, ShieldAlert, Terminal } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronUp, Code2, Database, FileDown, Play, Route, Shapes, ShieldAlert, Terminal } from 'lucide-react';
 import { useStore, type DrawerTab } from '@/store/useStore';
 import { SqlPanel } from './SqlPanel';
 import { ImportPanel } from './ImportPanel';
 import { DatabasePanel } from './DatabasePanel';
 import { TracePanel } from './TracePanel';
 import { SimulatePanel } from './SimulatePanel';
+import { WalkthroughPanel } from './WalkthroughPanel';
 import { useSimulation } from '@/store/useSimulation';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
 import { TypesPanel } from './TypesPanel';
@@ -14,6 +15,7 @@ import { useMemo } from 'react';
 import { lintDiagram } from '@/lib/lint';
 
 const TABS: { id: DrawerTab; label: string; icon: React.ReactNode }[] = [
+  { id: 'walkthrough', label: 'Walkthrough', icon: <BookOpen /> },
   { id: 'sql', label: 'SQL', icon: <Code2 /> },
   { id: 'types', label: 'Types', icon: <Shapes /> },
   { id: 'import', label: 'Import SQL', icon: <FileDown /> },
@@ -34,6 +36,7 @@ export function Drawer() {
   const simOn = useSimulation((s) => s.targetId !== null);
   const resizePanel = useStore((s) => s.resizePanel);
   const typeCount = useStore((s) => s.diagram.customTypes.length);
+  const activeWalkthroughSlug = useStore((s) => s.activeWalkthroughSlug);
   const diagram = useStore((s) => s.diagram);
   const errorCount = useMemo(() => lintDiagram(diagram).filter((f) => f.severity === 'error').length, [diagram]);
 
@@ -49,6 +52,7 @@ export function Drawer() {
             {t.id === 'simulate' && simOn && <span className="badge badge--flow">{simStages ? `${Math.max(0, simStage + 1)}/${simStages}` : 'on'}</span>}
             {t.id === 'types' && typeCount > 0 && <span className="badge">{typeCount}</span>}
             {t.id === 'problems' && errorCount > 0 && <span className="badge badge--danger">{errorCount}</span>}
+            {t.id === 'walkthrough' && activeWalkthroughSlug && !(open && tab === 'walkthrough') && <span className="badge badge--accent">•</span>}
           </button>
         ))}
         <span className="grow" />
@@ -58,6 +62,7 @@ export function Drawer() {
       </div>
       {open && (
         <div className="drawer__body">
+          {tab === 'walkthrough' && <WalkthroughPanel />}
           {tab === 'sql' && <SqlPanel />}
           {tab === 'types' && <TypesPanel />}
           {tab === 'import' && <ImportPanel />}

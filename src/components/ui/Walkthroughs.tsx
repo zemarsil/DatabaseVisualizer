@@ -1,7 +1,8 @@
 /**
  * The in-app walkthrough browser, opened from the "?" help button: a list of
- * the walkthroughs bundled from docs/walkthroughs/, and a detail view that
- * renders one's markdown and can drop its companion diagram onto the canvas.
+ * the walkthroughs bundled from docs/walkthroughs/. Picking one opens its
+ * text in the drawer's Walkthrough tab (see WalkthroughPanel) instead of
+ * inside this modal, so the canvas stays visible while it's followed.
  */
 import { useEffect, useState } from 'react';
 import { ArrowLeft, Clock, FolderOpen, MousePointerClick } from 'lucide-react';
@@ -13,9 +14,11 @@ import { confirmDialog, useDialogStore } from './Modal';
 
 const LEVEL_LABEL: Record<string, string> = { beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Advanced' };
 
-/** Renders the list view when `view` is `'list'`, otherwise the detail view for that slug. */
-export function WalkthroughBrowser({ view, onView }: { view: string; onView: (view: string) => void }) {
+/** The list of bundled walkthroughs; `onGuide` is called when the reader asks for the quick guide instead. */
+export function WalkthroughBrowser({ onGuide }: { onGuide: () => void }) {
   const [data, setData] = useState<typeof import('@/lib/walkthroughs') | null>(null);
+  const openWalkthrough = useStore((s) => s.openWalkthrough);
+  const setHelp = useDialogStore((s) => s.setHelp);
 
   useEffect(() => {
     let live = true;
@@ -26,10 +29,16 @@ export function WalkthroughBrowser({ view, onView }: { view: string; onView: (vi
   }, []);
 
   if (!data) return <div className="wt-loading">Loading walkthroughs…</div>;
-  if (view === 'list') return <WalkthroughList walkthroughs={data.WALKTHROUGHS} onOpen={onView} onGuide={() => onView('guide')} />;
-  const w = data.getWalkthrough(view);
-  if (!w) return <WalkthroughList walkthroughs={data.WALKTHROUGHS} onOpen={onView} onGuide={() => onView('guide')} />;
-  return <WalkthroughDetail walkthrough={w} onBack={() => onView('list')} onOpen={onView} />;
+  return (
+    <WalkthroughList
+      walkthroughs={data.WALKTHROUGHS}
+      onOpen={(slug) => {
+        openWalkthrough(slug);
+        setHelp(false);
+      }}
+      onGuide={onGuide}
+    />
+  );
 }
 
 function WalkthroughList({ walkthroughs, onOpen, onGuide }: { walkthroughs: import('@/lib/walkthroughs').Walkthrough[]; onOpen: (slug: string) => void; onGuide: () => void }) {
@@ -59,7 +68,8 @@ function WalkthroughList({ walkthroughs, onOpen, onGuide }: { walkthroughs: impo
   );
 }
 
-function WalkthroughDetail({ walkthrough: w, onBack, onOpen }: { walkthrough: import('@/lib/walkthroughs').Walkthrough; onBack: () => void; onOpen: (slug: string) => void }) {
+/** Renders one walkthrough's markdown; used by the drawer's Walkthrough panel. */
+export function WalkthroughDetail({ walkthrough: w, onBack, onOpen }: { walkthrough: import('@/lib/walkthroughs').Walkthrough; onBack: () => void; onOpen: (slug: string) => void }) {
   const diagram = useStore((s) => s.diagram);
   const setDiagram = useStore((s) => s.setDiagram);
   const toast = useStore((s) => s.toast);
