@@ -783,9 +783,13 @@ export function Canvas() {
 
   useEffect(() => {
     if (!focusTableId) return;
-    fitView({ nodes: [{ id: focusTableId }], duration: 500, maxZoom: 1.2, padding: 0.6 });
+    // Frame the table plus its immediate neighbors, not just the table alone,
+    // so the surrounding connections stay visible instead of filling the screen.
+    const dist = reachableTables(diagram, focusTableId);
+    const ids = [...dist.entries()].filter(([, d]) => d <= 1).map(([id]) => ({ id }));
+    fitView({ nodes: ids, duration: 500, maxZoom: 1.1, padding: 0.3 });
     focusTable(null);
-  }, [focusTableId, fitView, focusTable]);
+  }, [focusTableId, diagram, fitView, focusTable]);
 
   // Starting a simulation frames every table that takes part.
   const simKey = simResult ? `${simResult.targetId}:${simResult.tableIds.join(',')}` : '';
