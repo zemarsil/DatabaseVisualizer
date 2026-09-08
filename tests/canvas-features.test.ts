@@ -3,6 +3,8 @@ import type { Diagram } from '../src/shared/types';
 import { importSql } from '../src/lib/sql/import';
 import { createColumn, createTable, emptyDiagram } from '../src/lib/model';
 import { alignTables, distributeTables, groupBySchema, snapAllToGrid } from '../src/lib/canvasOps';
+import { estimateNodeSize, placementSizes } from '../src/lib/geometry';
+import { layoutDiagram } from '../src/lib/layout';
 import { effectiveDisplay, nextDisplay, visibleColumns } from '../src/lib/visibleColumns';
 import { classifyPastedText, decodeClipboard, encodeClipboard } from '../src/lib/clipboard';
 import { buildContextMenu, createGroupsBySchema, type MenuAction, type MenuEnv, type MenuNode } from '../src/components/ui/contextMenuItems';
@@ -88,6 +90,61 @@ describe('visibleColumns', () => {
   });
 });
 
+describe('placementSizes', () => {
+  /** A hub with four eight-column children, so one rank of the layout holds a stack of tall tables. */
+  function hubAndSpokes(): Diagram {
+    const d = emptyDiagram('postgresql', 'Hub');
+    const spokes = [1, 2, 3, 4]
+      .map((n) => `CREATE TABLE spoke${n} (id SERIAL PRIMARY KEY, hub_id INTEGER REFERENCES hub(id), a TEXT, b TEXT, c TEXT, d TEXT, e TEXT, f TEXT);`)
+      .join('\n');
+    const r = importSql(`CREATE TABLE hub (id SERIAL PRIMARY KEY);\n${spokes}`, 'postgresql');
+    d.tables = r.tables;
+    d.relationships = r.relationships;
+    return d;
+  }
+
+  /** How many pairs of tables would overlap once every table is drawn at its own display mode again. */
+  function overlaps(d: Diagram, positions: Record<string, { x: number; y: number }>): number {
+    const sizes = placementSizes(d, undefined, false);
+    const rects = d.tables.map((t) => ({ ...positions[t.id], ...sizes[t.id] }));
+    let n = 0;
+    for (let i = 0; i < rects.length; i++) {
+      for (let j = i + 1; j < rects.length; j++) {
+        const a = rects[i];
+        const b = rects[j];
+        if (a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height) n++;
+      }
+    }
+    return n;
+  }
+
+  it('ignores the measurements taken while the zoom has the tables collapsed', () => {
+    const d = hubAndSpokes();
+    // What the canvas measures below the level-of-detail zoom: every table a bare header.
+    const collapsed = Object.fromEntries(d.tables.map((t) => [t.id, { width: 240, height: 82 }]));
+    expect(placementSizes(d, collapsed, true)).toEqual(placementSizes(d, undefined, false));
+    expect(placementSizes(d, collapsed, false)).toEqual(collapsed);
+  });
+
+  it('leaves a detangle room for the columns the zoom is hiding', () => {
+    const d = hubAndSpokes();
+    const collapsed = Object.fromEntries(d.tables.map((t) => [t.id, { width: 240, height: 82 }]));
+    // Laying out from the collapsed sizes is the bug: the tables are packed for
+    // headers, so they overlap the moment zooming back in restores the columns.
+    expect(overlaps(d, layoutDiagram(d, { direction: 'LR', sizes: collapsed }))).toBeGreaterThan(0);
+    expect(overlaps(d, layoutDiagram(d, { direction: 'LR', sizes: placementSizes(d, collapsed, true) }))).toBe(0);
+  });
+
+  it('still honours a collapse mode the table itself is in, which the zoom does not own', () => {
+    const d = hubAndSpokes();
+    const spoke = d.tables.find((t) => t.name === 'spoke1')!;
+    spoke.collapsed = 'header';
+    const sizes = placementSizes(d, undefined, true);
+    expect(sizes[spoke.id]).toEqual(estimateNodeSize([]));
+    expect(sizes[spoke.id].height).toBeLessThan(sizes[d.tables.find((t) => t.name === 'spoke2')!.id].height);
+  });
+});
+
 describe('clipboard', () => {
   it('round-trips tables with only the relationships inside the copied set', () => {
     const d = shop();
@@ -113,6 +170,7 @@ describe('context menu additions', () => {
       past: [],
       future: [],
       nodeSizes: {},
+      placementSizes: () => placementSizes(diagram, {}, false),
       selection: { tableIds: [], noteIds: [], relationshipId: null, groupId: null },
       trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
       addTable: vi.fn(),

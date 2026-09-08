@@ -211,6 +211,9 @@ function applyMoves(store: Store, moves: { id: string; position: { x: number; y:
 
 function arrangeItems(store: Store, tableIds: string[]): MenuNode[] {
   const tables = store.diagram.tables.filter((t) => tableIds.includes(t.id));
+  // Placement sizes, not drawn sizes: arranging by zoom-collapsed headers would
+  // leave the tables overlapping as soon as the columns come back.
+  const sizes = store.placementSizes();
   return [
     { kind: 'caption', id: 'arrange-caption', text: 'Arrange' },
     ...ALIGN_ITEMS.map((a) => ({
@@ -219,7 +222,7 @@ function arrangeItems(store: Store, tableIds: string[]): MenuNode[] {
       label: a.label,
       icon: a.icon,
       disabled: tables.length < 2,
-      run: () => applyMoves(store, alignTables(tables, store.nodeSizes, a.mode)),
+      run: () => applyMoves(store, alignTables(tables, sizes, a.mode)),
     })),
     {
       kind: 'action',
@@ -228,7 +231,7 @@ function arrangeItems(store: Store, tableIds: string[]): MenuNode[] {
       icon: AlignHorizontalDistributeCenter,
       disabled: tables.length < 3,
       hint: tables.length < 3 ? 'needs 3+' : undefined,
-      run: () => applyMoves(store, distributeTables(tables, store.nodeSizes, 'x')),
+      run: () => applyMoves(store, distributeTables(tables, sizes, 'x')),
     },
     {
       kind: 'action',
@@ -237,7 +240,7 @@ function arrangeItems(store: Store, tableIds: string[]): MenuNode[] {
       icon: AlignVerticalDistributeCenter,
       disabled: tables.length < 3,
       hint: tables.length < 3 ? 'needs 3+' : undefined,
-      run: () => applyMoves(store, distributeTables(tables, store.nodeSizes, 'y')),
+      run: () => applyMoves(store, distributeTables(tables, sizes, 'y')),
     },
   ];
 }
