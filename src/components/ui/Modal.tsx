@@ -330,7 +330,7 @@ export function DialogHost() {
     <>
       {help && (
         <Modal title={helpView === 'guide' ? 'How to use Database Visualizer' : 'Walkthroughs'} onClose={() => setHelp(false)} wide>
-          {helpView === 'guide' ? <HelpContent /> : <WalkthroughBrowser view={helpView} onView={setHelpView} />}
+          {helpView === 'guide' ? <HelpContent /> : <WalkthroughBrowser onGuide={() => setHelpView('guide')} />}
         </Modal>
       )}
       {/* Confirm/prompt render after help so they stack on top of it: modal-backdrops share a z-index, so with equal z-index the later sibling in the DOM wins, and a confirmDialog() opened from within the help modal (e.g. "Open this diagram") must be reachable, not hidden behind it. */}

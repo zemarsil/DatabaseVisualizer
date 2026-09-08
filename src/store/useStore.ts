@@ -42,7 +42,7 @@ import { newId } from '@/lib/ids';
 import { useUi } from '@/store/useUi';
 
 export type Theme = 'dark' | 'light';
-export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'simulate' | 'types' | 'problems' | 'query';
+export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'simulate' | 'types' | 'problems' | 'query' | 'walkthrough';
 
 export type { Selection };
 
@@ -121,6 +121,8 @@ interface State {
   trace: TraceState;
   theme: Theme;
   drawer: { open: boolean; tab: DrawerTab };
+  /** Slug of the walkthrough shown in the drawer's Walkthrough tab, so it keeps following the reader across tab switches. */
+  activeWalkthroughSlug: string | null;
   sidebarOpen: boolean;
   inspectorOpen: boolean;
   panelSizes: PanelSizes;
@@ -261,6 +263,8 @@ interface Actions {
   openDrawer: (tab?: DrawerTab) => void;
   closeDrawer: () => void;
   toggleDrawer: (tab?: DrawerTab) => void;
+  /** Opens (or switches) the walkthrough panel to this slug, so its text follows the reader while they work on the canvas. */
+  openWalkthrough: (slug: string) => void;
   setSidebarOpen: (open: boolean) => void;
   setInspectorOpen: (open: boolean) => void;
   resizePanel: (key: keyof PanelSizes, delta: number) => void;
@@ -372,6 +376,7 @@ export const useStore = create<Store>()(
       trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
       theme: loadTheme(),
       drawer: { open: false, tab: 'sql' },
+      activeWalkthroughSlug: null,
       sidebarOpen: true,
       inspectorOpen: true,
       panelSizes: loadPanelSizes(),
@@ -1030,6 +1035,12 @@ export const useStore = create<Store>()(
           if (tab) s.drawer.tab = tab;
         }),
       closeDrawer: () => set((s) => void (s.drawer.open = false)),
+      openWalkthrough: (slug) =>
+        set((s) => {
+          s.activeWalkthroughSlug = slug;
+          s.drawer.open = true;
+          s.drawer.tab = 'walkthrough';
+        }),
       toggleDrawer: (tab) =>
         set((s) => {
           if (tab && s.drawer.tab !== tab) {
