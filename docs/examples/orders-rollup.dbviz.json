@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "name": "Orders rollup — advisor recommendation",
+  "dialect": "postgresql",
+  "customTypes": [
+    {
+      "id": "typ_order_status",
+      "name": "order_status",
+      "kind": "enum",
+      "values": ["pending", "paid", "shipped", "cancelled"],
+      "comment": "An enum rather than a CHECK: the set is closed and read in application code, so a named type documents it once."
+    }
+  ],
+  "groups": [
+    {
+      "id": "grp_crm",
+      "name": "CRM (read-only)",
+      "color": "purple",
+      "external": true,
+      "note": "Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, so nothing here is created by the generated script.",
+      "position": { "x": -40, "y": -360 }
+    }
+  ],
+  "tables": [
+    {
+      "id": "tbl_crm_contacts",
+      "name": "crm_contacts",
+      "color": "purple",
+      "groupId": "grp_crm",
+      "comment": "Their table, shown so the join is visible. Not ours to change.",
+      "position": { "x": 0, "y": -300 },
+      "checks": [],
+      "columns": [
+        { "id": "col_crm_contact_id", "name": "contact_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_crm_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false }
+      ],
+      "indexes": []
+    },
+    {
+      "id": "tbl_customers",
+      "name": "customers",
+      "schema": "public",
+      "color": "blue",
+      "comment": "Unchanged source table.",
+      "position": { "x": 0, "y": 0 },
+      "checks": [],
+      "columns": [
+        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        {
+          "id": "col_customers_email",
+          "name": "email",
+          "type": "CITEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": true,
+          "autoIncrement": false,
+          "comment": "CITEXT rather than lower(email) + expression index: the equality lookup is the only access pattern."
+        },
+        { "id": "col_customers_crm_contact_id", "name": "crm_contact_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ],
+      "indexes": []
+    },
+    {
+      "id": "tbl_orders",
+      "name": "orders",
+      "schema": "public",
+      "color": "blue",
+      "comment": "Store money as integer cents; NUMERIC(12,2) only if you need exact decimal arithmetic in the DB.",
+      "position": { "x": 320, "y": 0 },
+      "checks": ["total_cents >= 0"],
+      "columns": [
+        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_orders_status", "name": "status", "type": "order_status", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
+        { "id": "col_orders_total_cents", "name": "total_cents", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
+        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ],
+      "indexes": [
+        {
+          "id": "idx_orders_customer_placed",
+          "name": "orders_customer_id_placed_at_idx",
+          "columnIds": ["col_orders_customer_id", "col_orders_placed_at"],
+          "unique": false
+        }
+      ]
+    },
+    {
+      "id": "tbl_customer_month",
+      "name": "customer_month_totals",
+      "schema": "public",
+      "color": "orange",
+      "comment": "New: monthly rollup maintained on write. The dashboard query drops from a full scan of orders to a single-row lookup.",
+      "position": { "x": 320, "y": 260 },
+      "checks": [],
+      "columns": [
+        { "id": "col_cm_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        {
+          "id": "col_cm_month",
+          "name": "month",
+          "type": "DATE",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "First day of the month; date_trunc('month', placed_at)::date."
+        },
+        { "id": "col_cm_order_count", "name": "order_count", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
+        { "id": "col_cm_total_cents", "name": "total_cents", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+      ],
+      "indexes": []
+    },
+    {
+      "id": "tbl_v_dashboard",
+      "name": "v_customer_dashboard",
+      "schema": "public",
+      "kind": "view",
+      "color": "teal",
+      "comment": "What the dashboard actually selects from. Reads the rollup, never orders.",
+      "viewSql": "SELECT c.id AS customer_id,\n       c.email,\n       m.month,\n       m.order_count,\n       m.total_cents\nFROM customers c\nJOIN customer_month_totals m ON m.customer_id = c.id",
+      "position": { "x": 640, "y": 260 },
+      "checks": [],
+      "columns": [
+        { "id": "col_vd_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vd_email", "name": "email", "type": "CITEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vd_month", "name": "month", "type": "DATE", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vd_order_count", "name": "order_count", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vd_total_cents", "name": "total_cents", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ],
+      "indexes": []
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_customers_crm",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_customers",
+      "sourceColumnIds": ["col_customers_crm_contact_id"],
+      "targetTableId": "tbl_crm_contacts",
+      "targetColumnIds": ["col_crm_contact_id"],
+      "name": "customers_crm_contact_id_fkey",
+      "note": "crm_contacts lives in the CRM group, so the script documents this link instead of emitting a constraint.",
+      "onDelete": "SET NULL",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": ["col_orders_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "orders_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_cm_customer",
+      "kind": "fk",
+      "verb": "part-of",
+      "sourceTableId": "tbl_customer_month",
+      "sourceColumnIds": ["col_cm_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "customer_month_totals_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_flow_orders_rollup",
+      "kind": "flow",
+      "verb": "feeds",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_customer_month",
+      "targetColumnIds": [],
+      "name": "upsert on write",
+      "inverseName": "rolled up from",
+      "note": "Do this in the same transaction as the INSERT into orders, not in a nightly job: the dashboard reads it seconds after the write.",
+      "derivations": [
+        { "id": "drv_cm_order_count", "targetColumnId": "col_cm_order_count", "expression": "*", "aggregate": "COUNT", "groupBy": ["customer_id", "month"], "filter": "status <> 'cancelled'" },
+        { "id": "drv_cm_total_cents", "targetColumnId": "col_cm_total_cents", "expression": "total_cents", "aggregate": "SUM", "groupBy": ["customer_id", "month"], "filter": "status <> 'cancelled'" }
+      ],
+      "query": "INSERT INTO customer_month_totals (customer_id, month, order_count, total_cents)\nVALUES (NEW.customer_id, date_trunc('month', NEW.placed_at)::date, 1, NEW.total_cents)\nON CONFLICT (customer_id, month) DO UPDATE\n  SET order_count = customer_month_totals.order_count + 1,\n      total_cents = customer_month_totals.total_cents + EXCLUDED.total_cents;"
+    },
+    {
+      "id": "rel_dep_dashboard",
+      "kind": "dependency",
+      "verb": "uses",
+      "sourceTableId": "tbl_v_dashboard",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_customer_month",
+      "targetColumnIds": [],
+      "name": "reads the rollup",
+      "note": "Nothing enforces this; it is here so deleting the rollup shows what breaks."
+    }
+  ],
+  "notes": [
+    {
+      "id": "note_summary",
+      "text": "Recommendation: keep the aggregate where it is read, not where it is written from.\n\n1. Add customer_month_totals, maintained by the upsert on the dashed edge.\n2. Composite index (customer_id, placed_at) on orders serves the drill-down; the leading column must be customer_id because every query filters on it.\n3. Money stays in integer cents.\n4. The dashboard reads the view, never orders.",
+      "position": { "x": 980, "y": 250 },
+      "width": 320,
+      "height": 210,
+      "color": "yellow"
+    },
+    {
+      "id": "note_not_modelled",
+      "text": "Not representable in the diagram: consider partitioning orders BY RANGE (placed_at) once it passes ~50M rows. The DDL generated here is the unpartitioned table.",
+      "position": { "x": 980, "y": 480 },
+      "width": 320,
+      "height": 130,
+      "color": "slate"
+    }
+  ]
+}
