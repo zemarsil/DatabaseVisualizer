@@ -576,7 +576,15 @@ function flowStatements(ctx: Ctx, r: Relationship, warnings: string[]): string[]
       // A key that a derivation also fills would give the subquery two columns of one name.
       const entryNames = new Set(group.entries.map((dv) => targetName(dv).toLowerCase()));
       const innerKeys = keys.filter((k) => !entryNames.has(k.alias.toLowerCase()));
-      const innerItems = [...innerKeys.map((k) => `${q(k.key)} AS ${quoteIdent(k.alias, dialect)}`), ...group.entries.map((dv) => `${rowValue(dv)} AS ${quoteIdent(targetName(dv), dialect)}`)];
+      // A bare `*` (COUNT(*)) cannot be aliased; project `1` instead, since
+      // COUNT of a non-null constant equals COUNT(*).
+      const innerItems = [
+        ...innerKeys.map((k) => `${q(k.key)} AS ${quoteIdent(k.alias, dialect)}`),
+        ...group.entries.map((dv) => {
+          const value = rowValue(dv);
+          return `${value === '*' ? '1' : value} AS ${quoteIdent(targetName(dv), dialect)}`;
+        }),
+      ];
       const inner = [`SELECT ${innerItems.join(', ')}`, ...from];
       if (group.filter) inner.push(`WHERE ${q(group.filter)}`);
       const outerItems = [
