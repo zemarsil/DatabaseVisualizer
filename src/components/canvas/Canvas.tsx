@@ -800,9 +800,16 @@ export function Canvas() {
   useEffect(() => {
     if (!focusRelationshipId) return;
     const r = diagram.relationships.find((rel) => rel.id === focusRelationshipId);
-    if (r) void fitView({ nodes: [{ id: r.sourceTableId }, { id: r.targetTableId }], duration: 500, padding: 0.35, maxZoom: 1.5 });
+    const src = r && tableMap.get(r.sourceTableId);
+    const tgt = r && tableMap.get(r.targetTableId);
+    if (src && tgt) {
+      // Same fixed zoom as focusTable, centered between the two ends so a click always lands close in.
+      const a = rectCenter(tableRect(src, nodeSizes));
+      const b = rectCenter(tableRect(tgt, nodeSizes));
+      void setCenter((a.x + b.x) / 2, (a.y + b.y) / 2, { zoom: 1.75, duration: 500 });
+    }
     focusRelationship(null);
-  }, [focusRelationshipId, diagram.relationships, fitView, focusRelationship]);
+  }, [focusRelationshipId, diagram.relationships, tableMap, nodeSizes, setCenter, focusRelationship]);
 
   // Starting a simulation frames every table that takes part.
   const simKey = simResult ? `${simResult.targetId}:${simResult.tableIds.join(',')}` : '';
