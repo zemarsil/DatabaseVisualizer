@@ -3,6 +3,7 @@ import { RELATIONSHIP_KINDS, kindMeta, type Diagram } from '../src/shared/types'
 import { buildContextMenu, hasActions, type MenuAction, type MenuEnv, type MenuNode } from '../src/components/ui/contextMenuItems';
 import { sampleDiagram } from '../src/lib/sample';
 import type { Store } from '../src/store/useStore';
+import { placementSizes } from '../src/lib/geometry';
 
 /** A store stub: real state, recorded actions. */
 function makeEnv(diagram: Diagram, over: Partial<Store> = {}) {
@@ -44,6 +45,8 @@ function makeEnv(diagram: Diagram, over: Partial<Store> = {}) {
     diagram,
     past: [],
     future: [],
+    nodeSizes: {},
+    placementSizes: () => placementSizes(diagram, {}, false),
     selection: { tableIds: [], noteIds: [], relationshipId: null, groupId: null },
     trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
     ...actions,

@@ -31,6 +31,7 @@ import {
   uniqueTableName,
 } from '@/lib/model';
 import { nextGroupPosition } from '@/lib/groups';
+import { placementSizes, type SizeMap } from '@/lib/geometry';
 import { PALETTE } from '@/lib/palette';
 import { translateType } from '@/lib/sql/dialect';
 import { findPath, type TraceResult } from '@/lib/trace';
@@ -38,6 +39,7 @@ import { parseDiagramFile, serializeDiagram } from '@/lib/io';
 import { applyEdgeSelectionChanges, applyNodeSelectionChanges, emptySelection, type Selection, type SelectionChange } from '@/lib/selection';
 import { sampleDiagram } from '@/lib/sample';
 import { newId } from '@/lib/ids';
+import { useUi } from '@/store/useUi';
 
 export type Theme = 'dark' | 'light';
 export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'types' | 'problems' | 'query';
@@ -113,6 +115,7 @@ interface State {
   diagram: Diagram;
   past: Diagram[];
   future: Diagram[];
+  /** Sizes measured by the canvas, as the nodes are drawn right now — zoom-collapsed tables included. */
   nodeSizes: Record<string, NodeSize>;
   selection: Selection;
   trace: TraceState;
@@ -215,6 +218,8 @@ interface Actions {
   beginDrag: () => void;
   endDrag: () => void;
   setNodeSize: (id: string, size: NodeSize) => void;
+  /** The sizes to place tables by, which the zoom level of detail can make quite different from `nodeSizes`. */
+  placementSizes: () => SizeMap;
   applyLayout: (direction?: LayoutDirection) => void;
   setLayoutDirection: (direction: LayoutDirection) => void;
   requestFitView: () => void;
@@ -702,7 +707,7 @@ export const useStore = create<Store>()(
           external: opts.external ?? false,
           color: opts.color ?? PALETTE_KEYS[d.groups.length % PALETTE_KEYS.length],
           note: opts.note,
-          position: nextGroupPosition(d, get().nodeSizes),
+          position: nextGroupPosition(d, get().placementSizes()),
         });
         const ids = new Set(opts.tableIds ?? []);
         mutate((dd) => {
@@ -854,9 +859,10 @@ export const useStore = create<Store>()(
           if (cur && cur.width === size.width && cur.height === size.height) return;
           s.nodeSizes[id] = size;
         }),
+      placementSizes: () => placementSizes(get().diagram, get().nodeSizes, useUi.getState().lodCollapsed),
       applyLayout: (direction) => {
         const dir = direction ?? get().layoutDirection;
-        const positions = layoutDiagram(get().diagram, { direction: dir, sizes: get().nodeSizes });
+        const positions = layoutDiagram(get().diagram, { direction: dir, sizes: get().placementSizes() });
         mutate((d) => {
           for (const t of d.tables) {
             const p = positions[t.id];
@@ -873,7 +879,7 @@ export const useStore = create<Store>()(
       focusTable: (id) => set((s) => void (s.focusTableId = id)),
       focusColumn: (id) => set((s) => void (s.focusColumnId = id)),
       importTables: (tables, relationships, mode, opts) => {
-        const { layoutDirection, nodeSizes, diagram } = get();
+        const { layoutDirection, diagram } = get();
         const group = opts?.group;
         // Types belonging to a database we do not own would otherwise be created
         // by the script even though its tables are not. The columns keep their
@@ -902,7 +908,11 @@ export const useStore = create<Store>()(
             if (customTypes?.length) d.customTypes.push(...customTypes);
           }
           // Lay everything out in the same history step so one undo removes the import.
-          const positions = layoutDiagram(d as Diagram, { direction: layoutDirection, sizes: nodeSizes });
+          // Nothing imported has been drawn yet, so most of these are estimates; the
+          // tables already on the canvas keep their measured sizes unless the zoom
+          // has them collapsed to headers.
+          const sizes = placementSizes(d as Diagram, get().nodeSizes, useUi.getState().lodCollapsed);
+          const positions = layoutDiagram(d as Diagram, { direction: layoutDirection, sizes });
           for (const t of d.tables) {
             const p = positions[t.id];
             if (p) t.position = p;

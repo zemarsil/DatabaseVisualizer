@@ -37,7 +37,7 @@ export function Inspector() {
   const setTraceEndpoints = useStore((s) => s.setTraceEndpoints);
   const runTrace = useStore((s) => s.runTrace);
   const addGroup = useStore((s) => s.addGroup);
-  const nodeSizes = useStore((s) => s.nodeSizes);
+  const placementSizes = useStore((s) => s.placementSizes);
   const beginDrag = useStore((s) => s.beginDrag);
   const moveItems = useStore((s) => s.moveItems);
   const endDrag = useStore((s) => s.endDrag);
@@ -93,14 +93,14 @@ export function Inspector() {
             <span className="field__label">Arrange</span>
             <div className="arrange-row">
               {alignButtons.map((b) => (
-                <button key={b.mode} className="btn btn--sm btn--icon" title={b.title} onClick={() => arrange(alignTables(selectedTables, nodeSizes, b.mode))}>
+                <button key={b.mode} className="btn btn--sm btn--icon" title={b.title} onClick={() => arrange(alignTables(selectedTables, placementSizes(), b.mode))}>
                   {b.icon}
                 </button>
               ))}
-              <button className="btn btn--sm btn--icon" title="Distribute horizontally (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange(distributeTables(selectedTables, nodeSizes, 'x'))}>
+              <button className="btn btn--sm btn--icon" title="Distribute horizontally (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange(distributeTables(selectedTables, placementSizes(), 'x'))}>
                 <AlignHorizontalDistributeCenter />
               </button>
-              <button className="btn btn--sm btn--icon" title="Distribute vertically (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange(distributeTables(selectedTables, nodeSizes, 'y'))}>
+              <button className="btn btn--sm btn--icon" title="Distribute vertically (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange(distributeTables(selectedTables, placementSizes(), 'y'))}>
                 <AlignVerticalDistributeCenter />
               </button>
             </div>
