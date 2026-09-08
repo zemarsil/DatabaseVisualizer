@@ -13,6 +13,8 @@ export interface RelationEdgeData extends Record<string, unknown> {
   hue: string;
   dimmed: boolean;
   traced: boolean;
+  /** Pointer is over this connection (or its label); raised above overlapping siblings and lightly highlighted. */
+  hovered: boolean;
   /** Edge touches the currently selected table. */
   attached: boolean;
   /** Source column is nullable -> optional relationship (drawn with a circle on the "one" side). */
@@ -255,8 +257,8 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   const sim = data.simulation ?? null;
   const base = kind === 'fk' && data.attached ? 'var(--edge-strong)' : style.color;
   const simColor = sim ? (sim.state === 'lookup' ? 'var(--dep)' : 'var(--flow)') : null;
-  const color = data.traced ? 'var(--trace)' : selected ? 'var(--accent)' : (simColor ?? base);
-  const width = sim?.state === 'active' ? 3 : sim?.state === 'done' || sim?.state === 'lookup' ? 2.5 : data.traced || selected ? 2.5 : data.attached ? 2 : 1.5;
+  const color = data.traced ? 'var(--trace)' : selected || data.hovered ? 'var(--accent)' : (simColor ?? base);
+  const width = sim?.state === 'active' ? 3 : sim?.state === 'done' || sim?.state === 'lookup' ? 2.5 : data.traced || selected || data.hovered ? 2.5 : data.attached ? 2 : 1.5;
   const opacity = data.dimmed ? 0.18 : sim?.state === 'pending' ? 0.55 : 1;
   const markerStyle: React.CSSProperties = { stroke: color, strokeWidth: width, fill: 'none', opacity, transition: 'stroke 0.12s, opacity 0.2s' };
   const filledStyle: React.CSSProperties = { ...markerStyle, fill: color };
@@ -268,12 +270,13 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   // counts the derivations.
   const namedVerb = Boolean(r.verb) && r.verb !== DEFAULT_VERBS[kind];
   const customInverse = r.inverseName?.trim();
-  const showLabel = kind !== 'fk' || namedVerb || hasQuery || derivationCount > 0 || Boolean(customInverse) || selected || data.traced || sim?.state === 'lookup';
+  const showLabel = kind !== 'fk' || namedVerb || hasQuery || derivationCount > 0 || Boolean(customInverse) || selected || data.hovered || data.traced || sim?.state === 'lookup';
   const labelText = sim?.state === 'lookup' && kind === 'fk' ? 'looked up' : r.name || (kind === 'fk' && !namedVerb ? 'FK' : verb.forward);
   const Icon = hasQuery && kind === 'fk' ? Code2 : KIND_ICON[kind];
   const tooltip = [summaries.join('\n'), hasQuery ? r.query!.trim() : '', r.note?.trim() ?? ''].filter(Boolean).join('\n\n');
   const labelClasses = ['edge-label'];
   if (selected) labelClasses.push('edge-label--selected');
+  else if (data.hovered) labelClasses.push('edge-label--hover');
   else if (data.traced) labelClasses.push('edge-label--trace');
   else if (sim?.state === 'active') labelClasses.push('edge-label--sim-active');
   else if (sim?.state === 'lookup') labelClasses.push('edge-label--dependency');
@@ -285,7 +288,7 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   // part of the diagram so it always shows; the verb's own inverse would just be
   // noise on every edge, so it waits until the edge is selected or traced.
   const inverseText = customInverse || verb.inverse;
-  const showInverseLabel = showLabel && Boolean(customInverse || selected || data.traced);
+  const showInverseLabel = showLabel && Boolean(customInverse || selected || data.hovered || data.traced);
   const inverseLabelX = g.labelX + (g.tx - g.labelX) * 0.65;
   const inverseLabelY = g.labelY + (g.ty - g.labelY) * 0.65;
 
