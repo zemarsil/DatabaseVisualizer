@@ -135,6 +135,12 @@ column, because there is no container to start.
 
 ### 1. Open the Database drawer tab
 
+<!-- step
+target: ui:database
+goals:
+  - open | database
+-->
+
 Click **Database** in the top bar, or press `Ctrl+K` and type "database".
 
 **You should see:** the bottom drawer switch to two columns — **Docker** on
@@ -144,6 +150,11 @@ then *Test connection*, *Create the schema*, **Migrate**, *Seed data* and
 *Import from the database*, stacked top to bottom).
 
 ### 2. Start a PostgreSQL container
+
+<!-- step
+target: panel:database
+hint: No Docker daemon? Skip to step 3 and point the connection at a database you already run.
+-->
 
 If **Docker** shows *unavailable*, the API server could not reach the daemon
 — it looks at `/var/run/docker.sock`, or `DOCKER_HOST` if you have set it —
@@ -161,6 +172,10 @@ is ready on port 5432.`
 
 ### 3. Point the connection at the database and test it
 
+<!-- step
+target: panel:database
+-->
+
 Whether you started a container above or already had one, look at the six
 fields on the right: **Engine**, **Host**, **Port**, **Database**, **User**,
 **Password** — this is a separate dialect switch from the diagram's own, so
@@ -175,6 +190,10 @@ this machine and never gets saved into the diagram you might hand to someone
 else.
 
 ### 4. Create the schema
+
+<!-- step
+target: panel:database
+-->
 
 Scroll to **Create the schema**. Leave *Drop existing tables first* unticked
 (there is nothing to drop yet) and *Stop on first error* ticked, then click
@@ -206,6 +225,12 @@ already exist somewhere else.
 
 ### 5. Run a read-only query
 
+<!-- step
+target: tab:query
+goals:
+  - open | query
+-->
+
 Open the **Query** drawer tab. Type:
 
 ```sql
@@ -231,6 +256,10 @@ them instead. Results are capped at *Max rows* (500 by default, up to 5000);
 the grid says *truncated* when you hit it.
 
 ### 6. Seed the database with generated rows
+
+<!-- step
+target: panel:database
+-->
 
 Open the **Database** tab again and scroll to **Seed data**. Leave *Rows per
 table* at `10` and *Seed* at `1`, then click **Insert rows**.
@@ -267,6 +296,12 @@ INSERT INTO public.order_items (id, order_id, book_id, quantity, unit_price_cent
 
 ### 7. Add a column to the diagram
 
+<!-- step
+target: section:Columns
+goals:
+  - column | orders.internal_notes : TEXT
+-->
+
 Select the `orders` table and add a nullable column: name it
 `internal_notes`, type `TEXT`, no flags ticked. Leave everything else alone.
 
@@ -276,6 +311,10 @@ has touched the database yet. A diagram edit only ever changes the
 `.dbviz.json`.
 
 ### 8. Compare with the database and run the migration
+
+<!-- step
+target: panel:database
+-->
 
 Back in the **Database** tab, scroll to **Migrate** and click **Compare with
 database**.
@@ -313,6 +352,10 @@ script before you run it, every time, the same way you would read a
 migration a colleague wrote.
 
 ### 9. Read the schema back into the diagram
+
+<!-- step
+target: panel:database
+-->
 
 Scroll to **Import from the database**. Leave *Replace diagram* selected
 (the default) with *Put them in a group* and *Another database* both ticked,

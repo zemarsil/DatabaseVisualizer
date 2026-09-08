@@ -52,7 +52,7 @@ import { LibraryDialog } from './LibraryDialog';
 import { CHECKPOINTS_EVENT } from './inspector/Checkpoints';
 import '@/styles/workbench.css';
 
-function Menu({ label, icon, children, align = 'right', title }: { label?: string; icon: ReactNode; children: (close: () => void) => ReactNode; align?: 'left' | 'right'; title?: string }) {
+function Menu({ label, icon, children, align = 'right', title, 'data-tour': tour }: { label?: string; icon: ReactNode; children: (close: () => void) => ReactNode; align?: 'left' | 'right'; title?: string; 'data-tour'?: string }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -70,7 +70,7 @@ function Menu({ label, icon, children, align = 'right', title }: { label?: strin
   }, [open]);
   return (
     <div className="menu" ref={ref}>
-      <button className={`btn${label ? '' : ' btn--icon'}${open ? ' btn--active' : ''}`} onClick={() => setOpen((o) => !o)} title={title ?? label}>
+      <button data-tour={tour} className={`btn${label ? '' : ' btn--icon'}${open ? ' btn--active' : ''}`} onClick={() => setOpen((o) => !o)} title={title ?? label}>
         {icon}
         {label && <span>{label}</span>}
         {label && <ChevronDown size={14} />}
@@ -300,8 +300,8 @@ export function TopBar() {
         <span>DB Visualizer</span>
       </div>
       {dirty && fileBacked && <span className="topbar__unsaved" title="Changed since the last save (Ctrl+S)" />}
-      <input className="topbar__name" value={diagram.name} onChange={(e) => setDiagramName(e.target.value)} placeholder="Diagram name" spellCheck={false} />
-      <select className="dialect-select select" value={diagram.dialect} onChange={(e) => onDialectChange(e.target.value as Dialect)} title="SQL dialect">
+      <input data-tour="diagram-name" className="topbar__name" value={diagram.name} onChange={(e) => setDiagramName(e.target.value)} placeholder="Diagram name" spellCheck={false} />
+      <select data-tour="dialect" className="dialect-select select" value={diagram.dialect} onChange={(e) => onDialectChange(e.target.value as Dialect)} title="SQL dialect">
         {DIALECTS.map((d) => (
           <option key={d.id} value={d.id}>
             {d.label}
@@ -311,19 +311,19 @@ export function TopBar() {
 
       <span className="topbar__sep" />
       <div className="topbar__group">
-        <button className="btn btn--icon" onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">
+        <button data-tour="undo" className="btn btn--icon" onClick={undo} disabled={!canUndo} title="Undo (Ctrl+Z)">
           <Undo2 />
         </button>
-        <button className="btn btn--icon" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">
+        <button data-tour="redo" className="btn btn--icon" onClick={redo} disabled={!canRedo} title="Redo (Ctrl+Shift+Z)">
           <Redo2 />
         </button>
       </div>
       <span className="topbar__sep" />
       <div className="topbar__group">
-        <button className="btn" onClick={() => addTable()} title="Add table (T)">
+        <button data-tour="add-table" className="btn" onClick={() => addTable()} title="Add table (T)">
           <Plus /> Table
         </button>
-        <Menu icon={<ChevronDown />} align="left" title="More things to add">
+        <Menu icon={<ChevronDown />} align="left" title="More things to add" data-tour="add-menu">
           {(close) => (
             <>
               <button className="menu__item" onClick={() => void (close(), addTable())}>
@@ -350,21 +350,22 @@ export function TopBar() {
         </Menu>
         <button
           className="btn btn--icon"
+          data-tour="add-group"
           onClick={() => addGroup({ tableIds: selection.tableIds })}
           title={selection.tableIds.length > 1 ? `Group the ${selection.tableIds.length} selected tables (G)` : 'Add a group region (G)'}
         >
           <Boxes />
         </button>
-        <button className="btn btn--icon" onClick={() => addNote()} title="Add note (N)">
+        <button data-tour="add-note" className="btn btn--icon" onClick={() => addNote()} title="Add note (N)">
           <StickyNote />
         </button>
       </div>
       <span className="topbar__sep" />
       <div className="topbar__group">
-        <button className="btn" onClick={() => applyLayout()} title="Auto-layout: untangle connections (L)">
+        <button data-tour="detangle" className="btn" onClick={() => applyLayout()} title="Auto-layout: untangle connections (L)">
           <Shuffle /> Detangle
         </button>
-        <Menu icon={<ChevronDown />} align="left" title="Layout direction">
+        <Menu icon={<ChevronDown />} align="left" title="Layout direction" data-tour="layout-menu">
           {(close) => (
             <>
               <div className="menu__label">Layout direction</div>
@@ -389,28 +390,28 @@ export function TopBar() {
             </>
           )}
         </Menu>
-        <button className={`btn${tracePicking ? ' btn--active' : ''}`} onClick={onTrace} title="Trace a connection between two tables">
+        <button data-tour="trace" className={`btn${tracePicking ? ' btn--active' : ''}`} onClick={onTrace} title="Trace a connection between two tables">
           <Route /> Trace
         </button>
-        <button className={`btn${simulating ? ' btn--active' : ''}`} onClick={onSimulate} title={simulating ? 'Leave simulation mode (Esc)' : 'Simulate data flowing into the selected table (S)'}>
+        <button data-tour="simulate" className={`btn${simulating ? ' btn--active' : ''}`} onClick={onSimulate} title={simulating ? 'Leave simulation mode (Esc)' : 'Simulate data flowing into the selected table (S)'}>
           <Play /> Simulate
         </button>
-        <button className="btn btn--icon" onClick={requestFitView} title="Fit to window (F)">
+        <button data-tour="fit" className="btn btn--icon" onClick={requestFitView} title="Fit to window (F)">
           <Maximize />
         </button>
       </div>
       <span className="topbar__sep" />
-      <button className="btn" onClick={() => setPaletteOpen(true)} title="Command palette: jump to a table or run any action (Ctrl+K)">
+      <button data-tour="palette" className="btn" onClick={() => setPaletteOpen(true)} title="Command palette: jump to a table or run any action (Ctrl+K)">
         <Search /> <span className="kbd">Ctrl K</span>
       </button>
 
       <span className="topbar__spacer" />
 
       <div className="topbar__group">
-        <button className={`btn${drawerOpen ? ' btn--active' : ''}`} onClick={() => toggleDrawer('database')} title="Docker & database">
+        <button data-tour="database" className={`btn${drawerOpen ? ' btn--active' : ''}`} onClick={() => toggleDrawer('database')} title="Docker & database">
           <Database /> Database
         </button>
-        <Menu label="File" icon={<Save />}>
+        <Menu label="File" icon={<Save />} data-tour="file-menu">
           {(close) => (
             <>
               <button className="menu__item" onClick={() => void (close(), onNew())}>
@@ -458,7 +459,7 @@ export function TopBar() {
             </>
           )}
         </Menu>
-        <Menu label="View" icon={<SlidersHorizontal />}>
+        <Menu label="View" icon={<SlidersHorizontal />} data-tour="view-menu">
           {(close) => (
             <>
               <CheckItem on={sidebarOpen} label="Table list" onToggle={() => setSidebarOpen(!sidebarOpen)} />
@@ -498,7 +499,7 @@ export function TopBar() {
         <button className="btn btn--icon btn--ghost" onClick={() => setTheme(theme === 'dark' ? 'light' : 'dark')} title="Toggle theme">
           {theme === 'dark' ? <Sun /> : <Moon />}
         </button>
-        <button className="btn btn--icon btn--ghost" onClick={() => setHelp(true)} title="Help (?)">
+        <button data-tour="help" className="btn btn--icon btn--ghost" onClick={() => setHelp(true)} title="Help (?)">
           <HelpCircle />
         </button>
       </div>

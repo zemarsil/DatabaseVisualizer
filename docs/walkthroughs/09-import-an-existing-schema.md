@@ -130,6 +130,10 @@ completely normal; the rest of this page is about knowing which is which.
 
 ### 1. Open Import SQL and paste the script
 
+<!-- step
+target: tab:import
+-->
+
 Open the bottom drawer → **Import SQL**. Paste this into the text box on the
 left (or save it as a file and use **Load .sql file** instead):
 
@@ -187,6 +191,12 @@ column counts and any warnings without touching the diagram.
 
 ### 2. Import it into the diagram you already have
 
+<!-- step
+target: panel:import
+goals:
+  - import | warehouses, stock_levels, shipments, shipment_items
+-->
+
 Check the radio buttons above the buttons. Because the canvas is *not* empty,
 *Add to the current diagram* is already selected rather than *Replace the
 current diagram* — which is what you want. Click **Import**.
@@ -203,6 +213,14 @@ key(s)." then "4 foreign keys look implied by column names. Open Problems to
 add them." — and four new tables land on the canvas below everything else.
 
 ### 3. Accept three of the four suggested foreign keys
+
+<!-- step
+target: panel:problems
+goals:
+  - fk | stock_levels.book_id -> books.id
+  - fk | shipment_items.book_id -> books.id
+  - fk | shipments.order_id -> orders.id
+-->
 
 Open the bottom drawer → **Problems** and look at the right-hand *Suggested
 foreign keys* column. Four entries, all badged *likely*. Click **Add foreign
@@ -229,6 +247,10 @@ considerably.
 
 ### 4. Lay it out
 
+<!-- step
+target: ui:detangle
+-->
+
 The four new tables landed in a plain grid wherever there was room. Drag them
 into a block underneath the rest of the diagram, or select all four with
 `Shift+click` and press `L` (**Detangle**) to have the layout engine place
@@ -243,6 +265,13 @@ their three long edges running up to `books` and `orders` rather than crossing
 the middle of the diagram.
 
 ### 5. Read what the import cost you
+
+<!-- step
+target: panel:problems
+goals:
+  - open | problems
+  - lint errors | 2
+-->
 
 Open **Problems** properly and read the whole list. Two errors, ten warnings
 and a note that the import brought in — plus the one note about the CRM

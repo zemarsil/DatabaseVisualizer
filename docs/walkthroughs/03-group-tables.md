@@ -125,6 +125,12 @@ else owns.
 
 ### 1. Box the shop tables into a region
 
+<!-- step
+target: ui:add-group
+goals:
+  - group | shop : customers, orders, customer_cadence
+-->
+
 Click `customers`, then `Shift+click` `orders` and `customer_cadence`. Press
 `G`.
 
@@ -143,6 +149,24 @@ and the inspector switch to the region, showing *Name*, *Colour*, *Note*,
 
 ### 2. Add the two CRM tables
 
+<!-- step
+target: ui:add-table
+goals:
+  - table | crm_contacts
+  - column | crm_contacts.contact_id : BIGINT
+  - flags | crm_contacts.contact_id : pk
+  - no column | crm_contacts.id
+  - column | crm_contacts.email : TEXT
+  - column | crm_contacts.account_id : BIGINT
+  - table | crm_accounts
+  - column | crm_accounts.account_id : BIGINT
+  - flags | crm_accounts.account_id : pk
+  - no column | crm_accounts.id
+  - column | crm_accounts.name : TEXT
+  - column | crm_accounts.tier : TEXT
+  - fk | crm_contacts.account_id -> crm_accounts.account_id
+-->
+
 Add two more tables outside the region, `crm_contacts` (`contact_id BIGINT`
 **PK**, `email TEXT` **NN**, `account_id BIGINT`) and `crm_accounts`
 (`account_id BIGINT` **PK**, `name TEXT` **NN**, `tier TEXT`). Drag the handle
@@ -158,6 +182,11 @@ other and to nothing else, sitting outside the *shop* region.
 
 ### 3. Select the CRM pair and group them
 
+<!-- step
+target: ui:add-group
+hint: Nothing to check yet — the region gets its name and its external flag in the next step.
+-->
+
 Click `crm_contacts`, then `Shift+click` `crm_accounts` to add it to the
 selection, then press `G`. (The `▾` beside **+ Table** reads *Group the 2
 selected tables* while both are selected — same action.)
@@ -168,6 +197,12 @@ reading *New group*, and the inspector switch to the **Group** panel showing
 *Colour*, and *Tables (2)* listing both members.
 
 ### 4. Name it, colour it, and mark it external
+
+<!-- step
+target: field:Name
+goals:
+  - external group | CRM (read-only) : crm_contacts, crm_accounts
+-->
 
 In the inspector, set *Name* to `CRM (read-only)` and *Colour* to `purple` —
 the convention this series uses for external tables and their group. Tick
@@ -181,6 +216,14 @@ cannot cross databases."* — read that line once; it is the entire feature.
 
 ### 5. Connect a customer to their CRM contact
 
+<!-- step
+target: column:customers.crm_contact_id
+goals:
+  - column | customers.crm_contact_id : BIGINT
+  - fk | customers.crm_contact_id -> crm_contacts.contact_id
+  - ondelete | customers -> crm_contacts : SET NULL
+-->
+
 Drag the handle beside `customers.crm_contact_id` onto `crm_contacts.contact_id`,
 exactly as you connected `orders` to `customers`. Set **On delete** to *SET
 NULL* in the inspector — if the CRM record disappears, a customer should not
@@ -192,6 +235,12 @@ what the generator does with it once it crosses the boundary.
 
 ### 6. Read what Problems says about it
 
+<!-- step
+target: tab:problems
+goals:
+  - open | problems
+-->
+
 Open the bottom drawer → **Problems**.
 
 **You should see:** one *new* finding, at *info* severity: *"customers
@@ -202,6 +251,13 @@ a mistake. (The three warnings above it are the unindexed foreign keys the
 diagram has carried since walkthrough 02; walkthrough 07 clears them.)
 
 ### 7. Read the generated script
+
+<!-- step
+target: tab:sql
+goals:
+  - open | sql
+  - omits | CREATE TABLE crm_contacts
+-->
 
 Open the bottom drawer → **SQL**, leave it on *Whole schema*. Above the code, a
 generator warning reads: *"customers references crm_contacts in the external

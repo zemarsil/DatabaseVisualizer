@@ -114,6 +114,12 @@ is just a label.
 
 ### 1. Add the order_status enum type
 
+<!-- step
+target: ui:add-menu
+goals:
+  - open | types
+-->
+
 Click the `▾` beside **+ Table**, then choose *Enum type*. This adds a new
 custom type and opens the bottom drawer on the **Types** tab.
 
@@ -122,6 +128,12 @@ editable name field reading `my_enum`, and *Values (1)* holding one row,
 `value_1`.
 
 ### 2. Name it and fill in its values
+
+<!-- step
+target: panel:types
+goals:
+  - enum | order_status : pending, paid, shipped, cancelled
+-->
 
 Edit the name field to `order_status`. In *Values (1)*, replace `value_1`
 with `pending`, then click **+ Value** three more times and type `paid`,
@@ -135,6 +147,12 @@ typed — there is no drag handle here, so getting the order right means typing
 it right the first time or deleting and re-adding a value.
 
 ### 3. Add the postal_address composite type
+
+<!-- step
+target: panel:types
+goals:
+  - composite | postal_address : street TEXT, city TEXT, postal_code TEXT, country CHAR(2)
+-->
 
 With the **Types** tab still open, click **+ Struct type** at the top of the
 panel (the same thing the top bar's `▾` → *Composite type* does, and jumping
@@ -152,6 +170,14 @@ type: generated SQL will store columns of this type as JSON.* Switch back to
 PostgreSQL before continuing.
 
 ### 4. Use both types by name
+
+<!-- step
+target: section:Columns
+goals:
+  - column | orders.status : order_status
+  - column | customers.mailing_address : postal_address
+  - types | order_status, postal_address
+-->
 
 Select `orders` and click the type cell on its `status` row. It reads `TEXT`.
 Replace it with `order_status`. Leave the `'pending'` default and the **NN**

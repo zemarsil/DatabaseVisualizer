@@ -137,6 +137,11 @@ the one you're looking at.
 
 ### 1. Cycle one table's collapse state by hand
 
+<!-- step
+target: table:order_items
+hint: The chevron cycles all columns → keys only → header only, so three clicks land you back where you started.
+-->
+
 Find `order_items` on the canvas — `Ctrl+K`, type its name, `Enter` is the
 quickest way. Click the chevron (`⌄`) at the right of its header. It cycles
 **All columns → Keys only → Header only → All columns**, one click per state.
@@ -150,6 +155,10 @@ then a down-facing one) to hint at which state you're in.
 
 ### 2. Collapse — or expand — every table at once
 
+<!-- step
+target: ui:view-menu
+-->
+
 Open **View → All tables**. It offers three commands: **Show every column**,
 **Keys only** and **Headers only**. Choose **Keys only**. Every table on the
 canvas — not just the one you have selected — drops to keys, including
@@ -160,6 +169,10 @@ canvas — not just the one you have selected — drops to keys, including
 hide. Pick **Show every column** to put it back before continuing.
 
 ### 3. Zoom out past the automatic threshold
+
+<!-- step
+target: ui:canvas
+-->
 
 Zoom out (scroll, pinch, or the `−` control at the bottom-left) until the
 whole diagram fits with room to spare. Once the zoom level drops below **35%**
@@ -175,6 +188,12 @@ they were once you zoom back in — the automatic collapse never touched what
 was actually saved.
 
 ### 4. Focus on one table's neighbourhood
+
+<!-- step
+target: table:books
+goals:
+  - focus | books
+-->
 
 Click `books` to select it, then press `.`. Everything more than one hop away
 dims: `authors`, `contributors`, `catalog_export`, `order_items`, `reviews`,
@@ -192,6 +211,10 @@ time the hop count changes. Widen it all the way — `]` stops responding once
 you reach **6 hops**, the maximum the app tracks.
 
 ### 5. Untangle the layout with Detangle
+
+<!-- step
+target: ui:detangle
+-->
 
 Drag a few tables into an overlapping mess — it doesn't matter which, you're
 about to fix it. Press `L`. Detangle re-lays out every table so that whatever
@@ -212,6 +235,10 @@ the canvas reframing when you press `F`.
 
 ### 6. Tidy a cluster by hand
 
+<!-- step
+target: ui:canvas
+-->
+
 `Shift+drag` a box around `daily_sales` and `book_totals` so both are
 selected (a plain drag on empty canvas does the same thing; `Shift` just adds
 to whatever was already selected). Right-click either one and choose **Align
@@ -229,6 +256,12 @@ instead of wherever the arrow key math puts them.
 
 ### 7. Jump straight to a table or an action
 
+<!-- step
+target: ui:palette
+goals:
+  - select table | customer_cadence
+-->
+
 Press `Ctrl+K`. Type `cadence` — the only match is the `customer_cadence`
 table, and pressing `Enter` selects it and frames it on the canvas, the same
 place `Zoom to table` in the right-click menu goes. Clear the query and type
@@ -244,6 +277,12 @@ a table pans and zooms the canvas to it without dimming anything else — that
 camera move is not the same thing as the focus mode from step 4.
 
 ### 8. Read the connections by colour and cardinality
+
+<!-- step
+target: ui:view-menu
+goals:
+  - cardinality | on
+-->
 
 Open **View → Cardinality labels** and tick it. Look at the foreign key from
 `order_items` into `orders`: a small `N` sits at the `order_items` end and `1`
@@ -267,6 +306,14 @@ the dashed flow edges (there is no cardinality to compute when nothing
 constrains uniqueness), and one **N:M** badge on `stock_levels`.
 
 ### 9. Box the last two clusters into regions
+
+<!-- step
+target: ui:add-group
+goals:
+  - group | catalog : authors, books, contributors, catalog_export
+  - group | warehouse : warehouses, stock_levels, shipments, shipment_items
+  - groups | shop, CRM (read-only), catalog, warehouse
+-->
 
 Two clusters are still loose. Select `authors`, `books`, `contributors` and
 `catalog_export` (`Shift+click` each) and press `G`. Name the region

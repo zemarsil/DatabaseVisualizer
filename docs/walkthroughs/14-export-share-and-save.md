@@ -133,6 +133,13 @@ relying on it alone.
 
 ### 1. Read the whole-schema SQL script
 
+<!-- step
+target: tab:sql
+goals:
+  - open | sql
+  - contains | CREATE TYPE order_status AS ENUM
+-->
+
 Open the bottom drawer's **SQL** tab. Leave the format selector on *SQL
 script*, the scope on **Whole schema**, and *Prefix DROP TABLE statements*
 unticked.
@@ -160,6 +167,10 @@ the script running from two `CREATE TYPE`s through fifteen real tables and one
 `CREATE VIEW` before the two commented appendices.
 
 ### 2. Switch to the Markdown data dictionary
+
+<!-- step
+target: panel:sql
+-->
 
 Change the format selector to *Markdown data dictionary*. The `public.authors`
 section reads:
@@ -190,6 +201,10 @@ further down — this single file is closer to the diagram than any of the
 other exports.
 
 ### 3. Switch to Mermaid and copy it
+
+<!-- step
+target: panel:sql
+-->
 
 Change the format selector to *Mermaid ER diagram*, then click **Copy**.
 
@@ -234,6 +249,10 @@ four named values.
 
 ### 4. Switch to DBML
 
+<!-- step
+target: panel:sql
+-->
+
 Change the format selector to *DBML*.
 
 ```dbml
@@ -261,6 +280,10 @@ Note type_postal_address {
 
 ### 5. Export a picture
 
+<!-- step
+target: ui:file-menu
+-->
+
 Open **File → Export PNG**.
 
 **You should see:** a toast reading "Exported PNG." and a downloaded
@@ -272,6 +295,10 @@ picture is going into something that will be resized.
 
 ### 6. Nudge the note and watch the dot appear
 
+<!-- step
+target: ui:diagram-name
+-->
+
 Click the sticky note once to select it, then press `Arrow keys` to nudge it
 a few pixels.
 
@@ -282,6 +309,10 @@ app can tell it now disagrees with that file.
 
 ### 7. Save the file again
 
+<!-- step
+target: ui:file-menu
+-->
+
 Press `Ctrl+S` (or **File → Save as .dbviz.json**).
 
 **You should see:** a toast reading "Diagram saved.", a re-downloaded
@@ -289,6 +320,10 @@ Press `Ctrl+S` (or **File → Save as .dbviz.json**).
 gone — saving is what makes "changed since the last save" false again.
 
 ### 8. Reopen the original and confirm it replaces the canvas
+
+<!-- step
+target: ui:file-menu
+-->
 
 Press `Ctrl+O` again, but this time pick
 [`diagrams/13-run-the-schema-on-a-real-database.dbviz.json`](diagrams/13-run-the-schema-on-a-real-database.dbviz.json)
@@ -303,6 +338,10 @@ moment before.
 
 ### 9. Check the library
 
+<!-- step
+target: ui:file-menu
+-->
+
 Open **File → Open recent…**.
 
 **You should see:** two cards named "Export, share and save — bookshop," both
@@ -314,6 +353,10 @@ place in the library first.
 
 ### 10. Copy a share link
 
+<!-- step
+target: ui:file-menu
+-->
+
 Open **File → Copy share link**.
 
 **You should see:** a toast reading "Share link copied. Anyone who opens it
@@ -323,6 +366,10 @@ the `#d=`, next to a `.dbviz.json` file that is closer to 12,600 bytes on
 disk.
 
 ### 11. Save a checkpoint
+
+<!-- step
+target: section:Checkpoints
+-->
 
 Open the inspector with nothing selected (click empty canvas) to land on the
 **Diagram** panel, and use *Checkpoints (0)* — or **File → Save checkpoint…**

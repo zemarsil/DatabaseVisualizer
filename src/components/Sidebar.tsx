@@ -64,7 +64,7 @@ export function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <aside className="sidebar" data-tour="sidebar">
       <div className="sidebar__head">
         <span className="sidebar__section" style={{ padding: 0 }}>
           Tables <span className="sidebar__count">({tables.length})</span>

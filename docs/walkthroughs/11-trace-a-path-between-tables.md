@@ -130,6 +130,24 @@ join on. The path is real; only the join condition is missing.
 
 ### 1. Add reviews
 
+<!-- step
+target: ui:add-table
+goals:
+  - table | reviews
+  - column | reviews.book_id : BIGINT
+  - column | reviews.customer_id : BIGINT
+  - column | reviews.rating : SMALLINT
+  - check | reviews.rating : rating BETWEEN 1 AND 5
+  - column | reviews.posted_at : TIMESTAMPTZ
+  - fk | reviews.book_id -> books.id
+  - fk | reviews.customer_id -> customers.id
+  - ondelete | reviews -> books : CASCADE
+  - ondelete | reviews -> customers : CASCADE
+  - reverse label | reviews -> customers : wrote
+  - index | reviews (book_id)
+  - index | reviews (customer_id)
+-->
+
 Press `T`, name the new table `reviews`, drop it inside the `shop` region, and
 give it:
 
@@ -159,6 +177,12 @@ and `customers`.
 
 ### 2. Select two tables and trace them
 
+<!-- step
+target: ui:trace
+goals:
+  - traced | books -> customers
+-->
+
 Click the `books` table, then hold `Shift` and click `customers` to add it
 to the selection (`Shift+click`). In the top bar, click **Trace**. With two
 tables already selected it traces immediately — no pick mode, no dialog.
@@ -170,6 +194,10 @@ every other table and connection dims. Out of eighteen tables, three stay
 bright; on a diagram this size that dimming is most of the value.
 
 ### 3. Read the hop list
+
+<!-- step
+target: panel:trace
+-->
 
 In the **Trace** tab, look under the table chain `books → reviews →
 customers` at the two rows below it.
@@ -190,6 +218,12 @@ JOIN customers AS t2 ON t1.customer_id = t2.id;
 
 ### 4. Run the join in the Query tab
 
+<!-- step
+target: panel:trace
+goals:
+  - open | query
+-->
+
 On the right-hand side of the **Trace** tab, under **Join along the path**,
 click **Run**.
 
@@ -199,6 +233,12 @@ connected database with `Ctrl+Enter`. **Copy**, next to **Run**, puts the
 same text on the clipboard without leaving the **Trace** tab.
 
 ### 5. Compare it with the route Trace did not take
+
+<!-- step
+target: ui:trace
+goals:
+  - traced | books -> orders
+-->
 
 `books` reaches `customers` a second way: `books → order_items → orders →
 customers`, three hops instead of two. Trace cannot prefer one meaning over
@@ -216,6 +256,12 @@ two is smaller than three.
 
 ### 6. Trace across a connection that is not a foreign key
 
+<!-- step
+target: table:catalog_export
+goals:
+  - traced | catalog_export -> authors
+-->
+
 Right-click the `catalog_export` table and choose **Trace from here…**. The
 **Trace** tab opens with `catalog_export` already set as **From table…**, and
 a banner on the canvas reads "From catalog_export: now click the destination
@@ -230,6 +276,10 @@ nightly job; Trace is happy to walk it even though the database knows nothing
 about it.
 
 ### 7. Read the mixed join it produces
+
+<!-- step
+target: panel:trace
+-->
 
 With that same trace still showing, look at **Join along the path** again.
 
@@ -249,6 +299,12 @@ connection happens to be a foreign key.
 
 ### 8. Trace from the drawer tab itself, without touching the canvas
 
+<!-- step
+target: panel:trace
+goals:
+  - traced | shipments -> books
+-->
+
 Everything so far started on the canvas or its right-click menu. The
 **Trace** tab has its own way in: set **From table…** to `shipments` and
 **To table…** to `books` using the two dropdowns at its top, then click
@@ -261,6 +317,10 @@ is the only one that works when the table you want is scrolled off-screen,
 which the warehouse block generally is.
 
 ### 9. Leave trace mode
+
+<!-- step
+target: ui:canvas
+-->
 
 Press `Esc`. If you are still mid-pick rather than looking at a result,
 `Esc` cancels the pick instead; press it again to clear whatever trace is

@@ -14,11 +14,21 @@ A walkthrough is **two artefacts**:
    app really generates from it, so the walkthrough cannot quietly rot when the
    app changes.
 
+The markdown is not only read. In the app a walkthrough **runs**: a card follows
+the reader around the window, anchored to whatever the current step points at,
+ticking each step off as the work gets done and offering to do any step for
+them. That clickthrough is built from this file — `## Steps` becomes the cards,
+`## What you'll build` and `## The mental model` the one before them,
+`## Check your work`, `## Gotchas` and `## Where to go next` the one after — so
+there is nothing to keep in sync. What it needs from you is one HTML comment per
+step, described in [Steps](#steps) below.
+
 Both are checked in CI:
 
 ```bash
 node scripts/validate-walkthrough.mjs docs/walkthroughs/NN-slug.md   # format + diagram structure
 npx vitest run tests/walkthroughs.test.ts -t NN-slug                 # the checks: entries
+npx vitest run tests/tour.test.ts -t NN-slug                         # the step blocks
 ```
 
 ---
@@ -53,12 +63,12 @@ Simulate and Export read the canvas without editing it; both point at the
 previous stage's file rather than shipping a copy of it. The validator allows
 exactly this and nothing else borrowed.
 
-In the app, the two buttons around a walkthrough's text are the reader's side of
-the same idea: **Set up the canvas** loads `start`, and **Check my work** runs
-`checks` against the live canvas (`src/lib/walkthroughChecks.ts`, the same
-module CI uses). Between them, a reader can begin at any walkthrough in the
-series without having typed the ones before it — which is the whole reason the
-chain can be strict.
+In the app, this is the reader's side of the same idea: **Set up the canvas**
+loads `start`, and **Check my work** runs `checks` against the live canvas
+(`src/lib/walkthroughChecks.ts`, the same module CI uses). Between them, a reader
+can begin at any walkthrough in the series without having typed the ones before
+it — which is the whole reason the chain can be strict. Both buttons are on the
+card the clickthrough opens with, and in the **Walkthrough** drawer tab.
 
 ---
 
@@ -140,6 +150,7 @@ Copy [`_TEMPLATE.md`](_TEMPLATE.md) and fill it in. The skeleton is fixed
 ```bash
 node scripts/validate-walkthrough.mjs docs/walkthroughs/NN-slug.md
 npx vitest run tests/walkthroughs.test.ts -t NN-slug
+npx vitest run tests/tour.test.ts -t NN-slug
 node scripts/build-walkthrough-index.mjs
 ```
 
@@ -301,6 +312,13 @@ Optional extra sections, if you need them, are `## Try it yourself` and
 ```markdown
 ### 3. Give the book an author
 
+<!-- step
+target: column:books.author_id
+goals:
+  - fk | books.author_id -> authors.id
+hint: The handle only appears while the pointer is over the table.
+-->
+
 Hover the `books` table and drag the small handle beside `author_id` onto the
 `id` row of `authors`.
 
@@ -312,6 +330,99 @@ inspector switch to the connection with **Kind** set to *Foreign key*.
 - Name the exact affordance, and give the shortcut in backticks the first time.
 - **You should see:** is not optional and is not a summary — it is the
   observable change, so a reader who typed something wrong finds out immediately.
+  When it introduces a fenced block — the query Trace prints, the lineage
+  Simulate explains — the block comes with it onto the card.
+- Every step carries exactly one `<!-- step … -->` block, and it must sit inside
+  `## Steps`. It is invisible wherever the markdown is read as a document.
+
+#### The step block
+
+Same tiny YAML as the front matter: `key: value`, or `key:` followed by
+`  - item` lines.
+
+| Key | Required | Meaning |
+| --- | --- | --- |
+| `target` | yes | What the card points at, and what has to be open for it to exist. |
+| `goals` | no | What the step is *for*: what makes it done, and what **Do it for me** does. |
+| `hint` | no | One line of aside, shown in smaller type under the instruction. |
+| `transient` | no | `true` when a later step undoes this one — an index built in the wrong order on purpose. Exempt from the tests that replay a walkthrough. |
+
+#### `target:`
+
+One token: a kind, a colon, and what to look for.
+
+| Target | Points at |
+| --- | --- |
+| `ui:add-table` | app chrome, by the `data-tour` attribute the component carries. The validator lists the ones that exist. |
+| `tab:sql` | a drawer tab, opening the drawer on it first |
+| `panel:simulate` | the drawer's body with that tab in front |
+| `field:Reads as` | an inspector field, found by its visible label; opens the inspector |
+| `section:Indexes` | an inspector section, found by its visible title |
+| `sidebar` | the table list |
+| `table:orders` | a table on the canvas, panning to it only if it is off-screen |
+| `column:books.author_id` | one column row inside a table node |
+| `rel:books -> authors` | a connection on the canvas |
+| `none` | nothing; the card floats free |
+
+Because `field:` and `section:` are matched on the label the reader sees, they
+only exist while the right thing is selected — so the tour selects whatever the
+step's goals are about before it looks. Quote the label exactly as the component
+spells it (`Color`, not `Colour`, in the table editor).
+
+#### `goals:`
+
+Each entry is `verb` or `verb | argument`, and each is read two ways: as a
+question ("has the reader done this?") and as an instruction ("do it for them").
+That is deliberate — one sentence, so the tick and the button can never disagree
+about what the step means. Write them as things a *reader* would want to be
+told, and only assert what the walkthrough actually asked for; a goal that
+depends on something the prose never mentioned tells a reader they have failed
+when they have not.
+
+Every `checks:` verb from the table above is also a goal verb, so a final step
+can assert exactly what the front matter asserts. On top of those:
+
+| Goal | Asserts | Done for you |
+| --- | --- | --- |
+| `table \| orders` | a table by that name exists | adds it |
+| `view \| v_customer_orders` | it exists and is a view | adds or converts it |
+| `no table \| x`, `no column \| t.c` | it is gone | deletes it |
+| `column \| orders.status : TEXT` | the column exists, with that type if given | adds it or retypes it |
+| `flags \| orders.id : pk nn ai` | those flags, `-uq` for one that must be off | sets them |
+| `default \| orders.placed_at : now()` | the default expression | sets it |
+| `check \| t.c : expr`, `check \| t : expr` | a column or table CHECK | writes it |
+| `schema \| warehouses : public` | the table's schema | sets it |
+| `collapsed \| authors : keys` | how much of the node is showing | sets it |
+| `materialized \| v_x : on` | the view is stored, not recomputed | ticks it |
+| `viewsql \| v_x` | the view has a SELECT | writes the step's fenced block into it |
+| `import \| a, b, c` | those tables are in the diagram | runs the step's fenced script through **Import SQL** |
+| `fk \| books.author_id -> authors.id` | a foreign key between that column pair | draws it |
+| `flow`, `embed`, `dependency` `\| a -> b` | a connection of that kind | draws it |
+| `reads \| books belongs to authors` | the connection's verb | sets it |
+| `label`, `reverse label` `\| a -> b : text` | how the connection is named | types it |
+| `ondelete \| child -> parent : RESTRICT` | the referential action | sets it |
+| `query \| a -> b` | the connection carries a tagged query | tags it with the step's fenced block |
+| `derivation \| daily_sales.units : SUM(quantity) group by book_id` | a derived column computed that way | adds it to the flow |
+| `index`, `unique index` `\| orders (customer_id, placed_at)` | an index on those columns, in that order | creates it |
+| `group`, `external group` `\| shop : a, b` | a region by that name holding those tables | creates it and moves them in |
+| `enum \| order_status : pending, paid` | the enum and its values, in order | creates it |
+| `composite \| postal_address : street TEXT` | the struct and its fields | creates it |
+| `dialect \| postgresql` | the diagram's dialect | switches it |
+
+And five that describe the screen rather than the diagram — they are never run
+against a companion diagram, because there is no screen in CI:
+
+| Goal | Asserts |
+| --- | --- |
+| `open \| problems` | that drawer tab is in front |
+| `select table \| authors`, `select connection \| a -> b` | it is selected, so the inspector shows it |
+| `cardinality \| on` | the **View** menu's cardinality labels |
+| `simulating \| daily_sales` | a simulation is feeding that table |
+| `traced \| books -> customers` | **Trace** is showing that path |
+| `focus \| books` | the canvas is focused on that neighbourhood (`none` for cleared) |
+
+A step with no goals is legitimate — "read what Problems says", "try a what-if
+edit" — and is ticked off when the reader presses **Continue**.
 
 ### House style
 
@@ -346,7 +457,9 @@ inspector switch to the connection with **Kind** set to *Foreign key*.
 - the `# ` heading matches `title`; the `## ` sections are all present, known,
   and in order;
 - `## Steps` has ≥ 3 sequentially numbered `### N.` steps, each with a
-  **You should see:** line;
+  **You should see:** line and exactly one `<!-- step … -->` block, whose
+  `target` names a `data-tour` attribute or drawer tab that really exists and
+  whose `goals` use known verbs with well-formed arguments;
 - `## What you'll build` has a ```mermaid block and `## Check your work` has a
   ```sql block;
 - internal links resolve, no `TODO`/`TBD`/`FIXME` survives, and the prose clears
@@ -359,6 +472,16 @@ inspector switch to the connection with **Kind** set to *Foreign key*.
 - `README.md`'s index is current (`node scripts/build-walkthrough-index.mjs`);
 - every companion diagram loads through the app's own `parseDiagramFile`;
 - every `checks:` entry passes.
+
+`tests/tour.test.ts`, for the clickthrough:
+
+- every step points somewhere, keeps its instruction and its **You should see:**
+  line, and uses goal verbs the app implements (the validator's copy of that
+  list is checked against the app's, so the two cannot drift);
+- every goal is true of the diagram the walkthrough ends with;
+- replaying a whole walkthrough through **Do it for me**, from the canvas it
+  starts on, satisfies those same goals — which is what stops the button and the
+  prose describing different things.
 
 ## Adding one to the series
 

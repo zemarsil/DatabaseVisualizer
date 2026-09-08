@@ -97,19 +97,29 @@ picks the canvas up exactly where the last put it down — the foreign keys from
 seeded rows in 13 obey — so the schema in front of you is always the one you
 built.
 
+In the app they run as clickthroughs rather than pages to read: pick one from
+the **?** menu and a card follows you around the window, pointing at the button,
+field or table each step is about, ticking itself off as you do the work, and
+offering to **Do it for me** when you would rather watch the change happen than
+type it. Nothing is blocked while it is up — you are working in the real app.
+
 Start with [Your first diagram](docs/walkthroughs/00-your-first-diagram.md), or
 open any walkthrough and press **Set up the canvas**: it loads the diagram that
 one starts from, so you can begin at
 [filling one table from another](docs/walkthroughs/05-fill-one-table-from-another.md),
 [indexes](docs/walkthroughs/07-add-indexes.md) or
 [importing someone else's schema](docs/walkthroughs/09-import-an-existing-schema.md)
-without typing the ones before it. **Check my work**, at the foot of each one,
-runs that walkthrough's own checks against your canvas and says what is missing.
+without typing the ones before it. **Check my work**, in the **Walkthrough**
+drawer tab, runs that walkthrough's own checks against your canvas and says what
+is missing.
 
 Those checks are the walkthrough's front matter — assertions about its companion
 diagram, like the SQL it generates, whether it lints clean, whether it simulates
 — and `npm test` runs the same ones against the app's own code, so the pages
-cannot quietly go out of date and the button can never disagree with CI.
+cannot quietly go out of date and the button can never disagree with CI. Each
+step's ticks work the same way: a step declares what it is for once, and that one
+declaration is both what the card checks and what **Do it for me** performs, so
+the two can never describe different things.
 [`docs/walkthroughs/WALKTHROUGH_FORMAT.md`](docs/walkthroughs/WALKTHROUGH_FORMAT.md)
 is the format and the procedure for adding one.
 
@@ -211,7 +221,7 @@ src/components/          React UI (canvas, inspector, drawer panels, command pal
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
 scripts/                 validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
 docs/                    ADVISOR_OUTPUT_FORMAT.md, an example diagram, and walkthroughs/
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format, the simulation and the walkthroughs
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format, the simulation, the walkthroughs and their clickthroughs
 ```
 
 ```bash

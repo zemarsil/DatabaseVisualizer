@@ -12,16 +12,32 @@ previous walkthrough's finished diagram — the same file — and
 `scripts/validate-walkthrough.mjs` fails if the chain breaks or if a table the
 reader built ever disappears.
 
-**You do not have to start at 00.** Every walkthrough has two buttons in the
-app's **Walkthrough** drawer tab:
+**They are clickthroughs, not documents.** Pick one in the app and a card
+appears over the window, anchored to whatever the step is about — the **+ Table**
+button, the **Reads as** picker, a column row on the canvas, the **Problems**
+tab. Do the thing it describes and the card ticks it off on its own, because
+every step says what it is for in a form the app can check. Nothing is blocked
+while it is up: you work in the real app and the card follows you.
 
-- **Set up the canvas** puts the tables, connections, types and regions that
-  walkthrough starts from in front of you — the state the one before it leaves
-  behind. Open walkthrough 09 on a blank canvas, press it, and you are ready to
-  start walkthrough 09.
-- **Check my work** runs that walkthrough's own `checks:` against whatever is on
-  your canvas and tells you, line by line, what does not match yet. They are the
-  same checks CI runs against the companion diagram.
+Three buttons on that card do the work for you when you would rather watch than
+type:
+
+- **Do it for me** makes the current step's change — adds the table, draws the
+  foreign key, writes the derivation — as one undo step, so `Ctrl+Z` puts it
+  back.
+- **Set up the canvas**, on the card you get before step 1, puts the tables,
+  connections, types and regions that walkthrough starts from in front of you —
+  the state the one before it leaves behind. Open walkthrough 09 on a blank
+  canvas, press it, and you are ready to start walkthrough 09. **You do not have
+  to start at 00.**
+- **Check my work**, in the **Walkthrough** drawer tab, runs that walkthrough's
+  own `checks:` against whatever is on your canvas and tells you, line by line,
+  what does not match yet. They are the same checks CI runs against the
+  companion diagram.
+
+That drawer tab is also the map: every step in one list, ticks against the ones
+that check out, a click to jump to any of them, and the full text underneath for
+anyone who would rather read than be led.
 
 Open the browser from the **?** button in the top bar, or press `Ctrl+K` and
 type "walkthrough".

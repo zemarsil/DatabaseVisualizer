@@ -1,24 +1,32 @@
 /**
- * The in-app walkthrough browser, opened from the "?" help button: a list of
- * the walkthroughs bundled from docs/walkthroughs/. Picking one opens its
- * text in the drawer's Walkthrough tab (see WalkthroughPanel) instead of
- * inside this modal, so the canvas stays visible while it's followed.
+ * The walkthrough browser, opened from the "?" help button, and the two ways a
+ * walkthrough is shown once it is picked.
  *
- * The series builds one schema across fifteen walkthroughs, so each one has
- * two buttons around its text: **Set up the canvas**, which puts the tables and
- * connections it expects in front of you (they are the previous walkthrough's
- * finished diagram, which is what lets a reader start anywhere), and **Check my
- * work**, which runs that walkthrough's own `checks:` against whatever is on the
- * canvas now.
+ * Picking one **runs** it: the coach mark in src/components/tour/TourHost.tsx
+ * takes over, anchoring itself to whatever the current step points at while the
+ * canvas stays free to work in. What lives here is everything around that — the
+ * list you pick from, the outline in the drawer's **Walkthrough** tab that says
+ * how far in you are and lets you jump between steps, and the full text for a
+ * reader who would rather read the document than be walked through it.
+ *
+ * The series builds one schema across fifteen walkthroughs, so both views carry
+ * the same two buttons: **Set up the canvas**, which puts the previous
+ * walkthrough's finished diagram in front of you (that is what lets a reader
+ * start anywhere), and **Check my work**, which runs this walkthrough's own
+ * `checks:` against whatever is on the canvas now.
  */
-import { useEffect, useState } from 'react';
-import { ArrowLeft, CheckCircle2, Clock, FolderOpen, ListChecks, MousePointerClick, Wand2, XCircle } from 'lucide-react';
+import { useEffect, useMemo, useState } from 'react';
+import { ArrowLeft, BookOpen, Check, CheckCircle2, Clock, FolderOpen, ListChecks, MousePointerClick, Play, Wand2, XCircle } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { parseDiagramFile } from '@/lib/io';
-import { startFreshDiagramEntry } from '@/lib/library';
+import { useTour } from '@/store/useTour';
 import { renderMarkdown } from '@/lib/markdown';
+import { startTour } from '@/lib/tour/start';
+import { buildTourPlan, stripStepMeta } from '@/lib/tour/steps';
 import { runWalkthroughChecks, type CheckResult } from '@/lib/walkthroughChecks';
-import { confirmDialog, useDialogStore } from './Modal';
+import { openFinishedDiagram, setUpCanvas } from '@/components/tour/setup';
+import { useDialogStore } from './Modal';
+
+type Walkthrough = import('@/lib/walkthroughs').Walkthrough;
 
 const LEVEL_LABEL: Record<string, string> = { beginner: 'Beginner', intermediate: 'Intermediate', advanced: 'Advanced' };
 
@@ -27,6 +35,7 @@ export function WalkthroughBrowser({ onGuide }: { onGuide: () => void }) {
   const [data, setData] = useState<typeof import('@/lib/walkthroughs') | null>(null);
   const openWalkthrough = useStore((s) => s.openWalkthrough);
   const setHelp = useDialogStore((s) => s.setHelp);
+  const progress = useTour((s) => s.progress);
 
   useEffect(() => {
     let live = true;
@@ -38,100 +47,149 @@ export function WalkthroughBrowser({ onGuide }: { onGuide: () => void }) {
 
   if (!data) return <div className="wt-loading">Loading walkthroughs…</div>;
   return (
-    <WalkthroughList
-      walkthroughs={data.WALKTHROUGHS}
-      onOpen={(slug) => {
-        openWalkthrough(slug);
-        setHelp(false);
-      }}
-      onGuide={onGuide}
-    />
-  );
-}
-
-function WalkthroughList({ walkthroughs, onOpen, onGuide }: { walkthroughs: import('@/lib/walkthroughs').Walkthrough[]; onOpen: (slug: string) => void; onGuide: () => void }) {
-  return (
     <div>
       <button className="btn btn--sm wt-detail__back" onClick={onGuide}>
         <ArrowLeft size={14} /> Quick guide
       </button>
+      <p className="wt-run__note">
+        Each one runs as a clickthrough: a card follows you around the app, points at what to use next, ticks itself off as you do it, and can do any step for you.
+      </p>
       <div className="wt-list">
-        {walkthroughs.map((w, i) => (
-          <button key={w.slug} className="wt-card" onClick={() => onOpen(w.slug)}>
-            <div className="wt-card__num">{String(i).padStart(2, '0')}</div>
-            <div className="wt-card__body">
-              <div className="wt-card__title">{w.title}</div>
-              <div className="wt-card__summary">{w.summary}</div>
-              <div className="wt-card__meta">
-                <span className="badge">{LEVEL_LABEL[w.level] ?? w.level}</span>
-                <span className="wt-card__minutes">
-                  <Clock size={12} /> {w.minutes} min
-                </span>
+        {data.WALKTHROUGHS.map((w, i) => {
+          const done = (progress[w.slug] ?? []).length;
+          return (
+            <div key={w.slug} className="wt-card">
+              <div className="wt-card__num">{String(i).padStart(2, '0')}</div>
+              <div className="wt-card__body">
+                <div className="wt-card__title">{w.title}</div>
+                <div className="wt-card__summary">{w.summary}</div>
+                <div className="wt-card__meta">
+                  <span className="badge">{LEVEL_LABEL[w.level] ?? w.level}</span>
+                  <span className="wt-card__minutes">
+                    <Clock size={12} /> {w.minutes} min
+                  </span>
+                  {done > 0 && (
+                    <span className="wt-card__minutes">
+                      <Check size={12} /> {done} steps done
+                    </span>
+                  )}
+                </div>
+              </div>
+              <div className="wt-card__actions">
+                <button
+                  className="btn btn--sm btn--primary"
+                  onClick={() => {
+                    startTour(w);
+                    setHelp(false);
+                  }}
+                >
+                  <Play size={13} /> {done > 0 ? 'Resume' : 'Start'}
+                </button>
+                <button
+                  className="btn btn--sm"
+                  onClick={() => {
+                    openWalkthrough(w.slug);
+                    setHelp(false);
+                  }}
+                >
+                  <BookOpen size={13} /> Read
+                </button>
               </div>
             </div>
-          </button>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
 }
 
-/** Renders one walkthrough's markdown; used by the drawer's Walkthrough panel. */
-export function WalkthroughDetail({ walkthrough: w, onBack, onOpen }: { walkthrough: import('@/lib/walkthroughs').Walkthrough; onBack: () => void; onOpen: (slug: string) => void }) {
-  const diagram = useStore((s) => s.diagram);
-  const setDiagram = useStore((s) => s.setDiagram);
-  const newDiagram = useStore((s) => s.newDiagram);
-  const toast = useStore((s) => s.toast);
-  const setHelp = useDialogStore((s) => s.setHelp);
-  const [results, setResults] = useState<CheckResult[] | null>(null);
+/**
+ * The drawer's view of a walkthrough while it is being run: how far in you are,
+ * every step with a tick beside the ones that check out, and the whole-diagram
+ * **Check my work**. Clicking a step moves the coach mark to it.
+ */
+export function WalkthroughOutline({ walkthrough: w, onOpen }: { walkthrough: Walkthrough; onOpen: (slug: string) => void }) {
+  const plan = useTour((s) => s.plan);
+  const index = useTour((s) => s.index);
+  const goTo = useTour((s) => s.goTo);
+  // Select the whole map, not `progress[slug] ?? []`: a selector that builds a
+  // fresh array when there is no entry yet hands zustand a new snapshot on
+  // every render, which is an infinite re-render.
+  const progress = useTour((s) => s.progress);
+  const doneSteps = progress[w.slug] ?? [];
+  const running = plan?.slug === w.slug;
+  const [reading, setReading] = useState(false);
 
-  // Results go stale the moment the canvas changes, so drop them rather than
-  // leave a pass from before the edit on screen.
-  useEffect(() => setResults(null), [w.slug, diagram]);
-
-  /** Replaces the canvas, keeping whatever was there in the diagram library. */
-  const replaceCanvas = async (json: string | null, confirm: { title: string; message: string; confirmLabel: string }, done: (name: string) => string) => {
-    try {
-      const d = json ? parseDiagramFile(json) : null;
-      if (diagram.tables.length && !(await confirmDialog(confirm))) return;
-      await startFreshDiagramEntry();
-      if (d) setDiagram(d);
-      else newDiagram(w.dialect);
-      setHelp(false);
-      toast('success', done(d?.name ?? 'a blank canvas'));
-    } catch (e) {
-      toast('error', e instanceof Error ? e.message : 'Could not load that diagram.');
-    }
-  };
-
-  const setUp = () =>
-    replaceCanvas(
-      w.startJson ?? null,
-      {
-        title: `Set up the canvas for "${w.title}"?`,
-        message: 'The current diagram stays in the diagram library (File → Open recent…); what this walkthrough starts from takes its place on the canvas.',
-        confirmLabel: 'Set it up',
-      },
-      () => `Canvas set up for "${w.title}". Start at step 1.`,
+  if (reading) {
+    return (
+      <div className="wt-detail">
+        <button className="btn btn--sm wt-detail__back" onClick={() => setReading(false)}>
+          <ArrowLeft size={14} /> Back to the steps
+        </button>
+        <WalkthroughDocument walkthrough={w} onOpen={onOpen} />
+      </div>
     );
+  }
 
-  const openDiagram = () =>
-    replaceCanvas(
-      w.diagramJson ?? null,
-      {
-        title: 'Open the finished diagram?',
-        message: 'The current diagram stays in the diagram library (File → Open recent…); this walkthrough’s finished diagram takes its place on the canvas.',
-        confirmLabel: 'Open diagram',
-      },
-      (name) => `Loaded "${name}" from "${w.title}".`,
-    );
+  return (
+    <div className="wt-detail">
+      <h2 className="wt-detail__title">{w.title}</h2>
+      <div className="wt-card__meta wt-detail__meta">
+        <span className="badge">{LEVEL_LABEL[w.level] ?? w.level}</span>
+        <span className="wt-card__minutes">
+          <Clock size={12} /> {w.minutes} min
+        </span>
+        <span className="wt-card__minutes">{w.dialect}</span>
+      </div>
+      <div className="wt-run">
+        <button className="btn btn--primary" onClick={() => (running ? goTo(index) : startTour(w, running ? index : -1))}>
+          <Play size={14} /> {running ? 'Show the step card' : doneSteps.length ? 'Resume the walkthrough' : 'Run the walkthrough'}
+        </button>
+        {(w.startJson || w.startsEmpty) && (
+          <button className="btn" onClick={() => void setUpCanvas(w)}>
+            <Wand2 size={14} /> Set up the canvas
+          </button>
+        )}
+        <button className="btn" onClick={() => setReading(true)}>
+          <BookOpen size={14} /> Read the whole thing
+        </button>
+      </div>
+      <StepOutline walkthrough={w} onJump={(i) => (running ? goTo(i) : startTour(w, i))} current={running ? index : null} done={doneSteps} />
+      {w.checks.length > 0 && <WalkthroughCheck checks={w.checks} />}
+      {w.diagramJson && (
+        <button className="btn wt-detail__open" onClick={() => void openFinishedDiagram(w)}>
+          <FolderOpen size={14} /> Open the finished diagram
+        </button>
+      )}
+      <NextLinks walkthrough={w} onOpen={onOpen} />
+    </div>
+  );
+}
 
-  // Unordered: a reader who added the same tables in a different order has
-  // still done the walkthrough. CI holds the companion diagram to the order.
-  const check = () => setResults(runWalkthroughChecks(w.checks, diagram, { ordered: false }));
+function StepOutline({ walkthrough: w, onJump, current, done }: { walkthrough: Walkthrough; onJump: (index: number) => void; current: number | null; done: number[] }) {
+  const steps = useMemo(() => buildTourPlan(w).steps.map((s) => ({ n: s.n, title: s.title })), [w]);
+  if (!steps.length) return null;
+  return (
+    <div className="wt-outline">
+      {steps.map((s, i) => {
+        const classes = ['wt-outline__step'];
+        if (current === i) classes.push('wt-outline__step--on');
+        if (done.includes(s.n)) classes.push('wt-outline__step--done');
+        return (
+          <button key={s.n} className={classes.join(' ')} onClick={() => onJump(i)}>
+            <span className="wt-outline__num">{done.includes(s.n) ? <Check size={11} /> : s.n}</span>
+            <span>{s.title}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
+/** The walkthrough as the document it is on disk, for reading rather than doing. */
+export function WalkthroughDocument({ walkthrough: w, onOpen }: { walkthrough: Walkthrough; onOpen: (slug: string) => void }) {
   // Intercept the walkthrough's own links: to another walkthrough, navigate
-  // within this browser; to its companion diagram, open it on the canvas.
+  // within the browser; to its companion diagram, open it on the canvas.
   // Everything else (an anchor, a source-file link) has nowhere to go inside
   // the app, so it is swallowed rather than left to 404.
   const onClick = (e: React.MouseEvent) => {
@@ -142,65 +200,31 @@ export function WalkthroughDetail({ walkthrough: w, onBack, onOpen }: { walkthro
     e.preventDefault();
     const toSlug = /^(\d{2}-[a-z0-9-]+)\.md/.exec(href);
     if (toSlug) onOpen(toSlug[1]);
-    else if (href.endsWith('.dbviz.json')) void openDiagram();
+    else if (href.endsWith('.dbviz.json')) void openFinishedDiagram(w);
   };
-
   return (
-    <div className="wt-detail">
-      <button className="btn btn--sm wt-detail__back" onClick={onBack}>
-        <ArrowLeft size={14} /> All walkthroughs
-      </button>
-      <h2 className="wt-detail__title">{w.title}</h2>
-      <div className="wt-card__meta wt-detail__meta">
-        <span className="badge">{LEVEL_LABEL[w.level] ?? w.level}</span>
-        <span className="wt-card__minutes">
-          <Clock size={12} /> {w.minutes} min
-        </span>
-        <span className="wt-card__minutes">{w.dialect}</span>
-      </div>
-      {(w.startJson || w.startsEmpty) && (
-        <div className="wt-detail__setup">
-          <button className="btn btn--primary" onClick={() => void setUp()}>
-            <Wand2 size={14} /> Set up the canvas
-          </button>
-          <p>
-            {w.startsEmpty
-              ? 'Clears the canvas, which is where this one starts. Nothing is lost: the current diagram stays in the library.'
-              : 'Puts the tables, connections and types this walkthrough starts from on the canvas — the state the one before it leaves behind — so you can begin here without doing the whole series first.'}
-          </p>
-        </div>
-      )}
-      <div className="wt-doc" onClick={onClick}>
-        {renderMarkdown(w.body)}
-      </div>
-      {w.checks.length > 0 && <WalkthroughCheck results={results} onCheck={check} />}
-      {w.diagramJson && (
-        <button className="btn wt-detail__open" onClick={() => void openDiagram()}>
-          <FolderOpen size={14} /> Open the finished diagram
-        </button>
-      )}
-      {w.next.length > 0 && w.next[0] !== 'none' && (
-        <div className="wt-detail__next">
-          <MousePointerClick size={14} />
-          <span>Next:</span>
-          {w.next.map((slug) => (
-            <button key={slug} className="btn btn--sm" onClick={() => onOpen(slug)}>
-              {slug.replace(/^\d{2}-/, '').replace(/-/g, ' ')}
-            </button>
-          ))}
-        </div>
-      )}
+    <div className="wt-doc" onClick={onClick}>
+      {renderMarkdown(stripStepMeta(w.body))}
     </div>
   );
 }
 
-/** The "did I do it right?" panel at the foot of a walkthrough. */
-function WalkthroughCheck({ results, onCheck }: { results: CheckResult[] | null; onCheck: () => void }) {
+/** The "did I build the right thing?" panel: this walkthrough's own checks against the live canvas. */
+function WalkthroughCheck({ checks }: { checks: string[] }) {
+  const diagram = useStore((s) => s.diagram);
+  const [results, setResults] = useState<CheckResult[] | null>(null);
+
+  // Results go stale the moment the canvas changes, so drop them rather than
+  // leave a pass from before the edit on screen.
+  useEffect(() => setResults(null), [checks, diagram]);
+
+  // Unordered: a reader who added the same tables in a different order has
+  // still done the walkthrough. CI holds the companion diagram to the order.
   const passed = results?.filter((r) => r.ok).length ?? 0;
   const all = results?.length ?? 0;
   return (
     <div className="wt-check">
-      <button className="btn btn--primary" onClick={onCheck}>
+      <button className="btn btn--primary" onClick={() => setResults(runWalkthroughChecks(checks, diagram, { ordered: false }))}>
         <ListChecks size={14} /> Check my work
       </button>
       {results && (
@@ -218,6 +242,21 @@ function WalkthroughCheck({ results, onCheck }: { results: CheckResult[] | null;
           </ul>
         </>
       )}
+    </div>
+  );
+}
+
+function NextLinks({ walkthrough: w, onOpen }: { walkthrough: Walkthrough; onOpen: (slug: string) => void }) {
+  if (!w.next.length || w.next[0] === 'none') return null;
+  return (
+    <div className="wt-detail__next">
+      <MousePointerClick size={14} />
+      <span>Next:</span>
+      {w.next.map((slug) => (
+        <button key={slug} className="btn btn--sm" onClick={() => onOpen(slug)}>
+          {slug.replace(/^\d{2}-/, '').replace(/-/g, ' ')}
+        </button>
+      ))}
     </div>
   );
 }

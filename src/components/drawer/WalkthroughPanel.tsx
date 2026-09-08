@@ -1,13 +1,18 @@
 /**
- * The drawer tab that follows the active walkthrough: opened by picking one
- * from the Help modal's browser (which then closes), it keeps showing that
- * walkthrough's text here so the canvas stays visible while it's followed.
+ * The drawer tab that follows the walkthrough you are on: its outline, how far
+ * in you are, and the whole-diagram **Check my work**.
+ *
+ * The walkthrough itself is run by the coach mark (src/components/tour/TourHost.tsx),
+ * which floats over the canvas and moves from one part of the app to the next.
+ * This tab is the map beside it: every step in one list, ticks against the ones
+ * that check out, a click to jump anywhere, and the full text underneath for
+ * anyone who would rather read than be led.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { BookOpen } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { useDialogStore } from '@/components/ui/Modal';
-import { WalkthroughDetail } from '@/components/ui/Walkthroughs';
+import { WalkthroughOutline } from '@/components/ui/Walkthroughs';
 
 // This panel unmounts whenever the drawer's tab switches away from
 // 'walkthrough', which would otherwise reset scroll to the top on return.
@@ -48,7 +53,7 @@ export function WalkthroughPanel() {
     return (
       <div className="wt-panel-empty">
         <BookOpen size={22} />
-        <p>Open a walkthrough to follow it here while you work on the canvas.</p>
+        <p>Pick a walkthrough and it runs as a clickthrough: a card follows you around the app, one step at a time, checking your work as you go.</p>
         <button className="btn btn--sm btn--primary" onClick={() => setHelp(true, 'list')}>
           Browse walkthroughs
         </button>
@@ -58,7 +63,7 @@ export function WalkthroughPanel() {
 
   return (
     <div ref={rootRef}>
-      <WalkthroughDetail walkthrough={w} onBack={() => setHelp(true, 'list')} onOpen={openWalkthrough} />
+      <WalkthroughOutline walkthrough={w} onOpen={openWalkthrough} />
     </div>
   );
 }

@@ -113,9 +113,10 @@ function HelpContent() {
           <BookOpen size={13} /> Browse the fifteen walkthroughs
         </button>{' '}
         for the long one: one bookshop database built across all fifteen, each picking up where the last left off — tables, connections, external groups,
-        enums, data flows, Simulate, indexes, views, importing someone else's schema, and running the result on a real database. Start anywhere: every
-        walkthrough has a <strong>Set up the canvas</strong> button that puts the diagram it starts from in front of you, and a{' '}
-        <strong>Check my work</strong> button that tells you whether you built what it describes.
+        enums, data flows, Simulate, indexes, views, importing someone else's schema, and running the result on a real database. They run as
+        clickthroughs: a card follows you around the window, points at what each step is about, ticks itself off as you do it, and will{' '}
+        <strong>Do it for me</strong> on any step you would rather watch. Start anywhere — the card you get before step 1 has a{' '}
+        <strong>Set up the canvas</strong> button that puts the diagram that walkthrough starts from in front of you.
       </p>
       <h4>Find anything</h4>
       <p>

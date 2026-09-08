@@ -132,6 +132,19 @@ divided by a count.
 
 ### 1. Add order_items
 
+<!-- step
+target: ui:add-table
+goals:
+  - table | order_items
+  - column | order_items.order_id : BIGINT
+  - column | order_items.book_id : BIGINT
+  - column | order_items.quantity : INTEGER
+  - default | order_items.quantity : 1
+  - check | order_items.quantity : quantity > 0
+  - column | order_items.unit_price_cents : INTEGER
+  - check | order_items.unit_price_cents : unit_price_cents >= 0
+-->
+
 Press `T`, rename the new table `order_items`, and give it these columns:
 
 | Name | Type | Flags | Default | Check |
@@ -153,6 +166,16 @@ rectangle (drag it in if not).
 
 ### 2. Connect order_items to its two parents
 
+<!-- step
+target: field:On delete
+goals:
+  - fk | order_items.order_id -> orders.id
+  - fk | order_items.book_id -> books.id
+  - reads | order_items is part of orders
+  - ondelete | order_items -> orders : CASCADE
+  - ondelete | order_items -> books : RESTRICT
+-->
+
 Drag the handle beside `order_items.order_id` onto `orders.id`, and the handle
 beside `order_items.book_id` onto `books.id`. In the inspector, set the first
 connection's **Reads as** to *is part of* and its **On delete** to *CASCADE*;
@@ -168,6 +191,19 @@ for the next steps — a path from `order_items` to `orders`, which is what lets
 a derivation say `orders.status` without you restating the join.
 
 ### 3. Add daily_sales
+
+<!-- step
+target: ui:add-table
+goals:
+  - table | daily_sales
+  - column | daily_sales.book_id : BIGINT
+  - flags | daily_sales.book_id : pk
+  - column | daily_sales.day : DATE
+  - flags | daily_sales.day : pk
+  - no column | daily_sales.id
+  - column | daily_sales.units : INTEGER
+  - column | daily_sales.revenue_cents : INTEGER
+-->
 
 Press `T`, rename the new table `daily_sales`, and colour it *orange* — the
 convention for a derived table across these walkthroughs. Give it four
@@ -189,6 +225,14 @@ Two columns flagged **PK** makes a composite primary key, exactly like
 
 ### 4. Connect the dimension keys
 
+<!-- step
+target: field:Reads as
+goals:
+  - fk | daily_sales.book_id -> books.id
+  - fk | customer_cadence.customer_id -> customers.id
+  - reads | customer_cadence extends customers
+-->
+
 Drag from `daily_sales.book_id`'s handle onto `books.id`, and from
 `customer_cadence.customer_id`'s handle onto `customers.id` — that second
 table has been sitting there since walkthrough 02 with its key pointing at
@@ -205,6 +249,13 @@ foreign keys already have the index PostgreSQL needs without you adding one.
 
 ### 5. Draw the first data flow
 
+<!-- step
+target: table:order_items
+goals:
+  - flow | order_items -> daily_sales
+hint: The orange handle sits at the right edge of the table header, not beside a column.
+-->
+
 Hover `order_items` and drag the small orange handle at the right edge of its
 header — the same one the empty **Simulate** tab calls out as "drag from the
 orange handle in a table header onto another table to draw a data flow" —
@@ -215,6 +266,14 @@ the inspector open on the new connection with **Kind** already *Data flow*
 and **Reads as** *feeds*.
 
 ### 6. Derive day, units and revenue_cents
+
+<!-- step
+target: section:Derived columns
+goals:
+  - derivation | daily_sales.day : CAST(orders.placed_at AS DATE) group by book_id, CAST(orders.placed_at AS DATE) where orders.status = 'paid'
+  - derivation | daily_sales.units : SUM(quantity) group by book_id, CAST(orders.placed_at AS DATE) where orders.status = 'paid'
+  - derivation | daily_sales.revenue_cents : SUM(quantity * unit_price_cents) group by book_id, CAST(orders.placed_at AS DATE) where orders.status = 'paid'
+-->
 
 In the **Derived columns (0)** section, click **Add** three times and fill
 each entry. All three share the same *Group by* and *Filter (WHERE)* — after
@@ -247,6 +306,12 @@ derivation because its group-by text is literally the name of a column of
 
 ### 7. Add the upsert as a tagged query
 
+<!-- step
+target: field:Tagged query
+goals:
+  - query | order_items -> daily_sales
+-->
+
 The structured form describes a `SELECT`, not what happens when a day's
 numbers are recomputed the next night and the rows already exist — that is
 `ON CONFLICT`, which derivations cannot express. Scroll to **Tagged query**
@@ -271,6 +336,13 @@ other.
 
 ### 8. Simulate daily_sales
 
+<!-- step
+target: panel:simulate
+goals:
+  - simulate | daily_sales
+  - simulating | daily_sales
+-->
+
 Click **Simulate** beside **Derived columns (3)** (or select `daily_sales`
 and press `S`).
 
@@ -281,6 +353,13 @@ landing in `daily_sales` on the right — at the defaults (*Rows per input*
 left to edit it and watch the right side recompute.
 
 ### 9. Keep the promise: derive avg_gap_days and order_count
+
+<!-- step
+target: section:Derived columns
+goals:
+  - derivation | customer_cadence.avg_gap_days : AVG(DIFF(CAST(placed_at AS DATE))) group by customer_id order by placed_at partition by customer_id where status <> 'cancelled'
+  - derivation | customer_cadence.order_count : COUNT(*) group by customer_id where status <> 'cancelled'
+-->
 
 Select the dashed edge from `orders` to `customer_cadence` — the one you drew
 in walkthrough 02 and left with **Derived columns (0)**. Nothing about it needs
@@ -303,6 +382,13 @@ derivation's own, below the window), add `customer_id`. *Filter (WHERE)*:
 inside an aggregate, so the generator builds the inner query first.
 
 ### 10. Simulate customer_cadence and read the numbers
+
+<!-- step
+target: panel:simulate
+goals:
+  - simulate | customer_cadence
+  - simulating | customer_cadence
+-->
 
 Select `customer_cadence` and press `S`.
 

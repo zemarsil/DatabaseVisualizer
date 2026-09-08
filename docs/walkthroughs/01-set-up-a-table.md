@@ -118,6 +118,12 @@ but never emitted as DDL.
 
 ### 1. Tighten what walkthrough 00 left loose
 
+<!-- step
+target: section:Columns
+goals:
+  - flags | authors.name : nn
+-->
+
 Select `authors`. Its `id` is already `BIGSERIAL` with **PK**, **NN** and **AI**
 lit, from the last walkthrough. `name` is not: it has no flags at all, which
 means a row with no author name is legal today. Tick **NN** on it.
@@ -132,6 +138,12 @@ it is the cheapest documentation in the app.
 `COMMENT ON COLUMN public.authors.id` statement under the `CREATE TABLE`.
 
 ### 2. Type the rest of the columns without touching the mouse
+
+<!-- step
+target: section:Columns
+goals:
+  - column | authors.country : CHAR(2)
+-->
 
 Click into the `name` row's name cell and press `Enter`. A new row appears below
 and the cursor is already in it. Type a name, `Tab` across to the type, and
@@ -150,6 +162,13 @@ generated `CREATE TABLE public.authors`.
 
 ### 3. Put a check on a single column
 
+<!-- step
+target: section:Columns
+goals:
+  - check | authors.country : country = upper(country)
+hint: *Check* only appears once the row is expanded with the chevron at its left.
+-->
+
 Expand the `country` row using the chevron at its left. Under the row you get
 *Default*, *Check* and *Comment*. In *Check*, type:
 
@@ -165,6 +184,21 @@ generator adds those. In *Comment*, write why the column is nullable:
 SQL tab, followed by a `COMMENT ON COLUMN public.authors.country` statement.
 
 ### 4. Finish books, and use UQ for the natural key
+
+<!-- step
+target: section:Columns
+goals:
+  - flags | books.title : nn
+  - column | books.isbn : CHAR(13)
+  - flags | books.isbn : nn uq -pk
+  - column | books.price_cents : INTEGER
+  - default | books.price_cents : 0
+  - check | books.price_cents : price_cents >= 0
+  - column | books.published_on : DATE
+  - column | books.in_print : BOOLEAN
+  - column | books.added_at : TIMESTAMPTZ
+  - default | books.added_at : now()
+-->
 
 Select `books`. It has `id`, `author_id` and `title` from walkthrough 00. Tick
 **NN** on `title`, then add the five columns it is missing:
@@ -195,6 +229,12 @@ still sitting at the bottom of the generated statement.
 
 ### 5. Add a check that spans the table
 
+<!-- step
+target: section:Table checks
+goals:
+  - check | books : published_on IS NULL OR published_on >= DATE '1450-01-01'
+-->
+
 A condition on one column belongs to that column. A condition that mentions two
 belongs to the table. With `books` still selected, scroll the inspector to
 *Table checks (0)*, add one, and type:
@@ -208,6 +248,18 @@ published_on IS NULL OR published_on >= DATE '1450-01-01'
 attached to a column.
 
 ### 6. Add customers from nothing
+
+<!-- step
+target: ui:add-table
+goals:
+  - table | customers
+  - column | customers.id : BIGSERIAL
+  - flags | customers.id : pk ai
+  - column | customers.email : TEXT
+  - flags | customers.email : nn uq
+  - column | customers.created_at : TIMESTAMPTZ
+  - default | customers.created_at : now()
+-->
 
 Press `T`. (Double-clicking empty canvas, the **+ Table** button, and
 right-click → *Add table here* all do the same thing; the last two put the table
@@ -234,6 +286,10 @@ the day a table passes two billion rows is a bad day to discover the column was
 drops the redundant `NOT NULL`, because a primary key is already not null.
 
 ### 7. Tidy the canvas
+
+<!-- step
+target: table:customers
+-->
 
 Drag `customers` clear of the other two, or select it and nudge with the
 `Arrow keys` (10 px a press, `Shift+Arrow keys` for 50). Turn on **View → Snap to
