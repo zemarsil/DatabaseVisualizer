@@ -121,6 +121,67 @@ describe('lintDiagram', () => {
     expect(afterFix(d, 'duplicate-index')).not.toContain('duplicate-index');
   });
 
+  it('flags both tables in a name clash, each fix targeting only itself (issue #24)', () => {
+    const d = emptyDiagram();
+    // order_items sits earlier in diagram order than reviews, matching the
+    // walkthrough this bug was found in: renaming an *earlier* table to clash
+    // with a *later* one used to make the linter blame the later, untouched
+    // table instead of the one actually renamed.
+    const orderItems = createTable({ name: 'order_items' });
+    orderItems.columns.push(createColumn({ name: 'id', primaryKey: true }));
+    const reviews = createTable({ name: 'reviews' });
+    reviews.columns.push(createColumn({ name: 'id', primaryKey: true }));
+    d.tables.push(orderItems, reviews);
+    orderItems.name = 'reviews'; // simulate the rename that creates the clash
+
+    const findings = lintDiagram(d).filter((f) => f.rule === 'duplicate-table-name');
+    expect(findings).toHaveLength(2);
+    expect(findings.map((f) => f.tableId).sort()).toEqual([orderItems.id, reviews.id].sort());
+
+    const findingFor = (tableId: string) => findings.find((f) => f.tableId === tableId)!;
+
+    // Fixing the renamed table only renames the renamed table.
+    const fixRenamed = structuredClone(d);
+    findingFor(orderItems.id).fix!.apply(fixRenamed);
+    expect(fixRenamed.tables.find((t) => t.id === orderItems.id)!.name).toBe('reviews_2');
+    expect(fixRenamed.tables.find((t) => t.id === reviews.id)!.name).toBe('reviews');
+
+    // Fixing the original table only renames the original table.
+    const fixOriginal = structuredClone(d);
+    findingFor(reviews.id).fix!.apply(fixOriginal);
+    expect(fixOriginal.tables.find((t) => t.id === reviews.id)!.name).toBe('reviews_2');
+    expect(fixOriginal.tables.find((t) => t.id === orderItems.id)!.name).toBe('reviews');
+  });
+
+  it('flags both columns in a name clash, each fix targeting only itself', () => {
+    const d = emptyDiagram();
+    const t = createTable({ name: 'orders' });
+    const idCol = createColumn({ name: 'id', primaryKey: true });
+    const quantityCol = createColumn({ name: 'quantity' });
+    const total = createColumn({ name: 'total' });
+    t.columns.push(idCol, quantityCol, total);
+    d.tables.push(t);
+    total.name = 'quantity'; // simulate the rename that creates the clash
+
+    const findings = lintDiagram(d).filter((f) => f.rule === 'duplicate-column-name');
+    expect(findings).toHaveLength(2);
+    expect(findings.map((f) => f.columnId).sort()).toEqual([quantityCol.id, total.id].sort());
+
+    const findingFor = (columnId: string) => findings.find((f) => f.columnId === columnId)!;
+
+    const fixTotal = structuredClone(d);
+    findingFor(total.id).fix!.apply(fixTotal);
+    const fixedTable1 = fixTotal.tables[0];
+    expect(fixedTable1.columns.find((c) => c.id === total.id)!.name).toBe('quantity_2');
+    expect(fixedTable1.columns.find((c) => c.id === quantityCol.id)!.name).toBe('quantity');
+
+    const fixQuantity = structuredClone(d);
+    findingFor(quantityCol.id).fix!.apply(fixQuantity);
+    const fixedTable2 = fixQuantity.tables[0];
+    expect(fixedTable2.columns.find((c) => c.id === quantityCol.id)!.name).toBe('quantity_2');
+    expect(fixedTable2.columns.find((c) => c.id === total.id)!.name).toBe('quantity');
+  });
+
   it('handles empty names, empty tables, reserved words and long identifiers', () => {
     const d = emptyDiagram();
     const t = createTable({ name: 'order' });

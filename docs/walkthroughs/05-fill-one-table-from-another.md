@@ -314,10 +314,7 @@ derivation's own, below the window), add `customer_id`. *Filter (WHERE)*:
 `status <> 'cancelled'`.
 
 **Entry 2 — `order_count`:** target column `order_count`, aggregate `COUNT`.
-*Expression on orders*: `id` — not `*`; a bare star cannot be aliased inside
-the subquery a windowed derivation forces the generator to write, so a
-`NOT NULL` column such as `id` is the reliable way to count rows here. Group
-by `customer_id`, same filter as entry 1.
+*Expression on orders*: `*`. Group by `customer_id`, same filter as entry 1.
 
 **You should see:** *Generated from these derivations* showing `AVG` and
 `COUNT` computed in an outer `SELECT ... GROUP BY customer_id` over a `FROM
@@ -458,12 +455,12 @@ COMMENT ON TABLE public.order_items IS 'The grain daily_sales rolls up: one row 
 --   Full rebuild, not incremental: one new order can change the average gap for every order this customer ever placed, so there is nothing sane to upsert.
 --   Derived columns:
 --     avg_gap_days = AVG(DIFF(CAST(placed_at AS DATE)) OVER (PARTITION BY customer_id ORDER BY placed_at)) GROUP BY customer_id WHERE status <> 'cancelled'
---     order_count = COUNT(id) GROUP BY customer_id WHERE status <> 'cancelled'
+--     order_count = COUNT(*) GROUP BY customer_id WHERE status <> 'cancelled'
 --   Built from the derivation metadata:
 --   INSERT INTO public.customer_cadence (customer_id, avg_gap_days, order_count)
 --   SELECT customer_id, AVG(avg_gap_days), COUNT(order_count)
 --   FROM (
---     SELECT customer_id AS customer_id, CAST(placed_at AS DATE) - LAG(CAST(placed_at AS DATE)) OVER (PARTITION BY customer_id ORDER BY placed_at) AS avg_gap_days, id AS order_count
+--     SELECT customer_id AS customer_id, CAST(placed_at AS DATE) - LAG(CAST(placed_at AS DATE)) OVER (PARTITION BY customer_id ORDER BY placed_at) AS avg_gap_days, 1 AS order_count
 --     FROM public.orders
 --     WHERE status <> 'cancelled'
 --   ) AS w
@@ -512,12 +509,6 @@ COMMENT ON TABLE public.order_items IS 'The grain daily_sales rolls up: one row 
 - **A window needs an `Order by` key or it is incomplete**, the same as a
   missing target column — "previous row" means nothing without an order, so
   `isDerivationComplete` refuses it and the generator leaves it out.
-- **A bare `COUNT(*)` cannot share a subquery with a windowed derivation.**
-  When a plain aggregate and a sequence derivation share the same *Group by*
-  and *Filter*, the generator batches them into one statement built around a
-  subquery, and a bare `*` cannot be given a column alias inside it. Count a
-  `NOT NULL` column such as `id` instead, as this walkthrough's
-  `order_count` does.
 - **`DIFF`'s unit comes from the type you feed it, not the column name you
   are filling.** `DIFF` over a `TIMESTAMPTZ` gives seconds; over a `DATE`, or
   a value cast to one, it gives whole days. Nothing stops you from naming a

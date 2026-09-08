@@ -209,6 +209,39 @@ describe('generateSchema', () => {
     expect(generateSchema(d).warnings).toEqual(['Data flow src -> dst has an incomplete derivation; it was left out of the generated snippet.']);
   });
 
+  it('projects 1 instead of a bare * when a COUNT(*) derivation batches with a windowed one', () => {
+    const d = diagramFrom(
+      `CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT, placed_at DATE);
+       CREATE TABLE cadence (customer_id INT, avg_gap_days INT, order_count INT);`,
+      'postgresql',
+    );
+    const [orders, cadence] = [d.tables.find((t) => t.name === 'orders')!, d.tables.find((t) => t.name === 'cadence')!];
+    const col = (name: string) => cadence.columns.find((c) => c.name === name)!.id;
+    const rel = createRelationship({
+      kind: 'flow',
+      sourceTableId: orders.id,
+      sourceColumnIds: [],
+      targetTableId: cadence.id,
+      targetColumnIds: [],
+      derivations: [
+        createDerivation({
+          targetColumnId: col('avg_gap_days'),
+          expression: 'placed_at',
+          aggregate: 'AVG',
+          groupBy: ['customer_id'],
+          window: { fn: 'DIFF', orderBy: ['placed_at'], partitionBy: ['customer_id'] },
+        }),
+        createDerivation({ targetColumnId: col('order_count'), expression: '*', aggregate: 'COUNT', groupBy: ['customer_id'] }),
+      ],
+    });
+    d.relationships.push(rel);
+    const sql = generateFlowSql(d, rel.id);
+    // the inner subquery projects 1 AS order_count, not the unaliasable `* AS order_count`
+    expect(sql).toContain('1 AS order_count');
+    expect(sql).not.toContain('* AS order_count');
+    expect(sql).toContain('COUNT(order_count)');
+  });
+
   it('leaves flows without derivations exactly as before', () => {
     const d = diagramFrom(`CREATE TABLE src (id INT PRIMARY KEY); CREATE TABLE dst (id INT PRIMARY KEY);`, 'postgresql');
     const rel = createRelationship({ kind: 'flow', sourceTableId: d.tables[0].id, sourceColumnIds: [], targetTableId: d.tables[1].id, targetColumnIds: [], query: 'INSERT INTO dst SELECT id FROM src;' });
