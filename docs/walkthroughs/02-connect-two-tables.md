@@ -121,9 +121,14 @@ one you drop *onto* becomes its **target**, and for a foreign key those map
 directly onto SQL: source is the referencing (child, "many") side, target is
 the referenced (parent, "one") side. You started at `books`, so `books`
 referencing `authors` is exactly what gets built. Starting at `authors`
-instead would still draw a line, but it would ask PostgreSQL to make
-`books.author_id` unique underneath `authors.id` — backwards, and wrong in a
-way that says nothing at the moment you draw it.
+instead would still draw a line — the app never refuses a drag — and it would
+mean the opposite: `authors` referencing `books.author_id`, a column that
+does not happen to be unique. Sometimes a backwards foreign key still runs,
+quietly meaning the opposite of what you intended; this one does not even get
+that far, because **Problems** rejects a reference onto a non-unique column
+on sight (more on that below). Either way, checking the direction is cheaper
+than finding out later, and two places tell you at a glance: the crow's foot
+sits on the *referencing* end, and the inspector spells it out in words.
 
 **You should see:** a solid line with a crow's foot at the `books` end and a
 plain bar at the `authors` end, and the inspector opens on the new connection

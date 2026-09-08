@@ -218,7 +218,7 @@ table* at `10` and *Seed* at `1`, then click **Insert rows**.
 
 **You should see:** a result list of `INSERT` statements (one batch per
 table, largest tables split into chunks of 50 rows) and a toast reading
-`Inserted 40 rows.` Go back to the **Query** tab and re-run the same
+`Inserted 50 rows.` Go back to the **Query** tab and re-run the same
 `SELECT * FROM order_items LIMIT 100;` — now it returns rows.
 
 The generator respects the schema rather than guessing: every `book_id` and
@@ -226,21 +226,23 @@ The generator respects the schema rather than guessing: every `book_id` and
 and `orders`, `isbn` and `email` never repeat because they are marked
 **UQ**, and `orders.status` only ever gets one of the four `order_status`
 values. Column *names* steer plausible content too — `email` becomes
-`ada.lovelace1@example.com`, `created_at` becomes a recent timestamp — and
+`alan.hopper1@example.com`, `created_at` becomes a recent timestamp — and
 the same seed number always produces the same rows, so a seed script can
 live next to the schema and be re-run. Two real rows it produces for seed
-`1`:
+`1`, 10 rows per table:
 
 ```sql
--- authors (4 rows)
+-- authors (10 rows, first 2 shown)
 INSERT INTO public.authors (id, name, country) VALUES
   (1, 'Yukihiro Lovelace', 'JP'),
   (2, 'Guido Wilson', 'CA');
+  -- … 8 more rows
 
--- order_items (4 rows)
+-- order_items (10 rows, first 2 shown)
 INSERT INTO public.order_items (id, order_id, book_id, quantity, unit_price_cents) VALUES
-  (1, 4, 1, 330, 76),
-  (2, 1, 4, 388, 243);
+  (1, 10, 1, 450, 243),
+  (2, 1, 6, 461, 796);
+  -- … 8 more rows
 ```
 
 ### 7. Add a column to the diagram
@@ -406,7 +408,7 @@ here has its own index, which is exactly what keeps this diagram out of the
   bound from its CHECK, and once a column is constrained that way the
   generator stops trying to guess a *realistic* value from the name and
   just picks anything the CHECK allows, capped at 1000 when the CHECK sets
-  no ceiling. That is why the sample above seeds a `quantity` of 330 — a
+  no ceiling. That is why the sample above seeds a `quantity` of 450 — a
   valid row, not a realistic one. Add an upper bound
   (`quantity BETWEEN 1 AND 10`) if you want seed data that looks plausible,
   not merely legal.
