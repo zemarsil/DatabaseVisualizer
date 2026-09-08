@@ -179,10 +179,12 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   const stub = `M ${g.sx} ${g.sy} L ${g.sx + sDir * MARKER} ${g.sy}`;
 
   // A plain foreign key stays unlabelled so the canvas keeps quiet; anything
-  // that carries meaning (another kind, a chosen verb, a query, a derivation)
-  // says so. The verb reads the edge, the sigma chip counts the derivations.
+  // that carries meaning (another kind, a chosen verb, a query, a derivation,
+  // a written reverse label) says so. The verb reads the edge, the sigma chip
+  // counts the derivations.
   const namedVerb = Boolean(r.verb) && r.verb !== DEFAULT_VERBS[kind];
-  const showLabel = kind !== 'fk' || namedVerb || hasQuery || derivationCount > 0 || selected || data.traced;
+  const customInverse = r.inverseName?.trim();
+  const showLabel = kind !== 'fk' || namedVerb || hasQuery || derivationCount > 0 || Boolean(customInverse) || selected || data.traced;
   const labelText = r.name || (kind === 'fk' && !namedVerb ? 'FK' : verb.forward);
   const Icon = hasQuery && kind === 'fk' ? Code2 : KIND_ICON[kind];
   const tooltip = [summaries.join('\n'), hasQuery ? r.query!.trim() : '', r.note?.trim() ?? ''].filter(Boolean).join('\n\n');
@@ -193,10 +195,9 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   else if (hasQuery) labelClasses.push('edge-label--query');
   if (data.dimmed) labelClasses.push('edge-label--dim');
 
-  // How the connection reads from the target's side. A custom reverse label is
+  // How the connection reads from the target's side. A written reverse label is
   // part of the diagram so it always shows; the verb's own inverse would just be
   // noise on every edge, so it waits until the edge is selected or traced.
-  const customInverse = r.inverseName?.trim();
   const inverseText = customInverse || verb.inverse;
   const showInverseLabel = showLabel && Boolean(customInverse || selected || data.traced);
   const inverseLabelX = g.labelX + (g.tx - g.labelX) * 0.65;
