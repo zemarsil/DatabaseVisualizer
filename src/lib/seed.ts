@@ -25,6 +25,19 @@ export interface SeedOptions {
   nullRate?: number;
   /** Rows per INSERT statement (default 50). */
   batchSize?: number;
+  /**
+   * Values a column should sometimes take, by column id. The simulator passes
+   * the literals a data flow filters on (status = 'paid'), so the generated
+   * rows contain something for the filter to match. A hint that an enum or
+   * CHECK list does not allow is ignored.
+   */
+  valueHints?: Record<string, RawValue[]>;
+  /**
+   * Also generate rows for tables in external groups. The seed script never
+   * inserts into another database, but a simulation needs those tables to have
+   * rows, because they are where the data comes from.
+   */
+  includeExternal?: boolean;
 }
 
 export interface SeedResult {
@@ -105,7 +118,7 @@ const PERSON_TABLES = /(user|people|person|customer|employee|author|member|staff
 
 export type RawValue = null | boolean | number | string | { hex: string } | { expr: string };
 
-interface TypeInfo {
+export interface TypeInfo {
   base: string;
   args: number[];
   unsigned: boolean;
@@ -272,7 +285,7 @@ function byName(ctx: GenCtx, t: Table, col: Column, info: TypeInfo, i: number, u
     return undefined;
   }
   if (numeric) {
-    if (/(price|amount|total|cost|fee|salary|balance|subtotal|tax|discount|revenue|budget|wage|rate$)/.test(n)) return Number((rng.int(100, 99999) / 100).toFixed(2));
+    if (/(price|amount|total|cost|fee|salary|balance|subtotal|tax|discount|revenue|budget|wage|rate$)/.test(n)) return integer ? rng.int(100, 99999) : Number((rng.int(100, 99999) / 100).toFixed(2));
     if (/(quantity|qty|count|stock|units|items|seats|capacity)/.test(n)) return rng.int(1, 100);
     if (/^age$/.test(n)) return rng.int(18, 80);
     if (/year/.test(n)) return rng.int(1990, 2025);
@@ -383,24 +396,61 @@ interface FkLink {
   deferred: boolean;
 }
 
-export function generateSeed(d: Diagram, opts: SeedOptions = {}): SeedResult {
+/** The generated rows of one table, column by column. */
+export interface SeedTableRows {
+  table: Table;
+  /** Columns that got values (unnamed columns are skipped), in table order. */
+  columns: Column[];
+  /** column id -> one value per row */
+  store: Map<string, RawValue[]>;
+  infos: Map<string, TypeInfo>;
+  /** Number of rows generated (may be 0). */
+  n: number;
+}
+
+export interface SeedRows {
+  /** Tables in dependency order: parents before the tables that reference them. */
+  tables: SeedTableRows[];
+  rowCounts: Record<string, number>;
+  warnings: string[];
+}
+
+/** A hint value coerced to what the column can hold; undefined when it cannot. */
+function coerceHint(h: RawValue, info: TypeInfo, range: Range): RawValue | undefined {
+  if (h === null || typeof h === 'object') return undefined;
+  const text = typeof h === 'string' ? h : String(h);
+  if (range.oneOf && !range.oneOf.includes(text)) return undefined;
+  if (info.enumValues && !info.enumValues.includes(text)) return undefined;
+  const numeric = /^(TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT|INT2|INT4|INT8|SERIAL|BIGSERIAL|SMALLSERIAL|NUMERIC|DECIMAL|DEC|REAL|FLOAT|FLOAT4|FLOAT8|DOUBLE|DOUBLE PRECISION|MONEY|YEAR)$/.test(info.base);
+  if (numeric) {
+    const n = typeof h === 'number' ? h : Number(text);
+    if (!Number.isFinite(n)) return undefined;
+    if (range.min !== undefined && n < range.min) return undefined;
+    if (range.max !== undefined && n > range.max) return undefined;
+    return n;
+  }
+  if (/^(BOOL|BOOLEAN)$/.test(info.base)) return typeof h === 'boolean' ? h : /^(true|t|1|yes)$/i.test(text);
+  if (typeof h === 'boolean') return undefined;
+  return clampText(text, info);
+}
+
+/**
+ * Generate the rows without rendering them: the simulator reads these as the
+ * raw input tables of a data flow, and generateSeed formats them as INSERTs.
+ */
+export function seedRows(d: Diagram, opts: SeedOptions = {}): SeedRows {
   const rows = Math.max(0, Math.floor(opts.rows ?? 10));
   const seed = opts.seed ?? 1;
   const nullRate = Math.min(1, Math.max(0, opts.nullRate ?? 0.1));
-  const batchSize = Math.max(1, opts.batchSize ?? 50);
   const rng = new Rng(seed);
   const ctx: GenCtx = { d, rng, warnings: new Set() };
-  const external = externalTableIds(d);
+  const external = opts.includeExternal ? new Set<string>() : externalTableIds(d);
   const { order, deferred } = orderTables(d, external);
   const byId = new Map(d.tables.map((t) => [t.id, t] as const));
   /** tableId -> columnId -> values per row */
   const values = new Map<string, Map<string, RawValue[]>>();
   const rowCounts: Record<string, number> = {};
-  const statements: string[] = [];
-  const parts: string[] = [];
-  const q = (n: string) => quoteIdent(n, d.dialect);
-  const tn = (t: Table) => quoteQualified(t.name, t.schema, d.dialect);
-  const sequenceFixes: string[] = [];
+  const out: SeedTableRows[] = [];
 
   for (const t of order) {
     if (t.kind === 'view') continue;
@@ -509,6 +559,16 @@ export function generateSeed(d: Diagram, opts: SeedOptions = {}): SeedResult {
           row.set(c.id, null);
           continue;
         }
+        // A value a data flow filters on shows up in roughly half the rows, so
+        // the filter has both matches and misses to show.
+        const hints = opts.valueHints?.[c.id];
+        if (hints?.length && !unique) {
+          const usable = hints.map((h) => coerceHint(h, info, range)).filter((h): h is RawValue => h !== undefined);
+          if (usable.length && rng.chance(0.55)) {
+            row.set(c.id, rng.pick(usable));
+            continue;
+          }
+        }
         // A CHECK that pins the value down wins over what the name suggests.
         const constrained = Boolean(range.oneOf) || range.min !== undefined || range.max !== undefined;
         const named = constrained ? undefined : byName(ctx, t, c, info, i, unique);
@@ -523,8 +583,24 @@ export function generateSeed(d: Diagram, opts: SeedOptions = {}): SeedResult {
       for (const c of columns) store.get(c.id)!.push(row.get(c.id) ?? null);
     }
     rowCounts[t.id] = n;
-    if (n === 0) continue;
+    out.push({ table: t, columns, store, infos, n });
+  }
+  return { tables: out, rowCounts, warnings: [...ctx.warnings] };
+}
 
+export function generateSeed(d: Diagram, opts: SeedOptions = {}): SeedResult {
+  const seed = opts.seed ?? 1;
+  const batchSize = Math.max(1, opts.batchSize ?? 50);
+  const generated = seedRows(d, opts);
+  const { rowCounts } = generated;
+  const statements: string[] = [];
+  const parts: string[] = [];
+  const q = (n: string) => quoteIdent(n, d.dialect);
+  const tn = (t: Table) => quoteQualified(t.name, t.schema, d.dialect);
+  const sequenceFixes: string[] = [];
+
+  for (const { table: t, columns, store, infos, n } of generated.tables) {
+    if (n === 0) continue;
     const colList = columns.map((c) => q(c.name)).join(', ');
     const lines: string[] = [];
     for (let start = 0; start < n; start += batchSize) {
@@ -555,5 +631,5 @@ export function generateSeed(d: Diagram, opts: SeedOptions = {}): SeedResult {
     `-- Generated by Database Visualizer: ${totalRows} rows across ${Object.keys(rowCounts).length} tables, seed ${seed}. The same seed always gives the same rows.`,
     '-- Assumes the tables are empty: primary keys start at 1 and foreign keys point at the rows inserted here.',
   ];
-  return { statements, script: [head.join('\n'), ...parts].join('\n\n') + '\n', warnings: [...ctx.warnings], rowCounts, totalRows };
+  return { statements, script: [head.join('\n'), ...parts].join('\n\n') + '\n', warnings: generated.warnings, rowCounts, totalRows };
 }

@@ -34,6 +34,7 @@ import {
   Maximize,
   PanelRight,
   Pencil,
+  Play,
   Plus,
   Redo2,
   Route,
@@ -59,6 +60,7 @@ import { alignTables, distributeTables, groupBySchema, type AlignMode } from '@/
 import { copySelectionToClipboard, cutSelection, pasteFromClipboard } from '@/lib/canvasActions';
 import { PALETTE } from '@/lib/palette';
 import { useUi } from '@/store/useUi';
+import { useSimulation } from '@/store/useSimulation';
 import type { Store } from '@/store/useStore';
 
 /** What the user right-clicked. */
@@ -403,6 +405,22 @@ function traceItem(table: Table, env: MenuEnv): MenuAction {
   };
 }
 
+/** "Simulate data flowing in" for a table at least one data flow feeds. */
+function simulateItem(store: Store, table: Table): MenuAction {
+  const fed = store.diagram.relationships.some((r) => r.kind === 'flow' && r.targetTableId === table.id && r.sourceTableId !== table.id);
+  const sim = useSimulation.getState();
+  const on = sim.targetId === table.id;
+  return {
+    kind: 'action',
+    id: on ? 'simulate-stop' : 'simulate',
+    label: on ? 'Stop simulating' : 'Simulate data flowing in',
+    icon: Play,
+    hint: on ? 'Esc' : fed ? 'S' : 'nothing feeds it',
+    disabled: !on && !fed,
+    run: () => (on ? sim.stop() : sim.start(table.id)),
+  };
+}
+
 function tableMenu(table: Table, env: MenuEnv): MenuNode[] {
   const s = env.store;
   const connected = connectedTableIds(s, table.id);
@@ -475,6 +493,7 @@ function tableMenu(table: Table, env: MenuEnv): MenuNode[] {
       run: () => selectOnly(s, { tableIds: [table.id, ...connected] }),
     },
     traceItem(table, env),
+    simulateItem(s, table),
     sep('s4'),
     { kind: 'action', id: 'delete', label: 'Delete table', icon: Trash2, danger: true, hint: 'Del', run: () => env.remove({ tableIds: [table.id] }) },
   ];
@@ -667,6 +686,18 @@ function relationshipMenu(relationshipId: string, env: MenuEnv): MenuNode[] {
       detail: [kindMeta(r.kind).label, derived > 0 && plural(derived, 'derived column')].filter(Boolean).join(' · '),
     },
     { kind: 'action', id: 'edit', label: query ? 'Edit connection' : 'Edit connection / tag a query', icon: PanelRight, run: select },
+    ...(r.kind === 'flow' && r.sourceTableId !== r.targetTableId
+      ? [
+          {
+            kind: 'action' as const,
+            id: 'simulate',
+            label: `Simulate rows flowing into ${name(r.targetTableId)}`,
+            icon: Play,
+            hint: derived ? undefined : 'add derived columns first',
+            run: () => useSimulation.getState().start(r.targetTableId),
+          },
+        ]
+      : []),
     { kind: 'action', id: 'swap', label: 'Swap direction', icon: ArrowLeftRight, run: () => s.swapRelationship(r.id) },
     sep('s1'),
     ...kindItems(r, env),

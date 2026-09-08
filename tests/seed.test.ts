@@ -13,8 +13,8 @@ describe('seed data', () => {
     const c = generateSeed(d, { rows: 6, seed: 43 });
     expect(a.script).toBe(b.script);
     expect(a.script).not.toBe(c.script);
-    expect(a.totalRows).toBe(36); // 6 tables (views and the external CRM group are skipped)
-    expect(Object.keys(a.rowCounts)).toHaveLength(6);
+    expect(a.totalRows).toBe(42); // 7 tables (views and the external CRM group are skipped)
+    expect(Object.keys(a.rowCounts)).toHaveLength(7);
     const r = mulberry32(7);
     expect([r(), r()]).toEqual([mulberry32(7)(), mulberry32(7) && (() => { const x = mulberry32(7); x(); return x(); })()]);
   });

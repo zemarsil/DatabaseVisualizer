@@ -122,3 +122,73 @@
   flex-wrap: wrap;
   gap: 4px;
 }
+
+/* ---- data-flow simulation ---- */
+.table-node--sim-active {
+  border-color: var(--flow);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--flow) 28%, transparent), var(--node-shadow);
+  animation: sim-pulse 1.6s ease-in-out infinite;
+}
+.table-node--sim-target:not(.table-node--sim-active) {
+  border-color: color-mix(in srgb, var(--flow) 60%, var(--node-border));
+}
+@keyframes sim-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--flow) 22%, transparent), var(--node-shadow);
+  }
+  50% {
+    box-shadow: 0 0 0 5px color-mix(in srgb, var(--flow) 34%, transparent), var(--node-shadow);
+  }
+}
+.table-node__badge--sim-input {
+  color: var(--text-muted);
+  background: var(--bg-hover);
+  font-variant-numeric: tabular-nums;
+}
+.table-node__badge--sim-derived {
+  color: var(--flow);
+  background: color-mix(in srgb, var(--flow) 20%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.table-node__badge--sim-lookup {
+  color: var(--dep);
+  background: color-mix(in srgb, var(--dep) 18%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+.table-node__row--read {
+  background: color-mix(in srgb, var(--flow) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--flow);
+}
+.table-node__row--written {
+  background: color-mix(in srgb, var(--success) 16%, transparent);
+  box-shadow: inset 3px 0 0 var(--success);
+}
+.edge-packet {
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px currentColor);
+}
+.edge-glow {
+  fill: none;
+  stroke-width: 9;
+  opacity: 0.16;
+  pointer-events: none;
+}
+.edge-label--sim-active {
+  color: var(--flow);
+  border-color: var(--flow);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--flow) 25%, transparent);
+}
+.canvas__sim-banner {
+  border-color: var(--flow);
+  color: var(--flow);
+  max-width: min(78vw, 900px);
+}
+.canvas__sim-banner > span {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.canvas__sim-banner .simulate__progress {
+  color: var(--text-muted);
+}

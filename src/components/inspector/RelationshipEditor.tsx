@@ -1,8 +1,10 @@
-import { useMemo } from 'react';
-import { ArrowLeftRight, Play, Plus, Trash2 } from 'lucide-react';
+import { useMemo, useState } from 'react';
+import { ArrowLeftRight, ChevronDown, ChevronRight, Play, Plus, Trash2 } from 'lucide-react';
 import {
   AGGREGATE_FUNCTIONS,
   REFERENTIAL_ACTIONS,
+  WINDOW_FUNCTIONS,
+  windowMeta,
   RELATIONSHIP_KINDS,
   describeRelationship,
   kindMeta,
@@ -15,12 +17,15 @@ import {
   type Relationship,
   type RelationshipKind,
   type RelationshipVerb,
+  type Table,
+  type WindowFunction,
 } from '@shared/types';
 import { derivationSummary } from '@/lib/derivation';
 import { createDerivation, relationshipKindPatch } from '@/lib/model';
 import { generateFlowSql } from '@/lib/sql/generator';
 import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
+import { useSimulation } from '@/store/useSimulation';
 
 /**
  * One grouping key. Usually a source column, so the picker leads; anything else
@@ -74,6 +79,75 @@ function GroupByRow({
   );
 }
 
+/**
+ * Columns an expression on `src` may name: its own, and those of every table it
+ * reaches through foreign keys (child -> parent, a few hops), written table.column.
+ */
+function reachableColumns(tables: Table[], relationships: Relationship[], src: Table): { table: Table; via: string }[] {
+  const out: { table: Table; via: string }[] = [];
+  const seen = new Set<string>([src.id]);
+  let frontier: { id: string; via: string }[] = [{ id: src.id, via: '' }];
+  for (let hop = 0; hop < 3 && frontier.length; hop++) {
+    const next: { id: string; via: string }[] = [];
+    for (const { id, via } of frontier) {
+      const from = tables.find((t) => t.id === id);
+      for (const fk of relationships) {
+        if (fk.kind !== 'fk' || fk.sourceTableId !== id || seen.has(fk.targetTableId)) continue;
+        const parent = tables.find((t) => t.id === fk.targetTableId);
+        if (!parent) continue;
+        seen.add(parent.id);
+        const col = from?.columns.find((c) => c.id === fk.sourceColumnIds[0])?.name ?? '?';
+        const path = via ? `${via} → ${from?.name ?? '?'}.${col}` : `${from?.name ?? '?'}.${col}`;
+        out.push({ table: parent, via: path });
+        next.push({ id: parent.id, via: path });
+      }
+    }
+    frontier = next;
+  }
+  return out;
+}
+
+/** Chips for every column an expression may use; clicking one appends it to the expression. */
+function ReferenceChips({ src, reachable, onInsert }: { src: Table; reachable: { table: Table; via: string }[]; onInsert: (text: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="field field--tight">
+      <button className="btn btn--sm btn--ghost" style={{ justifyContent: 'flex-start', padding: '0 4px' }} onClick={() => setOpen((o) => !o)}>
+        {open ? <ChevronDown /> : <ChevronRight />} Columns you can use{reachable.length ? ` (${src.name} and ${reachable.length} table${reachable.length === 1 ? '' : 's'} it points at)` : ''}
+      </button>
+      {open && (
+        <div className="stack" style={{ gap: 4 }}>
+          <div className="chip-list">
+            {src.columns.map((c) => (
+              <button key={c.id} className="chip" title={`${c.type} — click to add to the expression`} onClick={() => onInsert(c.name)}>
+                {c.name}
+              </button>
+            ))}
+          </div>
+          {reachable.map(({ table, via }) => (
+            <div key={table.id}>
+              <div className="faint small" style={{ margin: '2px 0' }}>
+                {table.name} · through {via}
+              </div>
+              <div className="chip-list">
+                {table.columns.map((c) => (
+                  <button key={c.id} className="chip" title={`${c.type} — looked up through the foreign key; click to add`} onClick={() => onInsert(`${table.name}.${c.name}`)}>
+                    {table.name}.{c.name}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ))}
+          <span className="field__hint">
+            Write SQL: arithmetic, comparisons, AND / OR, CASE, CAST, and functions such as COALESCE, ROUND, UPPER, DATE. A column of another table is
+            looked up through the foreign keys shown, so the diagram says how the tables combine.
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function RelationshipEditor({ relationship: r }: { relationship: Relationship }) {
   const diagram = useStore((s) => s.diagram);
   const tables = diagram.tables;
@@ -83,9 +157,11 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
   const setSelection = useStore((s) => s.setSelection);
 
   const flowSql = useMemo(() => (r.kind === 'flow' ? generateFlowSql(diagram, r.id) : ''), [diagram, r.id, r.kind]);
+  const simulatingThis = useSimulation((s) => s.targetId === r.targetTableId);
 
   const src = tables.find((t) => t.id === r.sourceTableId);
   const tgt = tables.find((t) => t.id === r.targetTableId);
+  const reachable = useMemo(() => (src && r.kind === 'flow' ? reachableColumns(tables, diagram.relationships, src) : []), [tables, diagram.relationships, src, r.kind]);
   if (!src || !tgt) return <div className="danger">This connection points at a table that no longer exists.</div>;
 
   const meta = kindMeta(r.kind);
@@ -117,6 +193,20 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
   const derivations = r.derivations ?? [];
   const setDerivations = (next: Derivation[]) => patch({ derivations: next.length ? next : undefined });
   const updateDerivation = (id: string, p: Partial<Derivation>) => setDerivations(derivations.map((dv) => (dv.id === id ? { ...dv, ...p } : dv)));
+  const setWindow = (dv: Derivation, fn: WindowFunction | '') => {
+    if (!fn) {
+      const { window: _w, ...rest } = dv;
+      setDerivations(derivations.map((x) => (x.id === dv.id ? rest : x)));
+      return;
+    }
+    // Keep the ordering when only the function changes; a fresh window orders by the expression's column, or the first column.
+    const orderBy = dv.window?.orderBy.length ? dv.window.orderBy : [src.columns.find((c) => c.name === dv.expression.trim())?.name ?? src.columns[0]?.name ?? ''].filter(Boolean);
+    updateDerivation(dv.id, { window: { fn, orderBy, partitionBy: dv.window?.partitionBy ?? [] } });
+  };
+  const appendToExpression = (dv: Derivation, text: string) => {
+    const cur = dv.expression;
+    updateDerivation(dv.id, { expression: cur && !/[\s(]$/.test(cur) ? `${cur} ${text}` : `${cur}${text}` });
+  };
   const addDerivation = () => {
     const taken = new Set(derivations.map((dv) => dv.targetColumnId));
     const nextTarget = tgt.columns.find((c) => !taken.has(c.id) && !c.primaryKey) ?? tgt.columns.find((c) => !taken.has(c.id));
@@ -288,13 +378,22 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
         <div className="section">
           <div className="section__head">
             <span className="section__title">Derived columns ({derivations.length})</span>
+            <button
+              className={`btn btn--sm${simulatingThis ? ' btn--active' : ''}`}
+              title={simulatingThis ? 'Stop simulating' : `Watch sample rows flow from ${src.name} into ${tgt.name}`}
+              disabled={derivations.length === 0 && !simulatingThis}
+              onClick={() => (simulatingThis ? useSimulation.getState().stop() : useSimulation.getState().start(tgt.id))}
+            >
+              <Play /> {simulatingThis ? 'Stop' : 'Simulate'}
+            </button>
             <button className="btn btn--sm" onClick={addDerivation} disabled={tgt.columns.length === 0}>
               <Plus /> Add
             </button>
           </div>
           {derivations.length === 0 && (
             <div className="faint small" style={{ marginBottom: 6 }}>
-              Say how a column of {tgt.name} is computed from {src.name}, and the app can summarise it on the edge and generate the INSERT skeleton.
+              Say how each column of {tgt.name} is computed from {src.name}: an expression, an aggregate over a grouping, a filter, or a sequence operation
+              over rows in order. The app summarises it on the edge, generates the INSERT skeleton, and can simulate the rows moving.
             </div>
           )}
           {derivations.map((dv) => {
@@ -340,9 +439,81 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                     className="input input--sm input--mono"
                     value={dv.expression}
                     onChange={(e) => updateDerivation(dv.id, { expression: e.target.value })}
-                    placeholder={dv.aggregate === 'COUNT' ? 'blank for COUNT(*)' : 'e.g. quantity * unit_price_cents'}
+                    placeholder={
+                      dv.window && !windowMeta(dv.window.fn).needsExpression
+                        ? 'not needed for this sequence operation'
+                        : dv.aggregate === 'COUNT'
+                          ? 'blank for COUNT(*)'
+                          : reachable.length
+                            ? `e.g. quantity * unit_price_cents, or ${reachable[0].table.name}.${reachable[0].table.columns[0]?.name ?? 'column'}`
+                            : 'e.g. quantity * unit_price_cents'
+                    }
                     spellCheck={false}
                   />
+                </div>
+                <ReferenceChips src={src} reachable={reachable} onInsert={(text) => appendToExpression(dv, text)} />
+
+                <div className="field field--tight">
+                  <span className="field__label">Sequence (window)</span>
+                  <select className="select select--sm" value={dv.window?.fn ?? ''} onChange={(e) => setWindow(dv, e.target.value as WindowFunction | '')} title="Compute the value from neighbouring rows once they are put in order">
+                    <option value="">(none: each row on its own)</option>
+                    {WINDOW_FUNCTIONS.map((w) => (
+                      <option key={w.id} value={w.id}>
+                        {w.label}
+                      </option>
+                    ))}
+                  </select>
+                  {dv.window && (
+                    <>
+                      <span className="field__hint">{windowMeta(dv.window.fn).hint}</span>
+                      <span className="field__label" style={{ marginTop: 4 }}>
+                        Order by
+                      </span>
+                      {dv.window.orderBy.map((key, i) => (
+                        <GroupByRow
+                          key={i}
+                          value={key}
+                          columns={src.columns}
+                          onChange={(v) => updateDerivation(dv.id, { window: { ...dv.window!, orderBy: dv.window!.orderBy.map((g, j) => (j === i ? v : g)) } })}
+                          onRemove={() => updateDerivation(dv.id, { window: { ...dv.window!, orderBy: dv.window!.orderBy.filter((_, j) => j !== i) } })}
+                        />
+                      ))}
+                      <div>
+                        <button
+                          className="btn btn--sm"
+                          onClick={() =>
+                            updateDerivation(dv.id, { window: { ...dv.window!, orderBy: [...dv.window!.orderBy, src.columns.find((c) => !dv.window!.orderBy.includes(c.name))?.name ?? ''] } })
+                          }
+                        >
+                          <Plus /> Add ordering key
+                        </button>
+                      </div>
+                      <span className="field__hint">Which row counts as "previous": a timestamp, usually. Add DESC after an expression key to reverse it.</span>
+                      <span className="field__label" style={{ marginTop: 4 }}>
+                        Partition by
+                      </span>
+                      {dv.window.partitionBy.map((key, i) => (
+                        <GroupByRow
+                          key={i}
+                          value={key}
+                          columns={src.columns}
+                          onChange={(v) => updateDerivation(dv.id, { window: { ...dv.window!, partitionBy: dv.window!.partitionBy.map((g, j) => (j === i ? v : g)) } })}
+                          onRemove={() => updateDerivation(dv.id, { window: { ...dv.window!, partitionBy: dv.window!.partitionBy.filter((_, j) => j !== i) } })}
+                        />
+                      ))}
+                      <div>
+                        <button
+                          className="btn btn--sm"
+                          onClick={() =>
+                            updateDerivation(dv.id, { window: { ...dv.window!, partitionBy: [...dv.window!.partitionBy, src.columns.find((c) => !dv.window!.partitionBy.includes(c.name))?.name ?? ''] } })
+                          }
+                        >
+                          <Plus /> Add partition key
+                        </button>
+                      </div>
+                      <span className="field__hint">Optional: restart the sequence for every distinct value, e.g. one series per customer or per sensor.</span>
+                    </>
+                  )}
                 </div>
 
                 <div className="field field--tight">
@@ -388,7 +559,8 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
               <span className="field__label">Generated from these derivations</span>
               <pre className="code-block small">{flowSql}</pre>
               <span className="field__hint">
-                A skeleton, not executed. Joins beyond {src.name} and {tgt.name} belong in the tagged query below.
+                A skeleton, not executed. Columns named table.column are joined through the diagram's foreign keys; joins the diagram does not know
+                about belong in the tagged query below.
               </span>
             </div>
           )}

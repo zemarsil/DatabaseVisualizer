@@ -2,32 +2,66 @@
  * Helpers for the structured `derivation` metadata on flow relationships.
  *
  * These are pure string/shape utilities shared by the inspector, the canvas edge
- * label and the SQL generator, so a derivation reads the same everywhere. They
- * deliberately do not parse SQL: expressions, grouping keys and filters are the
- * user's text, passed through as written.
+ * label, the SQL generator and the simulator, so a derivation reads the same
+ * everywhere. They deliberately do not parse SQL: expressions, grouping keys and
+ * filters are the user's text, passed through as written.
  */
-import type { Derivation, Relationship, Table } from '@shared/types';
+import { windowMeta, type Derivation, type DerivationWindow, type Relationship, type Table } from '@shared/types';
 
 /** Structured derivations of a relationship; always empty for foreign keys. */
 export function flowDerivations(r: Relationship): Derivation[] {
   return r.kind === 'flow' ? (r.derivations ?? []) : [];
 }
 
+function cleanKeys(keys: string[] | undefined): string[] {
+  return (keys ?? []).map((k) => k.trim()).filter(Boolean);
+}
+
+/** The OVER (...) clause of a window as text: "PARTITION BY device_id ORDER BY ts". */
+export function windowClause(w: DerivationWindow): string {
+  const parts: string[] = [];
+  const partition = cleanKeys(w.partitionBy);
+  const order = cleanKeys(w.orderBy);
+  if (partition.length) parts.push(`PARTITION BY ${partition.join(', ')}`);
+  if (order.length) parts.push(`ORDER BY ${order.join(', ')}`);
+  return parts.join(' ');
+}
+
+/**
+ * The value before any aggregate: the expression itself, or the sequence
+ * operation applied to it, e.g. "DIFF(placed_at) OVER (PARTITION BY customer_id
+ * ORDER BY placed_at)". Documentation form: the SQL generator writes the real
+ * per-dialect window function.
+ */
+export function derivationRowValue(d: Derivation): string {
+  const expr = d.expression.trim();
+  if (!d.window) return expr;
+  const meta = windowMeta(d.window.fn);
+  const inner = meta.needsExpression ? expr : '';
+  if (meta.needsExpression && !inner) return '';
+  return `${d.window.fn}(${inner}) OVER (${windowClause(d.window)})`;
+}
+
 /** The source-side value: "SUM(quantity * unit_price_cents)", "COUNT(*)", "status". */
 export function derivationValue(d: Derivation): string {
-  const expr = d.expression.trim();
-  if (!d.aggregate) return expr;
-  if (!expr) return d.aggregate === 'COUNT' ? 'COUNT(*)' : `${d.aggregate}()`;
-  return `${d.aggregate}(${expr})`;
+  const inner = derivationRowValue(d);
+  if (!d.aggregate) return inner;
+  if (!inner) return d.aggregate === 'COUNT' ? 'COUNT(*)' : `${d.aggregate}()`;
+  return `${d.aggregate}(${inner})`;
 }
 
 export function derivationGroupBy(d: Derivation): string[] {
-  return d.groupBy.map((g) => g.trim()).filter(Boolean);
+  return cleanKeys(d.groupBy);
 }
 
-/** A derivation is usable once it names a target column and produces a value. */
+/**
+ * A derivation is usable once it names a target column and produces a value. A
+ * sequence operation additionally needs an order, or "previous row" means nothing.
+ */
 export function isDerivationComplete(d: Derivation): boolean {
-  return Boolean(d.targetColumnId) && Boolean(derivationValue(d));
+  if (!d.targetColumnId || !derivationValue(d)) return false;
+  if (d.window && cleanKeys(d.window.orderBy).length === 0) return false;
+  return true;
 }
 
 /**
@@ -68,4 +102,11 @@ export function groupDerivations(entries: Derivation[]): { groupBy: string[]; fi
     else out.push({ groupBy, filter, entries: [d] });
   }
   return out;
+}
+
+/** An ordering key split into its expression and direction: "ts DESC" -> { expression: "ts", desc: true }. */
+export function parseOrderKey(key: string): { expression: string; desc: boolean } {
+  const m = /^(.*?)\s+(ASC|DESC)\s*$/i.exec(key.trim());
+  if (m) return { expression: m[1].trim(), desc: m[2].toUpperCase() === 'DESC' };
+  return { expression: key.trim(), desc: false };
 }

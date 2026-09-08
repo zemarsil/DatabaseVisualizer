@@ -22,6 +22,21 @@ export interface TableNodeData extends Record<string, unknown> {
   traceRole: 'from' | 'to' | 'via' | null;
   picking: boolean;
   renaming: boolean;
+  /** How the table takes part in the running data-flow simulation, if one is on. */
+  simulation?: NodeSimulation | null;
+}
+
+/** input -> seeded raw rows, derived -> filled by flows, lookup -> read through a foreign key. */
+export interface NodeSimulation {
+  role: 'input' | 'derived' | 'lookup';
+  /** Rows the table holds at the current stage of playback. */
+  rowCount: number;
+  /** The stage in play reads from or writes to this table. */
+  active: boolean;
+  /** The table the simulation was asked about. */
+  isTarget: boolean;
+  readColumnIds: string[];
+  writtenColumnIds: string[];
 }
 
 export type TableNodeType = Node<TableNodeData, 'table'>;
@@ -63,12 +78,18 @@ function RenameInput({ table }: { table: Table }) {
 
 function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
   const { table, fkColumnIds, embedColumnIds, visibleColumns, display, lod, joinTable, dimmed, traceRole, picking, renaming } = data;
+  const sim = data.simulation ?? null;
   const fkSet = new Set(fkColumnIds);
   const embedSet = new Set(embedColumnIds);
+  const readSet = new Set(sim?.active ? sim.readColumnIds : []);
+  const writtenSet = new Set(sim?.active ? sim.writtenColumnIds : []);
   const isView = table.kind === 'view';
   const classes = ['table-node'];
   if (selected) classes.push('table-node--selected');
   if (traceRole) classes.push('table-node--trace');
+  if (sim) classes.push(`table-node--sim-${sim.role}`);
+  if (sim?.active) classes.push('table-node--sim-active');
+  if (sim?.isTarget) classes.push('table-node--sim-target');
   if (dimmed) classes.push('table-node--dim');
   if (picking) classes.push('table-node--pick');
   if (isView) classes.push('table-node--view');
@@ -101,6 +122,14 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
             </span>
           )}
           {traceRole && <span className="table-node__badge">{traceRole === 'from' ? 'FROM' : traceRole === 'to' ? 'TO' : 'VIA'}</span>}
+          {sim && (
+            <span
+              className={`table-node__badge table-node__badge--sim-${sim.role}`}
+              title={sim.role === 'input' ? 'Raw input: sample rows' : sim.role === 'lookup' ? 'Read through a foreign key' : 'Derived: filled by the data flows'}
+            >
+              {sim.rowCount} row{sim.rowCount === 1 ? '' : 's'}
+            </span>
+          )}
         </div>
         {!lod && table.columns.length > 0 && (
           <button
@@ -134,8 +163,8 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
           return (
             <div
               key={c.id}
-              className={`table-node__row${c.primaryKey ? ' table-node__row--pk' : ''}`}
-              title={c.comment || undefined}
+              className={`table-node__row${c.primaryKey ? ' table-node__row--pk' : ''}${readSet.has(c.id) ? ' table-node__row--read' : ''}${writtenSet.has(c.id) ? ' table-node__row--written' : ''}`}
+              title={readSet.has(c.id) ? `${c.name}: read by the flow in play` : writtenSet.has(c.id) ? `${c.name}: written by the flow in play` : c.comment || undefined}
               /* Read by the canvas so a right-click on this row opens the column menu. */
               data-column-id={c.id}
             >
