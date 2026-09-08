@@ -47,7 +47,8 @@ type Side = 'left' | 'right';
 
 const MARKER = 16; // px reserved for the crow's foot / bar between node edge and curve start
 const GAP = 28;
-const BOW_SPACING = 26; // px separation between duplicate edges sharing the same anchor points
+const BOW_SPACING = 40; // px separation between duplicate edges sharing the same anchor points (must clear the ~20px label pill height)
+const ANCHOR_NUDGE = 16; // px separation applied right at the shared row/header anchor itself, so stacked crow's-foot markers and cardinality text don't sit exactly on top of each other
 
 interface Geometry {
   sx: number;
@@ -233,9 +234,11 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
     w: targetNode.measured.width ?? tEst.width,
     h: targetNode.measured.height ?? tEst.height,
   };
-  const sy = s.y + (data.sourceRow >= 0 ? rowCenterY(data.sourceRow) : HEADER_HEIGHT / 2);
-  const ty = t.y + (data.targetRow >= 0 ? rowCenterY(data.targetRow) : HEADER_HEIGHT / 2);
-  const bowOffset = data.siblingCount > 1 ? (data.siblingIndex - (data.siblingCount - 1) / 2) * BOW_SPACING : 0;
+  const siblingOffset = data.siblingCount > 1 ? (data.siblingIndex - (data.siblingCount - 1) / 2) : 0;
+  const anchorNudge = siblingOffset * ANCHOR_NUDGE;
+  const sy = s.y + (data.sourceRow >= 0 ? rowCenterY(data.sourceRow) : HEADER_HEIGHT / 2) + anchorNudge;
+  const ty = t.y + (data.targetRow >= 0 ? rowCenterY(data.targetRow) : HEADER_HEIGHT / 2) + anchorNudge;
+  const bowOffset = siblingOffset * BOW_SPACING;
   const g = computeGeometry(s, t, sy, ty, bowOffset);
   const sDir = g.sSide === 'right' ? 1 : -1;
   const tDir = g.tSide === 'right' ? 1 : -1;
