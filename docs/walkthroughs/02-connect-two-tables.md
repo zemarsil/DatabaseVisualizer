@@ -417,9 +417,9 @@ picks up next.
   **Stored in column** resets to empty and you have to pick again.
 - **Dragging onto — or from — a view always makes a data flow**, even if you
   started on a column handle expecting a foreign key. Views cannot take part
-  in a `FOREIGN KEY` constraint, so the app quietly substitutes the one kind
-  that can still describe "this view reads that table," and tells you so in a
-  toast.
+  in a `FOREIGN KEY` constraint, so the app substitutes the one kind that can
+  still describe "this view reads that table," and says so in a toast rather
+  than leaving you to notice the swap yourself.
 - **Cardinality labels only ever appear on foreign keys.** Turn them on and
   the three other kinds stay unlabeled — there is no "1" or "N" to compute
   when nothing constrains uniqueness on either end.
