@@ -130,6 +130,12 @@ everything printed there is real; not everything drawn on the canvas is.
 
 ### 1. Add the authors table
 
+<!-- step
+target: ui:add-table
+goals:
+  - table | authors
+-->
+
 Press `T`. (Double-clicking empty canvas, the **+ Table** button, and
 right-click → *Add table here* all do the same thing.) A table appears named
 `new_table`, already holding one column: `id`, `INTEGER`, primary key, not
@@ -141,6 +147,14 @@ with the inspector open on the right showing *Name*, *Schema*, *Comment*,
 *Colour*, *Group*, and one column row underneath.
 
 ### 2. Give it a real key and a name
+
+<!-- step
+target: section:Columns
+goals:
+  - column | authors.id : BIGSERIAL
+  - flags | authors.id : pk nn ai
+  - column | authors.name : TEXT
+-->
 
 Click `id`'s type cell and change it to `BIGSERIAL` — PostgreSQL's
 auto-incrementing 64-bit integer, and the type every table in this series'
@@ -155,6 +169,15 @@ a new row opens below it with the cursor already there. Type `name`, press
 
 ### 3. Build the books table the same way
 
+<!-- step
+target: ui:add-table
+goals:
+  - table | books
+  - column | books.id : BIGSERIAL
+  - column | books.author_id : BIGINT
+  - column | books.title : TEXT
+-->
+
 Press `T` again for a second table and rename it `books`. Change its `id` to
 `BIGSERIAL` as you just did, then add two more columns the same way: `Enter`,
 type a name, `Tab`, type a type. Add `author_id` as `BIGINT` — the same type
@@ -166,6 +189,13 @@ possible — and `title` as `TEXT`.
 
 ### 4. Drag a foreign key between them
 
+<!-- step
+target: column:books.author_id
+goals:
+  - fk | books.author_id -> authors.id
+hint: The handle only appears while the pointer is over the table.
+-->
+
 Hover the `books` table. A small handle appears beside each column row —
 drag the one beside `author_id` onto the `id` row of `authors` and release.
 
@@ -176,6 +206,12 @@ with **Kind** set to *Foreign key*.
 
 ### 5. Say how it reads
 
+<!-- step
+target: field:Reads as
+goals:
+  - reads | books belongs to authors
+-->
+
 With the connection still selected, find **Reads as** in the inspector and
 change it from the default to *belongs to / has*.
 
@@ -183,6 +219,13 @@ change it from the default to *belongs to / has*.
 `books belongs to authors`, and beneath it, in grey, `authors has books`.
 
 ### 6. Watch the SQL tab fill in
+
+<!-- step
+target: tab:sql
+goals:
+  - open | sql
+  - contains | FOREIGN KEY (author_id)
+-->
 
 Look back at the **SQL** tab in the bottom drawer and read `CREATE TABLE
 public.books` from top to bottom.
@@ -194,6 +237,10 @@ just drew, as text — and the header comment above it updates to `-- Tables:
 
 ### 7. Tidy the layout
 
+<!-- step
+target: ui:detangle
+-->
+
 Press `L` for **Detangle**, then `F` to fit the result to the window.
 
 **You should see:** `authors` and `books` snap into a clean left-to-right
@@ -201,6 +248,13 @@ arrangement with the connection routed directly between them, then the
 canvas zooms and pans so both tables are fully in view.
 
 ### 8. Glance at Problems
+
+<!-- step
+target: tab:problems
+goals:
+  - open | problems
+  - lint clean
+-->
 
 Open the bottom drawer's **Problems** tab.
 
@@ -211,6 +265,10 @@ it. There are no errors, which is the bar a diagram has to clear to be
 "lint clean".
 
 ### 9. Save, and notice the other ways back in
+
+<!-- step
+target: ui:file-menu
+-->
 
 Press `Ctrl+S`.
 

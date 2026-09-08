@@ -113,6 +113,22 @@ computed once, thrown away the moment you close it or edit the flow.
 
 ### 1. Add book_totals and feed it from daily_sales
 
+<!-- step
+target: ui:add-table
+goals:
+  - table | book_totals
+  - column | book_totals.book_id : BIGINT
+  - flags | book_totals.book_id : pk
+  - no column | book_totals.id
+  - column | book_totals.total_units : INTEGER
+  - column | book_totals.total_revenue_cents : INTEGER
+  - fk | book_totals.book_id -> books.id
+  - flow | daily_sales -> book_totals
+  - label | daily_sales -> book_totals : lifetime rollup
+  - derivation | book_totals.total_units : SUM(units) group by book_id
+  - derivation | book_totals.total_revenue_cents : SUM(revenue_cents) group by book_id
+-->
+
 Press `T`, name the new table `book_totals`, colour it *orange*, and give it
 `book_id BIGINT` (**PK**), `total_units INTEGER NOT NULL DEFAULT 0` and
 `total_revenue_cents INTEGER NOT NULL DEFAULT 0`. Connect `book_id` to
@@ -142,6 +158,12 @@ it needs is in one table.
 
 ### 2. Select daily_sales and press S
 
+<!-- step
+target: table:daily_sales
+goals:
+  - simulating | daily_sales
+-->
+
 Click the `daily_sales` table on the canvas to select it, then press `S`.
 
 **You should see:** the bottom drawer switches to **Simulate**, headed
@@ -157,6 +179,10 @@ you just drew — Simulate runs what feeds the table you asked about, not
 everything on the diagram.
 
 ### 3. Read where a produced row came from
+
+<!-- step
+target: panel:simulate
+-->
 
 In the lower grid (`daily_sales`), click the first row — book `3`, day
 `2024-08-06`.
@@ -179,6 +205,12 @@ see.
 
 ### 4. Switch the target to book_totals
 
+<!-- step
+target: panel:simulate
+goals:
+  - simulating | book_totals
+-->
+
 Change the **Into** dropdown at the top of the panel from `daily_sales` to
 `book_totals`.
 
@@ -189,6 +221,10 @@ aggregate", count **8 → 6**. Switching by dropdown starts paused at "stage 0
 stage directly.
 
 ### 5. Step to stage 2 and read its lineage
+
+<!-- step
+target: panel:simulate
+-->
 
 Click the "daily_sales → book_totals" row in the stage list, then click the
 first row of the lower grid — book `3`.
@@ -210,6 +246,10 @@ Book 3 sold on two different days, so it has two `daily_sales` rows and one
 here you can see both ends of it at once.
 
 ### 6. Try a what-if edit
+
+<!-- step
+target: panel:simulate
+-->
 
 Click stage 1 in the list to go back to it, then double-click `order_items`
 row 1's `quantity` cell — it reads `578` — type `100`, and press `Enter`.

@@ -11,6 +11,7 @@ import { Toasts } from './components/ui/Toasts';
 import { ContextMenuHost, isContextMenuOpen } from './components/ui/ContextMenu';
 import { DialogHost, useDialogStore } from './components/ui/Modal';
 import { ShareLinkLoader } from './components/ShareLinkLoader';
+import { TourHost } from './components/tour/TourHost';
 
 function isEditable(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
@@ -144,6 +145,7 @@ export default function App() {
         </div>
         {inspectorOpen ? <Inspector /> : <div />}
       </div>
+      <TourHost />
       <Toasts />
       <ContextMenuHost />
       <DialogHost />

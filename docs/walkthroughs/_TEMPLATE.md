@@ -65,17 +65,35 @@ no steps.
 
 ### 1. TODO imperative title
 
+<!-- step
+target: ui:add-table
+goals:
+  - table | TODO
+-->
+
 TODO the action, naming the exact control.
 
 **You should see:** TODO the observable change on screen.
 
 ### 2. TODO imperative title
 
+<!-- step
+target: section:Columns
+goals:
+  - column | TODO.TODO : TEXT
+-->
+
 TODO
 
 **You should see:** TODO
 
 ### 3. TODO imperative title
+
+<!-- step
+target: tab:sql
+goals:
+  - open | sql
+-->
 
 TODO
 

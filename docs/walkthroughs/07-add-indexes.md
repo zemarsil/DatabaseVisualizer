@@ -122,6 +122,12 @@ and it is exactly what **Problems** is built to notice.
 
 ### 1. Read the five warnings you have been ignoring
 
+<!-- step
+target: tab:problems
+goals:
+  - open | problems
+-->
+
 Open the bottom drawer → **Problems** and read the list. Five warnings, all
 the same rule, none of them new:
 
@@ -147,6 +153,12 @@ warnings can sit there unread for five walkthroughs.
 
 ### 2. Give the plain foreign key a plain index
 
+<!-- step
+target: section:Indexes
+goals:
+  - index | books (author_id)
+-->
+
 Select `books`. In the inspector, right-click the `author_id` row and choose
 *Create index on this column*. A new row appears under *Indexes (1)* with one
 chip lit: `author_id`.
@@ -164,6 +176,14 @@ one you'll recognize in a slow-query log later.
 
 ### 3. Build the composite index — in the wrong order, on purpose
 
+<!-- step
+target: section:Indexes
+goals:
+  - index | orders (placed_at, customer_id)
+hint: This one is deliberately the wrong way round — step 4 fixes it, so the tick here goes away again.
+transient: true
+-->
+
 Select `orders`. Under *Indexes (0)*, click **+ Index**. A new index appears
 already covering `id` (the button always starts a new index on the table's
 first column). Click the `id` chip to remove it, then click `placed_at`, then
@@ -175,6 +195,12 @@ first column). Click the `id` chip to remove it, then click `placed_at`, then
 key, because this index's leading column is `placed_at`, not `customer_id`.
 
 ### 4. Fix the order by re-clicking, not dragging
+
+<!-- step
+target: section:Indexes
+goals:
+  - index | orders (customer_id, placed_at)
+-->
 
 There's no drag handle on an index's chips — order is click order, so fixing
 it means removing a column and re-adding it at the end. Click `placed_at` to
@@ -190,6 +216,12 @@ customer's orders since a date", and cover the foreign key as a side effect of
 `customer_id` leading.
 
 ### 5. Make the business rule a unique index, not a UQ toggle
+
+<!-- step
+target: section:Indexes
+goals:
+  - unique index | order_items (order_id, book_id)
+-->
 
 Select `order_items`. Click **+ Index**, remove the default `id` chip, then
 click `order_id` and `book_id` in that order. Click this index's own **UQ**
@@ -207,6 +239,12 @@ show `CREATE UNIQUE INDEX order_items_order_id_book_id_key ON public.order_items
 (order_id, book_id);` right after `order_items`'s two foreign keys.
 
 ### 6. Let Problems find the one this doesn't cover
+
+<!-- step
+target: tab:problems
+goals:
+  - index | order_items (book_id)
+-->
 
 Open the bottom drawer → **Problems**. One warning remains:
 *`order_items(book_id) references books but has no index; PostgreSQL does not
@@ -226,6 +264,10 @@ blank: the fix never types one, and the generator's fallback
 
 ### 7. Watch Problems catch a duplicate too
 
+<!-- step
+target: tab:problems
+-->
+
 Right-click `books`'s `author_id` row again and choose *Create index on this
 column* a second time. You now have two indexes on `books(author_id)`. Open
 **Problems**: a new warning reads *`Table "books" indexes (author_id) twice.`*
@@ -236,6 +278,14 @@ one about `customers(crm_contact_id)`, which nothing in this walkthrough has
 touched.
 
 ### 8. Clear the last one with Fix all safe
+
+<!-- step
+target: panel:problems
+goals:
+  - index | customers (crm_contact_id)
+  - indexes | 5
+  - lint clean
+-->
 
 Press **Fix all safe (1)** at the top of the **Problems** tab.
 

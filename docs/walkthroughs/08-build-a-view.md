@@ -125,6 +125,10 @@ checkbox for it, and step 6 tries it.
 
 ### 1. Find the three tables the view will read
 
+<!-- step
+target: ui:palette
+-->
+
 Nothing to build here — `customers`, `orders` and `order_items` have been on
 the canvas since walkthrough 05, connected and, since last walkthrough,
 indexed. Press `Ctrl+K`, type `order_items`, and press `Enter` to centre the
@@ -143,6 +147,10 @@ errors and no warnings.
 
 ### 2. Turn a new node into a view
 
+<!-- step
+target: ui:canvas
+-->
+
 Right-click empty canvas below the three tables and choose *Add view here*.
 The new node is called `new_view` and starts with no columns at all — a view's
 default is empty, not the single `id` column a table gets.
@@ -152,6 +160,13 @@ on *View definition (SELECT …)* and *Source tables (0)* instead of a column
 grid.
 
 ### 3. Name it and write the SELECT
+
+<!-- step
+target: field:View definition
+goals:
+  - view | v_customer_orders
+  - viewsql | v_customer_orders
+-->
 
 Rename it to `v_customer_orders` (`F2`, or edit *Name* in the inspector), and
 set its *Colour* to `teal` — this series' convention for views. In *View
@@ -178,6 +193,14 @@ nothing has linked the tables yet.
 
 ### 4. Detect the sources from the SQL
 
+<!-- step
+target: field:Source tables
+goals:
+  - flow | customers -> v_customer_orders
+  - flow | orders -> v_customer_orders
+  - flow | order_items -> v_customer_orders
+-->
+
 Click **Detect from SQL**, next to *Source tables*.
 
 **You should see:** a toast reading *"Linked 3 source tables to the view."*,
@@ -186,6 +209,15 @@ chips, and three dashed, filled-arrow connections on the canvas running from
 each of those tables into `v_customer_orders`.
 
 ### 5. Add display columns (optional)
+
+<!-- step
+target: section:Columns
+goals:
+  - column | v_customer_orders.customer_id : BIGINT
+  - column | v_customer_orders.email : TEXT
+  - column | v_customer_orders.order_count : INTEGER
+  - column | v_customer_orders.total_cents : INTEGER
+-->
 
 Expand *Columns (0)* on `v_customer_orders` and add four rows matching the
 `SELECT` list: `customer_id` `BIGINT`, `email` `TEXT`, `order_count`
@@ -197,6 +229,13 @@ display*, four rows appear inside the node on the canvas, and the **SQL** tab
 does not change by one character.
 
 ### 6. Tick Materialized, read the statement, and turn it back off
+
+<!-- step
+target: field:View definition
+goals:
+  - materialized | v_customer_orders : off
+hint: Tick it, read the statement, then untick it — the tick below is for where you end up.
+-->
 
 Still on `v_customer_orders`, tick **Materialized (store the rows, refresh on
 demand)** in the inspector.
@@ -235,6 +274,13 @@ plain `CREATE VIEW`.
 public.v_customer_orders AS` in the SQL tab.
 
 ### 7. Find the view in the generated script
+
+<!-- step
+target: tab:sql
+goals:
+  - open | sql
+  - contains | CREATE VIEW
+-->
 
 Open the bottom drawer → **SQL**, on *Whole schema*.
 

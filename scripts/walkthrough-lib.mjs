@@ -117,6 +117,218 @@ export const CHECK_VERBS = {
 };
 
 /* ------------------------------------------------------------------ */
+/* Steps as a clickthrough                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Every step carries an HTML comment saying where the coach mark points and
+ * what the step is for:
+ *
+ *     <!-- step
+ *     target: ui:add-table
+ *     goals:
+ *       - table | authors
+ *     -->
+ *
+ * These are the keys it may use. `goals` is a list, everything else a scalar.
+ */
+export const STEP_KEYS = {
+  target: { list: false, required: true },
+  goals: { list: true, required: false },
+  hint: { list: false, required: false },
+  transient: { list: false, required: false },
+};
+
+/** The drawer tabs a `tab:` or `panel:` target may name. Source: src/components/drawer/Drawer.tsx. */
+export const DRAWER_TABS = ['walkthrough', 'sql', 'types', 'import', 'trace', 'simulate', 'problems', 'query', 'database'];
+
+/**
+ * What a `target:` may start with, and what the rest of it means. Anything
+ * pointing at chrome (`ui:`) is checked against the `data-tour` attributes the
+ * components really carry, so a renamed button cannot leave a step pointing at
+ * nothing.
+ */
+export const TARGET_KINDS = {
+  ui: 'a data-tour attribute in src/components',
+  tab: 'a drawer tab id',
+  panel: 'a drawer tab id; rings the panel rather than the tab',
+  field: 'the visible label of an inspector field, e.g. "Reads as"',
+  section: 'the visible title of an inspector section, e.g. "Indexes"',
+  sidebar: 'the table list (takes no argument)',
+  table: 'a table on the canvas, by name',
+  column: 'a column row on the canvas, as table.column',
+  rel: 'a connection on the canvas, as "source -> target"',
+  none: 'nothing: the card floats free (takes no argument)',
+};
+
+/**
+ * Goal verbs, mirroring src/lib/tour/goals.ts. `null` means the verb takes no
+ * argument. Two implementations again, for the same reason the check verbs
+ * have two: this file runs under Node, the app's under Vite —
+ * tests/tour.test.ts asserts the two lists agree.
+ */
+export const GOAL_VERBS = {
+  contains: 'text the generated script must contain',
+  omits: 'text the generated script must not contain',
+  tables: 'every table name in the diagram, comma separated',
+  views: 'every view name in the diagram, comma separated',
+  groups: 'every group name in the diagram, comma separated',
+  types: 'every custom type name in the diagram, comma separated',
+  kinds: 'relationship counts per kind, e.g. "fk:3, flow:1"',
+  indexes: 'total number of indexes across every table',
+  derivations: 'total number of derivations across every flow',
+  'lint clean': null,
+  'lint errors': 'the exact number of errors Problems reports',
+  simulate: 'a table that must simulate with rows and no warnings',
+  trace: 'two table names as "a -> b" with a path between them',
+  table: 'a table name that must exist',
+  view: 'a view name that must exist',
+  'no table': 'a table name that must be gone',
+  column: 'table.column, optionally " : TYPE"',
+  'no column': 'table.column that must be gone',
+  flags: 'table.column : pk nn uq ai, each optionally negated with "-"',
+  default: 'table.column : the default expression',
+  check: 'table.column : expression, or table : expression for a table check',
+  schema: 'table : schema name',
+  collapsed: 'table : full, keys or header',
+  materialized: 'view : on or off',
+  viewsql: "a view name; the step's fenced block is what gets written",
+  import: "the tables the step's fenced block brings in, comma separated",
+  fk: 'child.column -> parent.column',
+  flow: 'source_table -> target_table',
+  embed: 'container.column -> embedded_table',
+  dependency: 'source_table -> target_table',
+  reads: 'a sentence like "books belongs to authors"',
+  label: 'source -> target : the label or constraint name',
+  'reverse label': 'source -> target : how the far end reads',
+  ondelete: 'child -> parent : NO ACTION, RESTRICT, CASCADE, SET NULL or SET DEFAULT',
+  query: "source -> target; the step's fenced block gets tagged onto the connection",
+  derivation: 'target.column : an expression like SUM(quantity), optionally "group by …"',
+  index: 'table (col, col)',
+  'unique index': 'table (col, col)',
+  group: 'Name, optionally " : member, member"',
+  'external group': 'Name, optionally " : member, member"',
+  enum: 'name : value, value, value',
+  composite: 'name : field TYPE, field TYPE',
+  dialect: 'postgresql, mariadb or sqlite',
+  open: 'a drawer tab id, e.g. sql or problems',
+  'select table': 'a table name that must be selected',
+  'select connection': 'source -> target of the connection that must be selected',
+  cardinality: 'on or off',
+  simulating: 'the table a simulation must be feeding',
+  traced: 'from -> to, the two ends of a trace that must have run',
+  focus: 'the table whose neighbourhood must be focused, or "none"',
+};
+
+/** `data-tour="…"` attributes the components actually carry, so `ui:` targets can be checked. */
+export function tourAnchors(dir = 'src/components') {
+  const found = new Set();
+  const walk = (path) => {
+    for (const entry of readdirSync(path, { withFileTypes: true })) {
+      const full = join(path, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith('.tsx')) {
+        for (const m of readFileSync(full, 'utf8').matchAll(/data-tour="([^"]+)"/g)) found.add(m[1]);
+      }
+    }
+  };
+  if (existsSync(dir)) walk(dir);
+  return found;
+}
+
+/** Reads one step's `<!-- step … -->` block with the same tiny YAML as the front matter. */
+export function parseStepMeta(text) {
+  const meta = {};
+  const errors = [];
+  let currentList = null;
+  for (const line of text.split('\n')) {
+    if (line.trim() === '') continue;
+    const item = /^\s*- (.*)$/.exec(line);
+    if (item) {
+      if (!currentList) errors.push(`list item with no key above it: ${JSON.stringify(line)}`);
+      else currentList.push(item[1].trim());
+      continue;
+    }
+    const pair = /^\s*([a-z][a-zA-Z]*):\s*(.*)$/.exec(line);
+    if (!pair) {
+      errors.push(`not "key: value" or "  - item": ${JSON.stringify(line)}`);
+      continue;
+    }
+    const [, key, value] = pair;
+    if (key in meta) errors.push(`duplicate key "${key}"`);
+    if (value.trim() === '') {
+      currentList = [];
+      meta[key] = currentList;
+    } else {
+      currentList = null;
+      meta[key] = value.trim();
+    }
+  }
+  return { meta, errors };
+}
+
+/** Everything that can go wrong in one step's metadata block. */
+export function validateStepMeta(meta, { anchors }) {
+  const errors = [];
+  for (const [key, spec] of Object.entries(STEP_KEYS)) {
+    const v = meta[key];
+    if (v === undefined) {
+      if (spec.required) errors.push(`has no "${key}:"`);
+      continue;
+    }
+    if (spec.list && !Array.isArray(v)) errors.push(`"${key}" must be a list of "  - item" lines`);
+    if (!spec.list && Array.isArray(v)) errors.push(`"${key}" must be a single value on one line`);
+  }
+  for (const key of Object.keys(meta)) {
+    if (!(key in STEP_KEYS)) errors.push(`unknown key "${key}"; the block takes ${Object.keys(STEP_KEYS).join(', ')}`);
+  }
+  if (meta.transient !== undefined && meta.transient !== 'true') errors.push('"transient" is only ever "true"; leave it out otherwise');
+
+  if (typeof meta.target === 'string') {
+    const cut = meta.target.indexOf(':');
+    const kind = cut === -1 ? meta.target : meta.target.slice(0, cut);
+    const arg = cut === -1 ? '' : meta.target.slice(cut + 1).trim();
+    if (!(kind in TARGET_KINDS)) {
+      errors.push(`target "${meta.target}" starts with an unknown kind; use one of: ${Object.keys(TARGET_KINDS).join(', ')}`);
+    } else if (kind !== 'none' && kind !== 'sidebar' && !arg) {
+      errors.push(`target "${meta.target}" needs an argument after ":" (${TARGET_KINDS[kind]})`);
+    } else if (kind === 'ui' && anchors.size && !anchors.has(arg)) {
+      errors.push(`target "${meta.target}" names no data-tour attribute in src/components; the ones that exist are ${[...anchors].sort().join(', ')}`);
+    } else if ((kind === 'tab' || kind === 'panel') && !DRAWER_TABS.includes(arg)) {
+      errors.push(`target "${meta.target}" names no drawer tab; the tabs are ${DRAWER_TABS.join(', ')}`);
+    } else if (kind === 'column' && !arg.includes('.')) {
+      errors.push(`target "${meta.target}" must read "table.column"`);
+    } else if (kind === 'rel' && !arg.includes('->')) {
+      errors.push(`target "${meta.target}" must read "source -> target"`);
+    }
+  }
+
+  for (const raw of Array.isArray(meta.goals) ? meta.goals : []) {
+    const { verb, arg } = parseCheck(raw);
+    if (!(verb in GOAL_VERBS)) {
+      errors.push(`goal "${raw}" starts with an unknown verb; see GOAL_VERBS in scripts/walkthrough-lib.mjs`);
+      continue;
+    }
+    const takesArg = GOAL_VERBS[verb] !== null;
+    if (takesArg && !arg) errors.push(`goal "${raw}" needs an argument after "|" (${GOAL_VERBS[verb]})`);
+    if (!takesArg && arg) errors.push(`goal "${raw}" takes no argument`);
+    if (['fk', 'flow', 'embed', 'dependency', 'traced', 'trace'].includes(verb) && arg && !arg.includes('->')) {
+      errors.push(`goal "${raw}" must name both ends as "a -> b"`);
+    }
+    if (['ondelete', 'label', 'reverse label', 'query', 'select connection'].includes(verb) && arg && !arg.includes('->')) {
+      errors.push(`goal "${raw}" must name the connection as "source -> target"`);
+    }
+    if (['indexes', 'derivations', 'lint errors'].includes(verb) && arg && !/^\d+$/.test(arg)) {
+      errors.push(`goal "${raw}" must give a whole number`);
+    }
+    if (['flags', 'default', 'schema', 'collapsed', 'materialized', 'enum', 'composite', 'derivation'].includes(verb) && arg && !arg.includes(':')) {
+      errors.push(`goal "${raw}" must read "subject : what it should be"`);
+    }
+  }
+  return errors;
+}
+
+/* ------------------------------------------------------------------ */
 /* Front matter                                                        */
 /* ------------------------------------------------------------------ */
 
@@ -381,9 +593,27 @@ export function validateWalkthrough(file, opts = {}) {
       else if (Number(numbered[1]) !== idx + 1) errors.push(`step "### ${h.text}" is out of sequence; expected ${idx + 1}`);
     });
     const blocks = steps.split(/^### /m).slice(1);
+    const anchors = opts.anchors ?? tourAnchors();
     blocks.forEach((block, idx) => {
       if (!block.includes('**You should see:**')) errors.push(`step ${idx + 1} has no "**You should see:**" line saying what changes on screen`);
+      // Every step is a card in the clickthrough, so every step has to say
+      // where the card points and, where there is something to check, what
+      // doing it looks like.
+      const found = [...block.matchAll(/<!--\s*step\b([\s\S]*?)-->/g)];
+      if (found.length === 0) {
+        errors.push(`step ${idx + 1} has no "<!-- step ... -->" block saying where the coach mark points`);
+      } else if (found.length > 1) {
+        errors.push(`step ${idx + 1} has ${found.length} "<!-- step ... -->" blocks; it may have one`);
+      } else {
+        const { meta, errors: parseErrors } = parseStepMeta(found[0][1]);
+        for (const e of parseErrors) errors.push(`step ${idx + 1}: ${e}`);
+        for (const e of validateStepMeta(meta, { anchors })) errors.push(`step ${idx + 1}: ${e}`);
+      }
     });
+    // A block outside "## Steps" is invisible to the tour, so it is a mistake
+    // wherever it looks harmless.
+    const strayBlocks = [...body.matchAll(/<!--\s*step\b/g)].length - [...steps.matchAll(/<!--\s*step\b/g)].length;
+    if (strayBlocks > 0) errors.push(`${strayBlocks} "<!-- step ... -->" block(s) sit outside "## Steps", where nothing reads them`);
   }
 
   /* ---- fenced blocks the format requires ---- */

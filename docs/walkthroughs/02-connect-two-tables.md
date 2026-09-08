@@ -120,6 +120,20 @@ before you commit to one.
 
 ### 1. Add the orders table
 
+<!-- step
+target: ui:add-table
+goals:
+  - table | orders
+  - column | orders.id : BIGSERIAL
+  - column | orders.customer_id : BIGINT
+  - column | orders.status : TEXT
+  - default | orders.status : 'pending'
+  - column | orders.total_cents : INTEGER
+  - check | orders.total_cents : total_cents >= 0
+  - column | orders.placed_at : TIMESTAMPTZ
+  - default | orders.placed_at : now()
+-->
+
 Press `T`, rename the new table `orders` with `F2`, and give it these columns
 (the `id` row is already there — change its type):
 
@@ -141,6 +155,12 @@ row.
 points at nothing.
 
 ### 2. Make the foreign key
+
+<!-- step
+target: column:orders.customer_id
+goals:
+  - fk | orders.customer_id -> customers.id
+-->
 
 Hover `orders` and drag the small handle beside `customer_id` onto the `id`
 row of `customers`.
@@ -167,6 +187,12 @@ reading `orders` → `customers`.
 
 ### 3. Choose how it reads
 
+<!-- step
+target: field:Reads as
+goals:
+  - reads | orders belongs to customers
+-->
+
 With the connection selected, open **Reads as** and pick *belongs to*.
 
 The dropdown only offers verbs that fit a foreign key: *references*,
@@ -183,6 +209,12 @@ reading you get for free — `customers has orders`.
 
 ### 4. Give the far end its own words
 
+<!-- step
+target: field:Reverse label
+goals:
+  - reverse label | orders -> customers : placed
+-->
+
 Still on the same connection, type `placed` into **Reverse label**.
 
 *Reverse label* overrides only the inverse phrasing — the one shown at the
@@ -195,6 +227,12 @@ better than *has* does for a table that is really about ordering.
 *has* to *placed*.
 
 ### 5. Decide what happens on delete
+
+<!-- step
+target: field:On delete
+goals:
+  - ondelete | orders -> customers : RESTRICT
+-->
 
 Scroll to **On delete** and **On update**, still on the `orders` → `customers`
 connection. Leave **On update** on its default, *NO ACTION*. Set **On delete**
@@ -217,6 +255,12 @@ generator's silent default.
 
 ### 6. Turn on cardinality labels
 
+<!-- step
+target: ui:view-menu
+goals:
+  - cardinality | on
+-->
+
 Open **View** in the top bar and tick **Cardinality labels**.
 
 **You should see:** small `N` and `1` markers appear on the `orders` ↔
@@ -229,6 +273,14 @@ badge instead — **N:M** in its header — because that shape *is* a many-to-ma
 join table; nothing on this canvas is one yet.)
 
 ### 7. Add contributors and connect it
+
+<!-- step
+target: ui:add-table
+goals:
+  - table | contributors
+  - column | contributors.name : TEXT
+  - column | contributors.role : TEXT
+-->
 
 Press `T`, rename the new table `contributors`, and give it `id BIGSERIAL
 PRIMARY KEY`, `name TEXT NOT NULL` and `role TEXT NOT NULL`. Then hover
@@ -245,6 +297,13 @@ related." It defaults to the most common case.
 *Data flow* — the header handle's default, not yet what you want here.
 
 ### 8. Turn that connection into a serialized copy
+
+<!-- step
+target: field:Stored in column
+goals:
+  - column | books.contributors_json : JSONB
+  - embed | books.contributors_json -> contributors
+-->
 
 With the new connection still selected, click **Serialized** in the **Kind**
 row, then set **Stored in column** to `contributors_json` — add that column
@@ -264,6 +323,19 @@ diamond at the `books` end, the **Kind** hint change to describe a serialized
 copy, and the direction row relabel itself **Container → embedded**.
 
 ### 9. Promise customer_cadence a feed
+
+<!-- step
+target: ui:add-table
+goals:
+  - table | customer_cadence
+  - column | customer_cadence.customer_id : BIGINT
+  - flags | customer_cadence.customer_id : pk
+  - no column | customer_cadence.id
+  - column | customer_cadence.avg_gap_days : NUMERIC(10,2)
+  - column | customer_cadence.order_count : INTEGER
+  - flow | orders -> customer_cadence
+  - label | orders -> customer_cadence : nightly rollup
+-->
 
 Press `T` for a table named `customer_cadence` with `customer_id BIGINT`
 (**PK**), `avg_gap_days NUMERIC(10,2)` (nullable) and `order_count INTEGER NOT
@@ -289,6 +361,18 @@ the diagram is where you keep track of promises.
 the inspector.
 
 ### 10. Add catalog_export and mark it a dependency
+
+<!-- step
+target: ui:add-table
+goals:
+  - table | catalog_export
+  - column | catalog_export.book_id : BIGINT
+  - column | catalog_export.title : TEXT
+  - column | catalog_export.price_cents : INTEGER
+  - column | catalog_export.exported_at : TIMESTAMPTZ
+  - dependency | catalog_export -> books
+  - label | catalog_export -> books : nightly feed
+-->
 
 Press `T` for a table named `catalog_export` with `id BIGSERIAL PRIMARY KEY`,
 `book_id BIGINT NOT NULL`, `title TEXT NOT NULL`, `price_cents INTEGER NOT

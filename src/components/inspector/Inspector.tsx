@@ -133,7 +133,7 @@ export function Inspector() {
   }
 
   return (
-    <aside className="inspector">
+    <aside className="inspector" data-tour="inspector">
       <ResizeHandle orientation="vertical" className="resize-handle--start" onResize={(delta) => resizePanel('inspectorW', -delta)} />
       <div className="inspector__head">
         <span className="inspector__title">{title}</span>

@@ -265,6 +265,8 @@ interface Actions {
   toggleDrawer: (tab?: DrawerTab) => void;
   /** Opens (or switches) the walkthrough panel to this slug, so its text follows the reader while they work on the canvas. */
   openWalkthrough: (slug: string) => void;
+  /** Marks the walkthrough in play without moving the drawer: while a tour runs, the coach mark is the reader's place, not this tab. */
+  setActiveWalkthrough: (slug: string | null) => void;
   setSidebarOpen: (open: boolean) => void;
   setInspectorOpen: (open: boolean) => void;
   resizePanel: (key: keyof PanelSizes, delta: number) => void;
@@ -1041,6 +1043,7 @@ export const useStore = create<Store>()(
           s.drawer.open = true;
           s.drawer.tab = 'walkthrough';
         }),
+      setActiveWalkthrough: (slug) => set((s) => void (s.activeWalkthroughSlug = slug)),
       toggleDrawer: (tab) =>
         set((s) => {
           if (tab && s.drawer.tab !== tab) {

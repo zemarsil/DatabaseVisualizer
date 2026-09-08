@@ -28,6 +28,31 @@ tabs. The **sidebar** on the left is the table list. All three toggle from the
 
 ---
 
+## The walkthrough coach mark
+
+Source: `src/components/tour/TourHost.tsx`
+
+A walkthrough runs as a card floating over the window, anchored to whatever the
+current step points at, with a ring drawn round it. It never takes the pointer:
+the reader works in the real app while the card watches.
+
+| Control | Notes |
+| --- | --- |
+| **Start** | On the opening card, after **What you'll build** and *Why it works this way*. |
+| **Set up the canvas** | Also on the opening card: loads the diagram this walkthrough starts from. |
+| **Back** / **Continue** | Move between steps. **Continue** turns primary with a tick once the step's goals pass. |
+| **Do it for me** | Shown only while a step has something left that the app can do; makes the change as one undo step. |
+| The checklist | Under the instruction: one line per goal, live, reading *"n of m done"* until they all pass. |
+| **−** / **✕** | Tuck the card into a pill in the bottom-right corner; leave the walkthrough (progress is kept). |
+| **Check your work** / **Gotchas** / **What next** | Tabs on the closing card. |
+
+Where a step points is its `target:` — see
+[`WALKTHROUGH_FORMAT.md`](WALKTHROUGH_FORMAT.md). Chrome is found by its
+`data-tour` attribute, inspector fields and sections by the label the reader
+sees, so renaming a visible label moves the coach mark with it.
+
+---
+
 ## Top bar, left to right
 
 Source: `src/components/TopBar.tsx`
@@ -59,7 +84,7 @@ Source: `src/components/drawer/Drawer.tsx` and the panels beside it
 
 | Tab | What it does |
 | --- | --- |
-| **Walkthrough** | The walkthrough you are following, so its text stays beside the canvas. Empty until you pick one from the **?** help modal's *Browse the fifteen walkthroughs*. Carries **Set up the canvas** above the text (loads the diagram that walkthrough starts from), **Check my work** below it (runs the walkthrough's `checks:` against the live canvas and lists what does not match), **Open the finished diagram**, and a *Next:* link. |
+| **Walkthrough** | The map beside the walkthrough you are running: every step in one list with a tick against the ones that check out, click any of them to move the coach mark there. Empty until you pick one from the **?** help modal's *Browse the fifteen walkthroughs*. Carries **Run the walkthrough** / **Show the step card**, **Set up the canvas** (loads the diagram that walkthrough starts from), **Read the whole thing** (the full text), **Check my work** (runs the walkthrough's `checks:` against the live canvas and lists what does not match), **Open the finished diagram**, and a *Next:* link. |
 | **SQL** | The generated script. Format selector (SQL, Markdown, Mermaid, DBML), *Whole schema* / *Selected table*, a *Prefix DROP TABLE statements* checkbox, statement count, **Copy** and **Download**. Generator warnings appear above the code. |
 | **Types** | Enum and composite types. Its own add buttons read **+ Enum** and **+ Struct type** — *Composite type* is only the top-bar `▾` menu's and the command palette's spelling. *Values (N)* for an enum, *Fields (N)* for a composite, plus a *Comment*. Neither values nor fields can be reordered: append and delete only. Badge shows how many types exist. |
 | **Import SQL** | Paste or load a `.sql` file; *Add to the current diagram* or replace; optionally drop everything into a new group. |

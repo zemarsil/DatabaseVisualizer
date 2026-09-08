@@ -45,7 +45,7 @@ export function Drawer() {
       {open && <ResizeHandle orientation="horizontal" className="resize-handle--start" onResize={(delta) => resizePanel('drawerH', -delta)} />}
       <div className="drawer__tabs">
         {TABS.map((t) => (
-          <button key={t.id} className={`drawer__tab${open && tab === t.id ? ' drawer__tab--active' : ''}`} onClick={() => (open && tab === t.id ? closeDrawer() : openDrawer(t.id))}>
+          <button key={t.id} data-tour={`tab-${t.id}`} className={`drawer__tab${open && tab === t.id ? ' drawer__tab--active' : ''}`} onClick={() => (open && tab === t.id ? closeDrawer() : openDrawer(t.id))}>
             {t.icon}
             {t.label}
             {t.id === 'trace' && traceResult && <span className="badge badge--trace">{traceResult.hops.length} hops</span>}
@@ -61,7 +61,7 @@ export function Drawer() {
         </button>
       </div>
       {open && (
-        <div className="drawer__body">
+        <div className="drawer__body" data-tour="drawer-body">
           {tab === 'walkthrough' && <WalkthroughPanel />}
           {tab === 'sql' && <SqlPanel />}
           {tab === 'types' && <TypesPanel />}

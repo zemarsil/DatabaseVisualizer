@@ -974,7 +974,7 @@ export function Canvas() {
   const pickingLabel = trace.picking ? (trace.fromId ? `From ${tableMap.get(trace.fromId)?.name ?? '?'}: now click the destination table` : 'Click the starting table') : null;
 
   return (
-    <div ref={wrapperRef} className="app__canvas" onDoubleClick={onPaneDoubleClick} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
+    <div ref={wrapperRef} className="app__canvas" data-tour="canvas" onDoubleClick={onPaneDoubleClick} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
       <ReactFlow
         className={`canvas${trace.picking ? ' picking' : ''}`}
         colorMode={theme}

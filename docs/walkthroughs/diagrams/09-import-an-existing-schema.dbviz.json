@@ -1038,7 +1038,7 @@
       ],
       "id": "rel_books_author",
       "kind": "fk",
-      "verb": "references",
+      "verb": "belongs-to",
       "sourceTableId": "tbl_books",
       "targetTableId": "tbl_authors",
       "name": "books_author_id_fkey",

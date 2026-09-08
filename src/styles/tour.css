@@ -1,0 +1,423 @@
+/* ------------------------------------------------------------------ */
+/* The walkthrough coach mark: a card that follows you around the app  */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Both layers sit above the workbench chrome (z-index 60) and below modals
+ * (90), and neither ever takes the pointer: the reader is working in the real
+ * app while the tour watches, so nothing here may intercept a click.
+ */
+.tour-ring {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 78;
+  pointer-events: none;
+  border-radius: 10px;
+  border: 2px solid var(--accent);
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 0 0 9999px rgba(4, 6, 12, 0.42);
+  transition: opacity 160ms ease;
+  opacity: 0;
+}
+
+[data-theme='light'] .tour-ring {
+  box-shadow:
+    0 0 0 3px var(--accent-soft),
+    0 0 0 9999px rgba(20, 28, 48, 0.24);
+}
+
+.tour-card {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 80;
+  width: min(390px, calc(100vw - 24px));
+  max-height: min(66vh, 620px);
+  display: flex;
+  flex-direction: column;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.tour-card__head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 9px 8px 9px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+.tour-card__where {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+
+.tour-card__title {
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tour-card__step {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.tour-card__progress {
+  position: absolute;
+  left: 0;
+  bottom: -1px;
+  height: 2px;
+  background: var(--accent);
+  transition: width 220ms ease;
+}
+
+.tour-card__body {
+  padding: 12px 14px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.tour-card__heading {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tour-card__foot {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px;
+  border-top: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+
+/* ---- prose inside the card ---- */
+
+.tour-doc p {
+  margin: 0 0 8px;
+}
+
+.tour-doc p:last-child {
+  margin-bottom: 0;
+}
+
+.tour-doc ul {
+  margin: 0 0 8px;
+  padding-left: 18px;
+}
+
+.tour-doc li {
+  margin-bottom: 4px;
+}
+
+.tour-doc code {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: var(--bg-hover);
+}
+
+.tour-doc pre.code-block {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.tour-doc h2,
+.tour-doc h3,
+.tour-doc h4 {
+  font-size: 12.5px;
+  margin: 10px 0 5px;
+}
+
+.tour-doc--muted {
+  color: var(--text-muted);
+  border-left: 2px solid var(--border);
+  padding-left: 10px;
+  margin-top: 6px;
+}
+
+.tour-doc a {
+  color: var(--accent);
+}
+
+.tour-hint {
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  border-left: 2px solid var(--warn);
+  padding-left: 9px;
+}
+
+.tour-hint p {
+  margin: 0;
+}
+
+.tour-expect {
+  margin: 8px 0 0;
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--bg-hover);
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.tour-expect p {
+  margin: 0;
+  display: inline;
+}
+
+.tour-expect__label {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 2px;
+}
+
+/* ---- the live checklist ---- */
+
+.tour-goals {
+  margin-top: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  padding: 8px 10px;
+}
+
+.tour-goals--done {
+  border-color: color-mix(in srgb, var(--success) 45%, var(--border));
+}
+
+.tour-goals__head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 5px;
+}
+
+.tour-goals--done .tour-goals__head {
+  color: var(--success);
+}
+
+.tour-goals ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.tour-goals__item {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.tour-goals__item svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text-faint);
+}
+
+.tour-goals__item--ok {
+  color: var(--text);
+}
+
+.tour-goals__item--ok svg {
+  color: var(--success);
+}
+
+/* ---- disclosures and the wrap-up tabs ---- */
+
+.tour-more__toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  color: var(--accent);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tour-more__chev {
+  transition: transform 150ms ease;
+}
+
+.tour-more__chev--open {
+  transform: rotate(180deg);
+}
+
+.tour-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 10px;
+}
+
+.tour-tabs__tab {
+  flex: 1;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 11.5px;
+  color: var(--text-muted);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.tour-tabs__tab--on {
+  color: var(--text);
+  background: var(--bg-hover);
+  border-color: var(--border-strong);
+}
+
+/* ---- tucked away ---- */
+
+.tour-pill {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elev);
+  box-shadow: var(--shadow);
+  color: var(--text);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.tour-pill svg {
+  color: var(--accent);
+}
+
+.tour-pill__count {
+  font-size: 11px;
+  color: var(--text-muted);
+  padding-left: 7px;
+  border-left: 1px solid var(--border);
+}
+
+/* ------------------------------------------------------------------ */
+/* The drawer tab: the same walkthrough as an outline you can jump in  */
+/* ------------------------------------------------------------------ */
+
+.wt-outline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 10px 0 14px;
+}
+
+.wt-outline__step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.wt-outline__step:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.wt-outline__step--on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.wt-outline__step--done {
+  color: var(--text);
+}
+
+.wt-outline__num {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  margin-top: 1px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+.wt-outline__step--done .wt-outline__num {
+  border-color: var(--success);
+  background: color-mix(in srgb, var(--success) 18%, transparent);
+  color: var(--success);
+}
+
+.wt-run {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.wt-run__note {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.tour-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}

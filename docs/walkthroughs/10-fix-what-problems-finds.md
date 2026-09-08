@@ -144,6 +144,15 @@ time. An empty **Problems** tab means "nothing here is broken", never
 
 ### 1. Read the baseline
 
+<!-- step
+target: panel:problems
+goals:
+  - open | problems
+  - lint errors | 2
+hint: This is the baseline you are about to clear, so the tick goes away as you fix things.
+transient: true
+-->
+
 Open the bottom drawer → **Problems**. Fourteen findings: two errors, ten
 warnings, two notes. Read the whole list once before touching anything —
 Problems sorts by severity, so the two things that will actually stop the
@@ -160,6 +169,12 @@ badge counts errors only, which is why it stayed dark through nine
 walkthroughs of accumulating warnings.
 
 ### 2. Fix the first error with its one-click fix
+
+<!-- step
+target: panel:problems
+goals:
+  - unique index | warehouses (code)
+-->
 
 The first error reads:
 
@@ -178,6 +193,12 @@ finding's fix, **Add a unique index on warehouses(code)**.
 `CREATE UNIQUE INDEX warehouses_code_key ON public.warehouses (code);`
 
 ### 3. Decline the second error's fix, and do it properly
+
+<!-- step
+target: field:On delete
+goals:
+  - ondelete | shipments -> warehouses : RESTRICT
+-->
 
 The second error reads:
 
@@ -201,6 +222,13 @@ find out.
 
 ### 4. Give stock_levels a primary key — but not the one offered
 
+<!-- step
+target: section:Columns
+goals:
+  - flags | stock_levels.warehouse_code : pk
+  - flags | stock_levels.book_id : pk
+-->
+
 Next warning:
 
 ```
@@ -221,6 +249,14 @@ book_id)` in the SQL tab, and *two* findings gone rather than one — the
 because a primary key is an index and `warehouse_code` leads it.
 
 ### 5. Take the three type mismatches
+
+<!-- step
+target: panel:problems
+goals:
+  - column | stock_levels.book_id : BIGINT
+  - column | shipment_items.book_id : BIGINT
+  - column | shipments.order_id : BIGINT
+-->
 
 Three warnings, all the same shape:
 
@@ -245,6 +281,16 @@ three.
 
 ### 6. Sweep up the indexes and the duplicate
 
+<!-- step
+target: panel:problems
+goals:
+  - index | shipments (order_id)
+  - index | shipments (warehouse_id)
+  - index | shipment_items (shipment_id)
+  - index | shipment_items (book_id)
+  - indexes | 11
+-->
+
 What is left is mechanical: four unindexed foreign keys and one table indexed
 twice on the same column. Press **Fix all safe** at the top of the tab.
 
@@ -257,6 +303,13 @@ yourself, the rest is bookkeeping.
 and only notes left.
 
 ### 7. Read what is left, and rename one column anyway
+
+<!-- step
+target: section:Columns
+goals:
+  - column | stock_levels.shelf_row : INTEGER
+  - no column | stock_levels.row
+-->
 
 No errors, no warnings, two notes. One of them is the CRM foreign key from
 walkthrough 03, which is correct and stays. The other came in with the
@@ -287,6 +340,17 @@ foreign-key columns the primary key.
 
 ### 8. Fix the two things Problems never mentioned
 
+<!-- step
+target: section:Columns
+goals:
+  - column | shipments.cost_cents : INTEGER
+  - no column | shipments.cost
+  - flags | shipments.cost_cents : nn
+  - default | shipments.cost_cents : 0
+  - check | shipments.cost_cents : cost_cents >= 0
+  - column | shipments.shipped_at : TIMESTAMPTZ
+-->
+
 Empty tab, still-broken schema. Two columns are wrong in ways no linter can
 see:
 
@@ -308,6 +372,16 @@ Neither change makes any difference to what Problems says, before or after.
 as empty as it was when both columns were wrong.
 
 ### 9. Give the imported tables a schema
+
+<!-- step
+target: field:Schema
+goals:
+  - schema | warehouses : public
+  - schema | stock_levels : public
+  - schema | shipments : public
+  - schema | shipment_items : public
+  - lint clean
+-->
 
 One last inconsistency from the import: the four warehouse tables generate as
 `CREATE TABLE warehouses`, while your thirteen say `CREATE TABLE
