@@ -111,13 +111,23 @@ export function lintDiagram(d: Diagram): LintFinding[] {
   const push = (f: Omit<LintFinding, 'id'>) => out.push({ ...f, id: `${f.rule}:${f.tableId ?? ''}:${f.columnId ?? ''}:${f.relationshipId ?? ''}` });
 
   /* ---------- tables and columns ---------- */
-  const seenNames = new Map<string, Table>();
+  // Group by name first: a snapshot has no notion of which table was renamed
+  // most recently, so array order is not a reliable way to pick "the" offender.
+  // Flag every table in the clashing group instead, each with its own fix, and
+  // let the user pick the one they actually meant to rename.
+  const nameGroups = new Map<string, Table[]>();
+  for (const t of d.tables) {
+    const nameKey = `${(t.schema ?? '').toLowerCase()}.${t.name.trim().toLowerCase()}`;
+    const group = nameGroups.get(nameKey);
+    if (group) group.push(t);
+    else nameGroups.set(nameKey, [t]);
+  }
+
   for (const t of d.tables) {
     const isView = t.kind === 'view';
     const isExternal = external.has(t.id);
     const nameKey = `${(t.schema ?? '').toLowerCase()}.${t.name.trim().toLowerCase()}`;
-    const clash = seenNames.get(nameKey);
-    if (clash) {
+    if ((nameGroups.get(nameKey)?.length ?? 0) > 1) {
       push({
         rule: 'duplicate-table-name',
         severity: 'error',
@@ -132,8 +142,6 @@ export function lintDiagram(d: Diagram): LintFinding[] {
           },
         },
       });
-    } else {
-      seenNames.set(nameKey, t);
     }
 
     if (t.name.length > limit) {
@@ -189,7 +197,17 @@ export function lintDiagram(d: Diagram): LintFinding[] {
       }
     }
 
-    const seenCols = new Map<string, Column>();
+    // Same reasoning as the table-name group above: group by name first rather
+    // than flagging only whichever column the loop reaches second.
+    const colGroups = new Map<string, Column[]>();
+    for (const c of t.columns) {
+      const key = c.name.trim().toLowerCase();
+      if (!key) continue;
+      const group = colGroups.get(key);
+      if (group) group.push(c);
+      else colGroups.set(key, [c]);
+    }
+
     for (const c of t.columns) {
       const key = c.name.trim().toLowerCase();
       if (!key) {
@@ -210,7 +228,7 @@ export function lintDiagram(d: Diagram): LintFinding[] {
         });
         continue;
       }
-      if (seenCols.has(key)) {
+      if ((colGroups.get(key)?.length ?? 0) > 1) {
         push({
           rule: 'duplicate-column-name',
           severity: 'error',
@@ -226,8 +244,6 @@ export function lintDiagram(d: Diagram): LintFinding[] {
             },
           },
         });
-      } else {
-        seenCols.set(key, c);
       }
       if (c.name.length > limit) {
         push({ rule: 'identifier-too-long', severity: 'warning', message: `Column "${t.name}.${c.name}" is longer than ${limit} characters.`, tableId: t.id, columnId: c.id });
