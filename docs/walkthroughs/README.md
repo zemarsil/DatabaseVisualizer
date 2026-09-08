@@ -12,23 +12,23 @@ what it assumes at the top.
 
 | # | Walkthrough | Level | Time | What you end up with |
 | --- | --- | --- | --- | --- |
-| 00 | [Your first diagram](00-your-first-diagram.md) | beginner | 15 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 01 | [Set up a table](01-set-up-a-table.md) | beginner | 15 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 02 | [Connect two tables](02-connect-two-tables.md) | beginner | 12 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 03 | [Group tables, and read another database](03-group-tables.md) | intermediate | 15 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 04 | [Create an enum and use it](04-create-an-enum.md) | beginner | 10 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 05 | [Fill one table from another](05-fill-one-table-from-another.md) | advanced | 25 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 06 | [Simulate a data flow](06-simulate-a-data-flow.md) | intermediate | 15 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 07 | [Add indexes that get used](07-add-indexes.md) | intermediate | 12 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 08 | [Build a view](08-build-a-view.md) | intermediate | 12 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 09 | [Import an existing schema](09-import-an-existing-schema.md) | beginner | 12 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 10 | [Fix what Problems finds](10-fix-what-problems-finds.md) | beginner | 12 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 11 | [Trace a path between tables](11-trace-a-path-between-tables.md) | beginner | 10 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 12 | [Read a big diagram](12-read-a-big-diagram.md) | intermediate | 12 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 13 | [Run the schema on a real database](13-run-the-schema-on-a-real-database.md) | advanced | 20 min | TODO one sentence, under 180 characters, ending in a full stop. |
-| 14 | [Export, share and save](14-export-share-and-save.md) | beginner | 10 min | TODO one sentence, under 180 characters, ending in a full stop. |
+| 00 | [Your first diagram](00-your-first-diagram.md) | beginner | 15 min | A tour of the whole window and the whole loop — two tables, a dragged foreign key, generated SQL, and a saved file. |
+| 01 | [Set up a table](01-set-up-a-table.md) | beginner | 15 min | Two tables typed almost entirely from the keyboard, with the right types, keys, flags, defaults and checks on every column. |
+| 02 | [Connect two tables](02-connect-two-tables.md) | beginner | 12 min | Turn a plain column into a real foreign key, then meet the three other kinds of connection a foreign key cannot express. |
+| 03 | [Group tables, and read another database](03-group-tables.md) | intermediate | 15 min | Box related tables into a named region, then mark one as living in another database so the script only ever documents it. |
+| 04 | [Create an enum and use it](04-create-an-enum.md) | beginner | 10 min | An order_status enum and a postal_address composite type, both put to work by typing their name into a column's type cell. |
+| 05 | [Fill one table from another](05-fill-one-table-from-another.md) | advanced | 25 min | Two rollup tables wired to data-flow edges whose derivations aggregate through a foreign key and average the gaps between a customer's orders. |
+| 06 | [Simulate a data flow](06-simulate-a-data-flow.md) | intermediate | 15 min | Pick a table a data flow feeds, run every flow upstream of it over sample rows, and watch stages, lineage and what-if edits play out live. |
+| 07 | [Add indexes that get used](07-add-indexes.md) | intermediate | 12 min | Composite and unique indexes on the order path, why a composite index's column order decides what it can serve, and what Problems catches when one is missing. |
+| 08 | [Build a view](08-build-a-view.md) | intermediate | 12 min | A read-only view over three tables, its SELECT typed once and its source links drawn for you by Detect from SQL. |
+| 09 | [Import an existing schema](09-import-an-existing-schema.md) | beginner | 12 min | Paste, drop or read in someone else's CREATE TABLE script and get a real diagram back, plus the foreign keys the DDL never bothered to declare. |
+| 10 | [Fix what Problems finds](10-fix-what-problems-finds.md) | beginner | 12 min | A bookshop schema with eighteen real mistakes, what Problems says about each one, and which ones fix themselves with one click. |
+| 11 | [Trace a path between tables](11-trace-a-path-between-tables.md) | beginner | 10 min | Ask Trace for the shortest chain of connections between two tables, read what it found, and generate the JOIN it implies. |
+| 12 | [Read a big diagram](12-read-a-big-diagram.md) | intermediate | 12 min | Collapsing, focus mode, Detangle, hand alignment, the command palette and colour conventions — how to read an eleven-table schema without getting lost in it. |
+| 13 | [Run the schema on a real database](13-run-the-schema-on-a-real-database.md) | advanced | 20 min | A five-table PostgreSQL bookshop schema you create inside a Docker container, query, seed, migrate after a change, and read back into the diagram. |
+| 14 | [Export, share and save](14-export-share-and-save.md) | beginner | 10 min | Turn a finished diagram into SQL, a Markdown dictionary, Mermaid, DBML, a picture, a link or a portable file, and see exactly what each one keeps. |
 
-Every walkthrough below ships a finished diagram you can open with **File → Open** (`Ctrl+O`)
+Each one ships a finished diagram you can open with **File → Open** (`Ctrl+O`),
 or by dropping the file on the canvas:
 
 - [`diagrams/00-your-first-diagram.dbviz.json`](diagrams/00-your-first-diagram.dbviz.json) — Your first diagram

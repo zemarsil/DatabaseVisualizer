@@ -42,7 +42,7 @@ const withDiagrams = rows.filter((r) => r.diagram);
 const diagrams = withDiagrams.length
   ? [
       '',
-      'Every walkthrough below ships a finished diagram you can open with **File → Open** (`Ctrl+O`)',
+      'Each one ships a finished diagram you can open with **File → Open** (`Ctrl+O`),',
       'or by dropping the file on the canvas:',
       '',
       ...withDiagrams.map((r) => `- [\`${r.diagram}\`](${r.diagram}) — ${r.title}`),
