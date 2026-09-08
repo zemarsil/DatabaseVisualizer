@@ -787,7 +787,7 @@ export function Canvas() {
     // so the surrounding connections stay visible instead of filling the screen.
     const dist = reachableTables(diagram, focusTableId);
     const ids = [...dist.entries()].filter(([, d]) => d <= 1).map(([id]) => ({ id }));
-    fitView({ nodes: ids, duration: 500, maxZoom: 1.1, padding: 0.3 });
+    fitView({ nodes: ids, duration: 500, maxZoom: 1.5, padding: 0.15 });
     focusTable(null);
   }, [focusTableId, diagram, fitView, focusTable]);
 
