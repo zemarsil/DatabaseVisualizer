@@ -9,7 +9,10 @@ import {
   type Relationship,
   type Table,
 } from '@shared/types';
-import { derivationSummaries, derivationValue, flowDerivations, groupDerivations, isDerivationComplete } from '../derivation';
+import { derivationSummaries, flowDerivations, groupDerivations, isDerivationComplete, parseOrderKey } from '../derivation';
+import { foreignKeyPath } from '../schemaInfo';
+import { collectReferences, parseExpression, type ColumnRef, type Expr } from '../simulate/expression';
+import { tokenize, type Token } from './tokenizer';
 import { externalTableIds } from '../groups';
 import { isIntegerType, isSerialType, quoteIdent, quoteQualified, quoteString } from './dialect';
 import { orderViews } from './views';
@@ -359,16 +362,177 @@ function alterAddFk(ctx: Ctx, r: Relationship): string | null {
   return `ALTER TABLE ${tableName(src, ctx.dialect)} ADD ${clause};`;
 }
 
+/** Column types that hold a point in time, for choosing how to subtract two of them. */
+function temporalKind(type: string): 'date' | 'timestamp' | null {
+  const base = type.trim().toUpperCase().replace(/\(.*$/, '').trim();
+  if (base === 'DATE') return 'date';
+  if (/^(TIMESTAMP|TIMESTAMPTZ|DATETIME|TIMESTAMP WITH TIME ZONE|TIMESTAMP WITHOUT TIME ZONE)$/.test(base)) return 'timestamp';
+  return null;
+}
+
 /**
- * INSERT ... SELECT skeletons built from a flow's structured derivations, one per
- * distinct (GROUP BY, WHERE) signature, so two columns rolled up the same way
- * share a statement.
+ * Qualify bare column names of the source table (quantity -> order_items.quantity)
+ * so they stay unambiguous once the statement joins other tables. Words that
+ * are function calls, already qualified, or type names after AS are left alone.
+ */
+function qualifyBareColumns(text: string, src: Table, dialect: Dialect): string {
+  let tokens: Token[];
+  try {
+    tokens = tokenize(text);
+  } catch {
+    return text;
+  }
+  const names = new Map(src.columns.map((c) => [c.name.toLowerCase(), c.name]));
+  let out = '';
+  let last = 0;
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (t.type === 'eof') break;
+    out += text.slice(last, t.start);
+    last = t.end;
+    const prev = tokens[i - 1];
+    const next = tokens[i + 1];
+    const isName = (t.type === 'word' || t.type === 'quoted') && names.has(t.value.toLowerCase());
+    const qualified = prev?.type === 'punct' && prev.value === '.';
+    const call = next?.type === 'punct' && next.value === '(';
+    const dotted = next?.type === 'punct' && next.value === '.';
+    const afterAs = prev?.type === 'word' && prev.upper === 'AS';
+    if (isName && !qualified && !call && !dotted && !afterAs) out += `${quoteIdent(src.name, dialect)}.${quoteIdent(names.get(t.value.toLowerCase())!, dialect)}`;
+    else out += text.slice(t.start, t.end);
+  }
+  return out + text.slice(last);
+}
+
+interface FlowJoins {
+  /** JOIN lines in the order they must appear. */
+  lines: string[];
+  /** Ids of the tables joined. */
+  tableIds: Set<string>;
+}
+
+/**
+ * The JOINs a group of derivations needs: every table.column reference whose
+ * table the source reaches through foreign keys becomes a JOIN along that
+ * chain. References the diagram cannot resolve are left as written, with a
+ * warning, so the skeleton still shows the intent.
+ */
+function flowJoins(ctx: Ctx, src: Table, texts: string[], warnings: string[]): FlowJoins {
+  const { dialect } = ctx;
+  const joins: FlowJoins = { lines: [], tableIds: new Set() };
+  const wanted = new Map<string, string>();
+  for (const text of texts) {
+    if (!text.trim() || text.trim() === '*') continue;
+    let refs: ColumnRef[];
+    try {
+      refs = collectReferences(parseExpression(text));
+    } catch {
+      continue;
+    }
+    for (const ref of refs) {
+      if (!ref.table || ref.table.toLowerCase() === src.name.toLowerCase()) continue;
+      if (!wanted.has(ref.table.toLowerCase())) wanted.set(ref.table.toLowerCase(), `${ref.table}.${ref.name}`);
+    }
+  }
+  for (const [table, example] of wanted) {
+    const path = foreignKeyPath(ctx.d, src.id, table);
+    if (!path) {
+      warnings.push(`Data flow from ${src.name}: "${example}" is not reachable through foreign keys, so no JOIN was written for it.`);
+      continue;
+    }
+    for (const step of path) {
+      if (joins.tableIds.has(step.parentId)) continue;
+      const fk = step.relationship;
+      const child = ctx.tableById.get(fk.sourceTableId);
+      const parent = ctx.tableById.get(step.parentId);
+      if (!child || !parent) continue;
+      const pairs = fk.sourceColumnIds.map((sid, k) => {
+        const sc = child.columns.find((c) => c.id === sid)?.name ?? '?';
+        const tc = parent.columns.find((c) => c.id === fk.targetColumnIds[k])?.name ?? '?';
+        return `${quoteIdent(parent.name, dialect)}.${quoteIdent(tc, dialect)} = ${quoteIdent(child.name, dialect)}.${quoteIdent(sc, dialect)}`;
+      });
+      joins.lines.push(`JOIN ${tableName(parent, dialect)} ON ${pairs.join(' AND ')}`);
+      joins.tableIds.add(step.parentId);
+    }
+  }
+  return joins;
+}
+
+/** The type of an expression when it is a single column reference (bare or through foreign keys); null otherwise. */
+function referencedColumnType(ctx: Ctx, src: Table, text: string): string | null {
+  let expr: Expr;
+  try {
+    expr = parseExpression(text);
+  } catch {
+    return null;
+  }
+  if (expr.kind !== 'column') return null;
+  if (!expr.table || expr.table.toLowerCase() === src.name.toLowerCase()) {
+    return src.columns.find((c) => c.name.toLowerCase() === expr.name.toLowerCase())?.type ?? null;
+  }
+  const path = foreignKeyPath(ctx.d, src.id, expr.table);
+  if (!path) return null;
+  const far = ctx.tableById.get(path[path.length - 1].parentId);
+  return far?.columns.find((c) => c.name.toLowerCase() === expr.name.toLowerCase())?.type ?? null;
+}
+
+/**
+ * The SQL for one sequence (window) derivation, per dialect. DIFF on a date or
+ * timestamp column subtracts the way each database does it (days for dates,
+ * seconds for timestamps), so the snippet runs as written.
+ */
+function windowSql(ctx: Ctx, src: Table, dv: Derivation, q: (text: string) => string): string {
+  const w = dv.window!;
+  const { dialect } = ctx;
+  const clause = [
+    w.partitionBy.filter((k) => k.trim()).length ? `PARTITION BY ${w.partitionBy.filter((k) => k.trim()).map(q).join(', ')}` : '',
+    w.orderBy.filter((k) => k.trim()).length ? `ORDER BY ${w.orderBy.filter((k) => k.trim()).map(q).join(', ')}` : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const expr = q(dv.expression.trim());
+  switch (w.fn) {
+    case 'LAG':
+    case 'LEAD':
+      return `${w.fn}(${expr}) OVER (${clause})`;
+    case 'DIFF': {
+      const prev = `LAG(${expr}) OVER (${clause})`;
+      const kind = temporalKind(referencedColumnType(ctx, src, dv.expression) ?? '');
+      if (kind === 'date') {
+        if (dialect === 'mariadb') return `DATEDIFF(${expr}, ${prev})`;
+        if (dialect === 'sqlite') return `julianday(${expr}) - julianday(${prev})`;
+        return `${expr} - ${prev}`;
+      }
+      if (kind === 'timestamp') {
+        if (dialect === 'mariadb') return `TIMESTAMPDIFF(SECOND, ${prev}, ${expr})`;
+        if (dialect === 'sqlite') return `(julianday(${expr}) - julianday(${prev})) * 86400`;
+        return `EXTRACT(EPOCH FROM (${expr} - ${prev}))`;
+      }
+      return `${expr} - ${prev}`;
+    }
+    case 'RUNNING_SUM':
+      return `SUM(${expr}) OVER (${clause} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`;
+    case 'RUNNING_AVG':
+      return `AVG(${expr}) OVER (${clause} ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)`;
+    case 'ROW_NUMBER':
+      return `ROW_NUMBER() OVER (${clause})`;
+    case 'RANK':
+      return `RANK() OVER (${clause})`;
+    default:
+      return expr;
+  }
+}
+
+/**
+ * INSERT ... SELECT statements built from a flow's structured derivations, one
+ * per distinct (GROUP BY, WHERE) signature, so two columns rolled up the same
+ * way share a statement.
  *
- * A grouping key that also names a column of the target table is carried into the
- * insert list (day, product_id in the shop sample); keys that do not - because
- * they come from a join the metadata does not model - stay in GROUP BY only. This
- * is documentation, never executed: joins beyond the two connected tables live in
- * the free-text query.
+ * A grouping key that also names a column of the target table is carried into
+ * the insert list (product_id in the shop sample) unless a derivation fills that
+ * column explicitly. Columns of other tables (orders.status) are reached through
+ * the diagram's foreign keys and turn into JOINs; sequence operations become
+ * window functions, and a sequence that is then aggregated (the average gap)
+ * is written as a subquery, because SQL cannot nest one inside the other.
  */
 function flowStatements(ctx: Ctx, r: Relationship, warnings: string[]): string[] {
   const src = ctx.tableById.get(r.sourceTableId);
@@ -385,20 +549,64 @@ function flowStatements(ctx: Ctx, r: Relationship, warnings: string[]): string[]
 
   const out: string[] = [];
   for (const group of groupDerivations(usable)) {
-    const keys = group.groupBy.map((key) => ({ key, column: tgt.columns.find((c) => c.name.toLowerCase() === key.toLowerCase()) }));
-    const mapped = keys.filter((k): k is { key: string; column: Column } => Boolean(k.column));
-    const insertCols = [
-      ...mapped.map((k) => quoteIdent(k.column.name, dialect)),
-      ...group.entries.map((dv) => quoteIdent(tgt.columns.find((c) => c.id === dv.targetColumnId)!.name, dialect)),
+    const texts = group.entries.flatMap((dv) => [dv.expression, ...(dv.window ? [...dv.window.orderBy.map((k) => parseOrderKey(k).expression), ...dv.window.partitionBy] : [])]);
+    texts.push(...group.groupBy, group.filter);
+    const joins = flowJoins(ctx, src, texts, warnings);
+    // With other tables in the FROM list, a bare column name could be ambiguous.
+    const q = (text: string) => (joins.lines.length ? qualifyBareColumns(text, src, dialect) : text);
+    const from = [`FROM ${tableName(src, dialect)}`, ...joins.lines];
+    const targetName = (dv: Derivation) => tgt.columns.find((c) => c.id === dv.targetColumnId)!.name;
+    const explicit = new Set(group.entries.map((dv) => dv.targetColumnId));
+    const keys = group.groupBy.map((key, n) => {
+      const column = tgt.columns.find((c) => c.name.toLowerCase() === key.toLowerCase());
+      return { key, column: column && !explicit.has(column.id) ? column : undefined, alias: column ? column.name : `key_${n + 1}` };
+    });
+    const carried = keys.filter((k): k is { key: string; column: Column; alias: string } => Boolean(k.column));
+    const rowValue = (dv: Derivation): string => {
+      if (dv.window) return windowSql(ctx, src, dv, q);
+      const text = dv.expression.trim();
+      return !text || text === '*' ? '*' : q(text);
+    };
+    const insertCols = [...carried.map((k) => quoteIdent(k.column.name, dialect)), ...group.entries.map((dv) => quoteIdent(targetName(dv), dialect))];
+    const hasWindow = group.entries.some((dv) => dv.window);
+    const hasAggregate = group.groupBy.length > 0 || group.entries.some((dv) => dv.aggregate);
+
+    if (hasWindow && hasAggregate) {
+      // Window functions cannot sit inside an aggregate: compute them in a subquery first.
+      // A key that a derivation also fills would give the subquery two columns of one name.
+      const entryNames = new Set(group.entries.map((dv) => targetName(dv).toLowerCase()));
+      const innerKeys = keys.filter((k) => !entryNames.has(k.alias.toLowerCase()));
+      const innerItems = [...innerKeys.map((k) => `${q(k.key)} AS ${quoteIdent(k.alias, dialect)}`), ...group.entries.map((dv) => `${rowValue(dv)} AS ${quoteIdent(targetName(dv), dialect)}`)];
+      const inner = [`SELECT ${innerItems.join(', ')}`, ...from];
+      if (group.filter) inner.push(`WHERE ${q(group.filter)}`);
+      const outerItems = [
+        ...carried.map((k) => quoteIdent(k.alias, dialect)),
+        ...group.entries.map((dv) => (dv.aggregate ? `${dv.aggregate}(${quoteIdent(targetName(dv), dialect)})` : quoteIdent(targetName(dv), dialect))),
+      ];
+      const outerGroup = [...innerKeys.map((k) => quoteIdent(k.alias, dialect)), ...group.entries.filter((dv) => !dv.aggregate).map((dv) => quoteIdent(targetName(dv), dialect))];
+      const lines = [
+        `INSERT INTO ${tableName(tgt, dialect)} (${insertCols.join(', ')})`,
+        `SELECT ${outerItems.join(', ')}`,
+        `FROM (`,
+        ...inner.map((l) => `  ${l}`),
+        `) AS w`,
+      ];
+      if (outerGroup.length) lines.push(`GROUP BY ${outerGroup.join(', ')}`);
+      out.push(`${lines.join('\n')};`);
+      continue;
+    }
+
+    const selectItems = [
+      ...carried.map((k) => q(k.key)),
+      ...group.entries.map((dv) => {
+        const value = rowValue(dv);
+        if (!dv.aggregate) return value;
+        return `${dv.aggregate}(${value})`;
+      }),
     ];
-    const selectItems = [...mapped.map((k) => k.key), ...group.entries.map(derivationValue)];
-    const lines = [
-      `INSERT INTO ${tableName(tgt, dialect)} (${insertCols.join(', ')})`,
-      `SELECT ${selectItems.join(', ')}`,
-      `FROM ${tableName(src, dialect)}`,
-    ];
-    if (group.filter) lines.push(`WHERE ${group.filter}`);
-    if (group.groupBy.length) lines.push(`GROUP BY ${group.groupBy.join(', ')}`);
+    const lines = [`INSERT INTO ${tableName(tgt, dialect)} (${insertCols.join(', ')})`, `SELECT ${selectItems.join(', ')}`, ...from];
+    if (group.filter) lines.push(`WHERE ${q(group.filter)}`);
+    if (group.groupBy.length) lines.push(`GROUP BY ${group.groupBy.map(q).join(', ')}`);
     out.push(`${lines.join('\n')};`);
   }
   return out;

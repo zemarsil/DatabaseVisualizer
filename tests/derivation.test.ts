@@ -55,8 +55,9 @@ describe('the sample diagram', () => {
     const flow = d.relationships.find((r) => r.name === 'nightly rollup')!;
     const daily = d.tables.find((t) => t.name === 'daily_sales')!;
     expect(derivationSummaries(flow, daily)).toEqual([
-      "units_sold = SUM(quantity) GROUP BY product_id, day WHERE status = 'paid'",
-      "revenue_cents = SUM(quantity * unit_price_cents) GROUP BY product_id, day WHERE status = 'paid'",
+      "day = CAST(orders.placed_at AS DATE) GROUP BY product_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'",
+      "units_sold = SUM(quantity) GROUP BY product_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'",
+      "revenue_cents = SUM(quantity * unit_price_cents) GROUP BY product_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'",
     ]);
     // both forms coexist: the query still carries the join the structure cannot express
     expect(flow.query).toContain('JOIN orders o ON o.id = oi.order_id');
@@ -70,8 +71,11 @@ describe('derivation persistence', () => {
     const back = parseDiagramFile(serializeDiagram(d));
     const flow = back.relationships.find((r) => r.name === 'nightly rollup')!;
     expect(flow.derivations).toEqual(d.relationships.find((r) => r.name === 'nightly rollup')!.derivations);
-    expect(flow.derivations).toHaveLength(2);
-    expect(flow.derivations![1]).toMatchObject({ expression: 'quantity * unit_price_cents', aggregate: 'SUM', groupBy: ['product_id', 'day'], filter: "status = 'paid'" });
+    expect(flow.derivations).toHaveLength(3);
+    expect(flow.derivations![2]).toMatchObject({ expression: 'quantity * unit_price_cents', aggregate: 'SUM', groupBy: ['product_id', 'CAST(orders.placed_at AS DATE)'], filter: "orders.status = 'paid'" });
+    // a sequence operation round-trips too
+    const gaps = back.relationships.find((r) => r.name === 'gap between orders')!;
+    expect(gaps.derivations![2].window).toEqual({ fn: 'DIFF', orderBy: ['placed_at'], partitionBy: ['customer_id'] });
   });
 
   it('loads files written before derivations existed', () => {
@@ -96,19 +100,21 @@ describe('derivation persistence', () => {
             sourceTableId: 't1',
             targetTableId: 't1',
             derivations: [
-              { id: 'd1', targetColumnId: 'c1', expression: 'n', aggregate: 'DROP TABLE', groupBy: ['a', 7], filter: '' },
+              { id: 'd1', targetColumnId: 'c1', expression: 'n', aggregate: 'DROP TABLE', groupBy: ['a', 7], filter: '', window: { fn: 'EXPLODE', orderBy: ['n'] } },
               'nonsense',
               {},
+              { id: 'd3', targetColumnId: 'c1', expression: 'n', groupBy: [], window: { fn: 'LAG', orderBy: ['n', 3], partitionBy: 'x' } },
             ],
           },
         ],
       }),
     );
     const dvs = d.relationships[0].derivations!;
-    expect(dvs).toHaveLength(2);
+    expect(dvs).toHaveLength(3);
     expect(dvs[0]).toEqual({ id: 'd1', targetColumnId: 'c1', expression: 'n', groupBy: ['a'] });
     expect(dvs[1]).toMatchObject({ targetColumnId: '', expression: '', groupBy: [] });
     expect(dvs[1].id).toBeTruthy();
+    expect(dvs[2].window).toEqual({ fn: 'LAG', orderBy: ['n'], partitionBy: [] });
   });
 });
 
@@ -119,7 +125,10 @@ describe('pruneRelationships', () => {
     daily.columns = daily.columns.filter((c) => c.name !== 'revenue_cents');
     const pruned = pruneRelationships(d);
     const flow = pruned.relationships.find((r) => r.name === 'nightly rollup')!;
-    expect(flow.derivations).toHaveLength(1);
-    expect(derivationSummaries(flow, daily)).toEqual(["units_sold = SUM(quantity) GROUP BY product_id, day WHERE status = 'paid'"]);
+    expect(flow.derivations).toHaveLength(2);
+    expect(derivationSummaries(flow, daily)).toEqual([
+      "day = CAST(orders.placed_at AS DATE) GROUP BY product_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'",
+      "units_sold = SUM(quantity) GROUP BY product_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'",
+    ]);
   });
 });

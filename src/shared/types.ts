@@ -329,15 +329,74 @@ export type AggregateFunction = 'SUM' | 'COUNT' | 'AVG' | 'MIN' | 'MAX';
 export const AGGREGATE_FUNCTIONS: AggregateFunction[] = ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX'];
 
 /**
+ * Sequence ("window") operations: the value of a row computed from its
+ * neighbours once the source rows are put in order.
+ *
+ *  LAG / LEAD    -> the expression's value on the previous / next row
+ *  DIFF          -> this row's value minus the previous row's ("time since the
+ *                   last reading"); for dates and timestamps the result is a
+ *                   number of days / seconds
+ *  RUNNING_SUM   -> cumulative total up to and including this row
+ *  RUNNING_AVG   -> cumulative average up to and including this row
+ *  ROW_NUMBER    -> 1-based position in the order (the expression is ignored)
+ *  RANK          -> like ROW_NUMBER but rows that tie share a rank
+ */
+export type WindowFunction = 'LAG' | 'LEAD' | 'DIFF' | 'RUNNING_SUM' | 'RUNNING_AVG' | 'ROW_NUMBER' | 'RANK';
+
+export interface WindowFunctionMeta {
+  id: WindowFunction;
+  label: string;
+  hint: string;
+  /** ROW_NUMBER and RANK count rows; they never look at the expression. */
+  needsExpression: boolean;
+}
+
+export const WINDOW_FUNCTIONS: WindowFunctionMeta[] = [
+  { id: 'DIFF', label: 'Change since the previous row', hint: 'This row minus the previous one, e.g. the seconds between two readings.', needsExpression: true },
+  { id: 'LAG', label: 'Previous row’s value', hint: 'The value the expression had on the row before this one (NULL on the first row).', needsExpression: true },
+  { id: 'LEAD', label: 'Next row’s value', hint: 'The value the expression has on the row after this one (NULL on the last row).', needsExpression: true },
+  { id: 'RUNNING_SUM', label: 'Running total', hint: 'Sum of the expression over every row up to and including this one.', needsExpression: true },
+  { id: 'RUNNING_AVG', label: 'Running average', hint: 'Average of the expression over every row up to and including this one.', needsExpression: true },
+  { id: 'ROW_NUMBER', label: 'Row number', hint: '1, 2, 3… in the given order, restarting in every partition.', needsExpression: false },
+  { id: 'RANK', label: 'Rank', hint: 'Position in the given order; rows with equal ordering values share a rank.', needsExpression: false },
+];
+
+export function isWindowFunction(v: unknown): v is WindowFunction {
+  return typeof v === 'string' && WINDOW_FUNCTIONS.some((w) => w.id === v);
+}
+
+export function windowMeta(fn: WindowFunction): WindowFunctionMeta {
+  return WINDOW_FUNCTIONS.find((w) => w.id === fn) ?? WINDOW_FUNCTIONS[0];
+}
+
+/**
+ * How a sequence derivation orders its rows: `orderBy` decides which row is
+ * "previous" (a key may end in DESC), `partitionBy` restarts the sequence for
+ * every distinct combination of keys, e.g. one series per sensor.
+ */
+export interface DerivationWindow {
+  fn: WindowFunction;
+  orderBy: string[];
+  partitionBy: string[];
+}
+
+/**
  * One derived column on a flow relationship: "this target column is filled with
  * <aggregate>(<expression>) computed over source rows, grouped by <groupBy> and
- * restricted by <filter>".
+ * restricted by <filter>", optionally after a sequence operation put the rows
+ * in order and looked at their neighbours (<window>).
+ *
+ * Expressions, filters and keys are written in SQL. They may name a column of
+ * the source table directly ("quantity") or a column of any table the source
+ * points at through a chain of foreign keys as table.column ("orders.status"
+ * from order_items): the app resolves the lookup from the diagram's foreign
+ * keys, so the diagram itself says how the tables combine.
  *
  * This is the structured counterpart of Relationship.query: enough shape for the
- * app to render a summary and generate an INSERT ... SELECT skeleton, without
- * pretending to be a SQL parser. Anything that does not fit (extra joins, window
- * functions, upsert logic) still belongs in the free-text query, which coexists
- * with these entries rather than being replaced by them.
+ * app to render a summary, generate an INSERT ... SELECT and simulate the rows
+ * that would move. Anything that does not fit (joins that are not foreign keys,
+ * upsert logic) still belongs in the free-text query, which coexists with these
+ * entries rather than being replaced by them.
  */
 export interface Derivation {
   id: string;
@@ -353,11 +412,17 @@ export interface Derivation {
   aggregate?: AggregateFunction | null;
   /**
    * Grouping keys as free text: usually source column names ("product_id"), but
-   * a key may also be an expression or a column pulled in by a join ("day").
+   * a key may also be an expression ("CAST(orders.placed_at AS DATE)").
    */
   groupBy: string[];
   /** Optional WHERE-style condition, free text, e.g. "status = 'paid'". */
   filter?: string;
+  /**
+   * Sequence operation applied to the expression before any aggregate: the rows
+   * are ordered, each row's value is computed from its neighbours, and only then
+   * are rows grouped and aggregated (an AVG of DIFFs is "the mean gap").
+   */
+  window?: DerivationWindow;
 }
 
 export interface Relationship {

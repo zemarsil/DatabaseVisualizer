@@ -161,14 +161,16 @@ describe('generateSchema', () => {
   it('builds an INSERT ... SELECT skeleton from structured derivations', () => {
     const out = generateSchema(sampleDiagram());
     expect(out.warnings).toEqual([]);
-    // one statement for both columns, because they share the grouping and the filter
+    // one statement for all three columns, because they share the grouping and the filter
     expect(out.script).toContain('--   INSERT INTO daily_sales (product_id, day, units_sold, revenue_cents)');
-    expect(out.script).toContain('--   SELECT product_id, day, SUM(quantity), SUM(quantity * unit_price_cents)');
+    expect(out.script).toContain('--   SELECT order_items.product_id, CAST(orders.placed_at AS DATE), SUM(order_items.quantity), SUM(order_items.quantity * order_items.unit_price_cents)');
     expect(out.script).toContain('--   FROM order_items');
-    expect(out.script).toContain("--   WHERE status = 'paid'");
-    expect(out.script).toContain('--   GROUP BY product_id, day;');
+    // orders.status is reached through the order_id foreign key, so the join is written for it
+    expect(out.script).toContain('--   JOIN orders ON orders.id = order_items.order_id');
+    expect(out.script).toContain("--   WHERE orders.status = 'paid'");
+    expect(out.script).toContain('--   GROUP BY order_items.product_id, CAST(orders.placed_at AS DATE);');
     // the readable per-column summary comes along with it
-    expect(out.script).toContain("--     revenue_cents = SUM(quantity * unit_price_cents) GROUP BY product_id, day WHERE status = 'paid'");
+    expect(out.script).toContain("--     revenue_cents = SUM(quantity * unit_price_cents) GROUP BY product_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'");
     // ... and the free-text query is still there, side by side, still not executed
     expect(out.script).toContain('--   Tagged query:');
     expect(out.script).toContain('--   JOIN orders o ON o.id = oi.order_id');
