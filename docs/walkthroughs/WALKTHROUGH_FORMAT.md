@@ -73,7 +73,7 @@ for anything not in it, open the component and read the label:
 | The in-app help text | `src/components/ui/Modal.tsx` (`HelpContent`) |
 | Bottom-drawer tabs | `src/components/drawer/Drawer.tsx` |
 | Inspector panels | `src/components/inspector/*.tsx` |
-| Right-click menus | `src/components/ui/contextMenuItems.ts`, `src/lib/canvasActions.ts` |
+| Right-click menus | `src/components/ui/contextMenuItems.ts`, `src/lib/canvasOps.ts` |
 | Command palette entries | `src/components/CommandPalette.tsx` |
 | What the model can and cannot hold | `src/shared/types.ts` |
 

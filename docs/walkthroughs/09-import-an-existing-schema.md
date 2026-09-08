@@ -201,7 +201,8 @@ underneath the two of them.
 
 ## Other ways to do it
 
-Import SQL is one of five doors into the same importer:
+**Import SQL** is the drawer tab, but the parser behind it — and the diagram
+converter behind that — is reachable from several other places too:
 
 - **Drop a `.sql` file on the canvas.** Same parser, same result, no drawer
   required — it adds to whatever is already there, or simply populates an
@@ -227,9 +228,12 @@ Import SQL is one of five doors into the same importer:
   tab as the button; **Docker & database** opens the Database tab.
 - **`Ctrl+K`**, then type "import" or "database" to jump to either drawer tab
   without touching the mouse.
-- **Hand-write the `.dbviz.json`** and open it, as this walkthrough's own
-  companion file was written. The format is documented in
-  [`../ADVISOR_OUTPUT_FORMAT.md`](../ADVISOR_OUTPUT_FORMAT.md).
+
+One route skips DDL and the parser entirely: **hand-writing the
+`.dbviz.json`** directly, which is how this walkthrough's own companion file
+was made — you write the model the parser would have produced, instead of the
+script it would have produced it from. The format is documented in
+[`../ADVISOR_OUTPUT_FORMAT.md`](../ADVISOR_OUTPUT_FORMAT.md).
 
 ## Check your work
 
@@ -359,11 +363,12 @@ statement in the script — before and after it — still lands. Try it under
   the column's type *cell* is the only place you will ever see the shouting
   version. Retype it if it bothers you; nothing depends on the casing.
 - **Dropping or pasting a `.dbml` file does not work, despite what the app's
-  own help (`?`) claims.** The help text says paste "also pastes DDL, DBML or
-  a .dbviz.json," but there is no DBML parser in the codebase — DBML is an
-  *export* format only (File menu → Export DBML). A dropped `.dbml` file
-  falls through to "drop a .sql, .dbviz.json or .sqlite file," and pasting
-  DBML text is silently ignored (`Ctrl+V` does nothing, no error either).
+  own help (`?`) claims.** The help panel's shortcut list says `Ctrl+V`
+  "also pastes DDL, DBML or a .dbviz.json" — but there is no DBML parser
+  anywhere in the codebase; DBML is an *export* format only (File menu →
+  Export DBML). A dropped `.dbml` file falls through to the same error every
+  unrecognised file gets ("drop a .sql, .dbviz.json or .sqlite file"), and
+  pasting DBML text with `Ctrl+V` does nothing at all — no import, no error.
   Convert it to SQL first, or hand-write the `.dbviz.json`.
 - **File → Open always replaces — it never asks.** Dropping a `.dbviz.json`
   on the canvas offers *Replace* or *Add tables* when you already have a

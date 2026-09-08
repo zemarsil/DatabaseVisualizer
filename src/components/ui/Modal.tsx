@@ -123,7 +123,7 @@ function HelpContent() {
         apart from the schema you are designing. Drag a table into or out of a region to change what is in it, and drag a region by its title bar to move
         everything inside it. Tick <em>These tables live in another database</em> in the inspector and the group turns external: the generated script documents
         those tables instead of creating them, and nothing runs against them when you apply the schema. Detangle keeps each group together. Right-click the
-        canvas → <em>Group by schema</em> boxes tables by their schema prefix in one go.
+        canvas → <em>Group tables by schema</em> boxes tables by their schema prefix in one go.
       </p>
       <h4>Right-click</h4>
       <p>
@@ -202,7 +202,7 @@ function HelpContent() {
         <span>
           <K k="Ctrl" /> <K k="C" /> / <K k="X" /> / <K k="V" />
         </span>
-        <span>Copy, cut and paste the selected tables (also pastes DDL, DBML or a .dbviz.json)</span>
+        <span>Copy, cut and paste the selected tables (also pastes DDL or a .dbviz.json)</span>
         <span>
           <K k="T" />
         </span>

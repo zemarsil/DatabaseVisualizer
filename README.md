@@ -68,13 +68,13 @@ docker compose up --build
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express |
 | See / copy DDL | Bottom drawer → **SQL** (whole schema or the selected table). The table inspector also has a preview |
-| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. Dropping a `.sql`, `.dbml` or `.dbviz.json` file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
+| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. Dropping a `.sql`, `.dbviz.json` or SQLite database file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
 | Check the schema | Bottom drawer → **Problems**: lint findings with one-click fixes, and suggested foreign keys from column names |
 | Copy / paste tables | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` on the selection; pasting between browser tabs or diagrams works too |
 | Switch dialect | Top bar selector (PostgreSQL, MariaDB, SQLite); known column types are translated (`SERIAL` ↔ `INT AUTO_INCREMENT`, `TIMESTAMPTZ` ↔ `TIMESTAMP`, `JSONB` ↔ `JSON`, …). Undo reverts |
 | Collapse tables | The chevron in a table header cycles all columns → keys only → header only; **View → All tables** does it for everything; zooming far out collapses automatically |
 | Focus on a table | Select it and press `.` (or right-click → Focus); `[` / `]` change how many hops stay visible, `Esc` clears |
-| Align and tidy | Box-select, then right-click → Align / Distribute; **View → Snap tables to the grid**; arrow keys nudge the selection (`Shift` for bigger steps); right-click the canvas → **Group by schema** |
+| Align and tidy | Box-select, then right-click → Align / Distribute; **View → Snap to grid**, a toggle that makes tables land on the grid as you drag them; arrow keys nudge the selection (`Shift` for bigger steps); right-click the canvas → **Group tables by schema** |
 | Detangle | **Detangle** button (`L`), direction menu next to it |
 | Trace | **Trace** button: with two tables selected it traces immediately, otherwise it enters pick mode; or use the **Trace** drawer tab |
 | Save / open | File menu, `Ctrl+S` / `Ctrl+O` (`.dbviz.json`). **File → Open recent…** lists every diagram this browser has worked on, with thumbnails |

@@ -247,24 +247,27 @@ Press `Ctrl+S` (or **File → Save as .dbviz.json**).
 `export-share-and-save-bookshop.dbviz.json`, and the dot from the previous
 step gone — saving is what makes "changed since the last save" false again.
 
-### 8. Reopen it and confirm it replaces the canvas
+### 8. Reopen the original and confirm it replaces the canvas
 
-Press `Ctrl+O` and pick the file you just saved.
+Press `Ctrl+O` again, but this time pick the original file from **Before you
+start**, not the copy you just downloaded.
 
-**You should see:** the canvas redraw instantly with the note back where it
-started — `.dbviz.json` carries the position you nudged it to, so if you
-saved after the nudge you would see that position instead. Either way, the
-whole diagram was replaced in one step, with no prompt asking whether to keep
-anything from what was on the canvas a moment before.
+**You should see:** the note jump back to where it started. The nudged
+position only ever existed on the canvas and in the file you saved a moment
+ago; opening a different `.dbviz.json` throws all of that away in one step,
+with no prompt asking whether to keep anything from what was on the canvas a
+moment before.
 
 ### 9. Check the library
 
 Open **File → Open recent…**.
 
-**You should see:** this diagram already listed with a thumbnail and an
-"open" badge, timestamped a few seconds ago — the library has been recording
-every change since before you pressed anything in this walkthrough, with no
-save required.
+**You should see:** two cards named "Export, share and save — bookshop," both
+updated within the last few minutes. One is badged "open" — the file you
+reopened in the last step. The other, right beside it with its own thumbnail,
+is the state the canvas was in a moment before that, nudge and all: opening a
+file never throws away what was on the canvas; it gives the old state its own
+place in the library first.
 
 ### 10. Copy a share link
 
@@ -296,8 +299,8 @@ button beside it.
   the drawer (it stays on *Whole schema* until you also click **Selected
   table** yourself), or *Copy CREATE TABLE* / *Copy CREATE VIEW* to skip the
   drawer entirely and put just that statement on the clipboard.
-- **Right-click empty canvas** → *SQL script* opens the same tab as clicking
-  **Database** or using the palette.
+- **Right-click empty canvas** → *SQL script* opens the same **SQL** tab as
+  the command palette's *Open SQL tab* entry.
 - **The table inspector** has its own **Preview** toggle under an *SQL*
   section, plus a **Drawer** button that jumps to the full tab — handy when
   you only want to glance at one table's DDL without leaving the inspector.
@@ -436,7 +439,7 @@ from the file above rather than guessed:
 | Markdown | a Relationships table | a Custom types table | SELECT shown in a fenced block | a Groups table | no | no |
 | Mermaid | crow's-foot lines | flattened to a plain column type | drawn as an entity | one `%% external:` comment, no region | no | no |
 | DBML | `Ref` lines | real `Enum` block | a `Table` whose note carries the SELECT | a `TableGroup` note (table itself still looks ordinary) | no | no |
-| PNG / SVG | drawn as lines, no text | drawn as a column label, no values listed | drawn as a node | drawn as the region | drawn, as it appears on canvas | yes, exactly as arranged |
+| PNG / SVG | crow's-foot lines with `1` / `N` cardinality labels, no column or constraint names | drawn as a column's type label, no values listed | drawn as a node | drawn as the region | drawn, as it appears on canvas | yes, exactly as arranged |
 
 ## Gotchas
 

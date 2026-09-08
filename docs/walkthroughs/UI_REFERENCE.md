@@ -60,13 +60,13 @@ Source: `src/components/drawer/Drawer.tsx` and the panels beside it
 | Tab | What it does |
 | --- | --- |
 | **SQL** | The generated script. Format selector (SQL, Markdown, Mermaid, DBML), *Whole schema* / *Selected table*, a *Prefix DROP TABLE statements* checkbox, statement count, **Copy** and **Download**. Generator warnings appear above the code. |
-| **Types** | Enum and composite types. *Values (N)* for an enum, *Fields (N)* for a composite, plus a *Comment*. Badge shows how many types exist. |
+| **Types** | Enum and composite types. Its own add buttons read **+ Enum** and **+ Struct type** — *Composite type* is only the top-bar `▾` menu's and the command palette's spelling. *Values (N)* for an enum, *Fields (N)* for a composite, plus a *Comment*. Neither values nor fields can be reordered: append and delete only. Badge shows how many types exist. |
 | **Import SQL** | Paste or load a `.sql` file; *Add to the current diagram* or replace; optionally drop everything into a new group. |
 | **Trace** | *From table…* / *To table…*, the hop list, and *Join along the path*. |
 | **Simulate** | *Simulate data flow*: the stage list, the source and target grids, row lineage, and editable raw-input cells. |
 | **Problems** | Lint findings with one-click fixes, filterable (*All severities*, *Errors only*, *Warnings only*, *Notes only*), plus *Suggested foreign keys*. Badge shows the error count. |
 | **Query** | Read-only `SELECT`s against the connected database. `Ctrl+Enter` runs, `Tab` indents; snippets, history, CSV/JSON copy. |
-| **Database** | Left column *Docker* (containers: *Container name*, *Image*, *Host port*, *Engine*), right column *Connection* (*Host*, *Port*, *User*, *Password*), then *Create the schema*, *Import from the database*, **Migrate** and *Seed data*. |
+| **Database** | Left column *Docker* (containers: *Container name*, *Image*, *Host port*, *Engine*), right column *Connection* (*Engine* — a dialect selector independent of the diagram's — *Host*, *Port*, *Database*, *User*, *Password*), then *Create the schema*, *Import from the database*, **Migrate** and *Seed data*. |
 
 ---
 
@@ -88,7 +88,7 @@ types**), *Reads as* (the verb, previewed in both directions), the direction
 row (*Referencing → referenced* for a foreign key, *Container → embedded* for a
 serialized one, *Source → target* otherwise), *Column pairs* (or *Anchor columns
 (optional)*), *Constraint name* / *Label*, *Reverse label*, *On delete*,
-*On update*, *Tagged query*, *Derived columns (N)* — each with *Expression on
+*On update*, *Tagged query*, a free-text *Note* beside it, *Derived columns (N)* — each with *Expression on
 {source}*, *Group by*, *Filter (WHERE)* and *Sequence (window)* — and
 *Generated from these derivations*.
 
@@ -139,10 +139,12 @@ spelling other than the one in the left column.
 
 ## Right-click menus
 
-Sources: `src/components/ui/contextMenuItems.ts`, `src/lib/canvasActions.ts`
+Sources: `src/components/ui/contextMenuItems.ts`, which wires in the operations from
+`src/lib/canvasOps.ts` (`src/lib/canvasActions.ts` holds only copy/paste/cut and file drops)
 
 - **Canvas**: *Add table here*, *Add view here*, *Add note here*, *Paste here*,
-  *Select all tables*, *Group tables by schema*, *Snap to grid*, *Detangle
+  *Select all tables*, *Group tables by schema*, *Snap to grid* (a toggle — tables
+  land on the grid as you drag them; there is no one-shot "snap everything now"), *Detangle
   layout*, *Fit to window*, *Undo*, *Redo*, and the drawer tabs.
 - **Table**: *Rename in place*, *Rename…*, *Duplicate table*, *Color*,
   *Copy table*, *Cut table*, *Copy table name*, *Show in SQL tab*,
@@ -153,11 +155,12 @@ Sources: `src/components/ui/contextMenuItems.ts`, `src/lib/canvasActions.ts`
   *Copy column name*, *Delete column*.
 - **Connection**: *Swap direction*, the four kinds, *Copy tagged query*,
   *Edit in inspector*, *Delete connection*.
-- **Group region**: *Edit group…*, *In another database*,
-  *Remove region, keep tables*.
+- **Group region**: *Edit group…*, *In another database*, *Select its N table(s)*,
+  *Remove region, keep tables*, *Delete region and its N table(s)*.
 - **Multi-selection**: adds *Align left edges* / *right edges* / *top edges* /
   *bottom edges* / *centres (vertical axis)* / *middles (horizontal axis)*,
-  *Distribute horizontally*, *Distribute vertically*, *Color for all*.
+  *Distribute horizontally*, *Distribute vertically*, *Color for all*, and — at exactly
+  two tables — *Trace {first} → {second}*, which traces immediately.
 - **Note**: *Edit text*, *Duplicate note*, *Copy text*, *Delete note*.
 
 ---
@@ -239,6 +242,34 @@ Expressions, keys and filters may name a column of another table as
 Use the bare table name, never `schema.table`.
 
 ---
+
+## Behaviour that surprises people
+
+Found the hard way while writing these walkthroughs, each confirmed in the
+source. Worth a `## Gotchas` entry wherever it is relevant:
+
+- **A foreign key can be drawn backwards in silence.** Dragging a column handle
+  from the parent onto the child creates a foreign key pointing the wrong way
+  rather than refusing. The inspector's *Referencing → referenced* row and the
+  crow's foot are what tell you which way round you are.
+- **A view has no column handles** (`TableNode.tsx` suppresses them), so a
+  connection touching a view can only start as a `flow` from the header handle.
+  Nothing stops you switching its **Kind** to *Foreign key* afterwards, at which
+  point the generator drops it with a warning — views cannot take part in
+  foreign keys.
+- **`CREATE MATERIALIZED VIEW` parses without a warning but is demoted.**
+  Materialized-ness and `WITH CHECK OPTION` are not in the model, so a round trip
+  gives you back a plain view.
+- **DBML is export-only.** There is no DBML importer anywhere in the codebase,
+  so a `.dbml` file cannot be dropped or pasted. Drop accepts `.sql`, `.txt`,
+  `.dbviz.json` and SQLite database files (`.sqlite`, `.sqlite3`, `.db`).
+- **Simulate only draws the current stage's source and target.** A table reached
+  only through a `table.column` foreign-key lookup feeds the computation but
+  never gets its own grid, so its values cannot be what-if-edited.
+- **Renaming a custom type cascades; renaming a column does not.**
+  `updateCustomType` rewrites every column and composite field that names the
+  type; a column rename leaves checks, defaults and tagged queries mentioning the
+  old name untouched, because those are plain text.
 
 ## What the model cannot hold
 

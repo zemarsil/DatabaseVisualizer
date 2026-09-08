@@ -131,7 +131,7 @@
   "notes": [
     {
       "id": "note_after_import",
-      "text": "Pasted from one script, then cleaned up in three moves:\n\n1. Detangle (L) laid the five tables out by dependency instead of the grid Import SQL drops them in.\n2. Problems → Suggested foreign keys offered order_items.order_id → orders.id and order_items.book_id → books.id at high confidence; Add both.\n3. Problems still lists three fk-without-index warnings (author_id, order_id, book_id) — the DDL only indexed customer_id. Left for 10-fix-what-problems-finds.",
+      "text": "Pasted from one script, then cleaned up in three moves:\n\n1. Detangle (L) laid the five tables out by dependency instead of the grid Import SQL drops them in.\n2. Problems → Suggested foreign keys badged order_items.order_id → orders.id and order_items.book_id → books.id likely; Add all likely.\n3. Problems still lists three fk-without-index warnings (author_id, order_id, book_id) — the DDL only indexed customer_id. Left for 10-fix-what-problems-finds.",
       "position": { "x": 700, "y": 520 },
       "width": 320,
       "height": 210,
