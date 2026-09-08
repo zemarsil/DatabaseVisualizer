@@ -198,7 +198,7 @@ nothing has linked the tables yet.
 
 Click **Detect from SQL**, next to *Source tables*.
 
-**You should see:** a toast reading *Linked 3 source tables to the view*,
+**You should see:** a toast reading *"Linked 3 source tables to the view."*,
 *Source tables (3)* now listing `customers`, `orders` and `order_items` as
 chips, and three dashed, filled-arrow connections on the canvas running from
 each of those tables into `v_customer_orders`.
@@ -315,7 +315,7 @@ GROUP BY c.id, c.email;
 --   order_items is named in v_customer_orders' SELECT (JOIN order_items oi); this link was drawn by Detect from SQL, not typed by hand.
 ```
 
-Then open **Problems**. It should be empty — the four flow edges carry a
+Then open **Problems**. It should be empty — the three flow edges carry a
 *note*, which is enough to satisfy the linter's "say how the data moves" rule
 even though they carry no query or derivations, because a view's `SELECT` is
 already that explanation.
@@ -328,11 +328,13 @@ already that explanation.
   customers c JOIN orders o … JOIN oder_items oi …`. Only a real database
   running that script would tell you `oder_items` does not exist.
 - Click **Detect from SQL** a second time without changing anything. The toast
-  changes to *Every table in the SELECT is already linked* — it never
+  changes to *"Every table in the SELECT is already linked."* — it never
   duplicates a connection.
-- Try dragging a foreign-key handle **from** `v_customer_orders` onto
-  `customers`. The connection is created, but generate the script: a comment
-  in the warnings explains a view cannot take part in a foreign key, and no
+- Drag `v_customer_orders`' orange header handle onto `customers` (a view has
+  no column handles, so this is the only connection it can start — it lands as
+  a *Data flow*). Open it and click **Foreign key** in the inspector's *Kind*
+  switcher, then generate the script: nothing crashes, but the generator's
+  warnings above the code say a view cannot take part in a foreign key, and no
   `REFERENCES` is written for it.
 - Flip `orders` from **Table** to **View** in the inspector, look at what
   happens to its foreign key and its rows in the **SQL** tab, then flip it
@@ -342,7 +344,7 @@ already that explanation.
 
 - **A view with no `SELECT` is a lint warning, not an error, and it vanishes
   from the script.** *Problems* reports `View "…" has no SELECT yet, so it is
-  left out of the script` (rule `view-without-sql`) — the diagram still looks
+  left out of the script.` (rule `view-without-sql`) — the diagram still looks
   complete on the canvas, but the generated schema simply has one fewer
   `CREATE VIEW`, silently.
 - **The app does not parse or validate the `SELECT`.** It only scans the text
@@ -360,9 +362,12 @@ already that explanation.
   — regenerate the script and you get back a plain `CREATE VIEW`. If those
   clauses matter, keep the original DDL as your source of truth and treat this
   app's copy as a diagram, not a mirror.
-- **A view cannot be either end of a foreign key.** The inspector lets you
-  drag the handle anyway; the generator quietly drops the constraint and adds
-  a warning above the script instead of failing.
+- **A view cannot be either end of a foreign key.** The canvas already makes
+  this awkward — a view has no column handles, only the header one, so any
+  connection you drag onto or out of it starts as a *Data flow* — but nothing
+  stops you from switching that connection's *Kind* to **Foreign key** in the
+  inspector afterward. The generator is what actually catches it: it drops the
+  constraint and adds a warning above the script instead of failing.
 
 ## Where to go next
 

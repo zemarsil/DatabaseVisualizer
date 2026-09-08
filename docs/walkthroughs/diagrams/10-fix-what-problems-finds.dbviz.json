@@ -1,0 +1,302 @@
+{
+  "version": 1,
+  "name": "Fix what Problems finds — a clean bookshop",
+  "dialect": "postgresql",
+  "tables": [
+    {
+      "id": "tbl_authors",
+      "name": "authors",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per person who wrote something we sell.",
+      "position": { "x": 0, "y": 0 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_authors_mentor_id", "name": "idx_authors_mentor_id", "columnIds": ["col_authors_mentor_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_authors_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_authors_name", "name": "name", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_authors_country", "name": "country", "type": "CHAR(2)", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_authors_mentor_id", "name": "mentor_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Another author who mentored this one. Nullable: most authors have none, and the first row inserted cannot point at a mentor that does not exist yet." }
+      ]
+    },
+    {
+      "id": "tbl_books",
+      "name": "books",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per edition we stock.",
+      "position": { "x": 320, "y": 0 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_books_author_id", "name": "idx_books_author_id", "columnIds": ["col_books_author_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_books_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_books_author_id", "name": "author_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Primary credited author, for the common single-author case. See book_authors for co-authors." },
+        { "id": "col_books_title", "name": "title", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_books_isbn", "name": "isbn", "type": "CHAR(13)", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_books_price_cents", "name": "price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "price_cents >= 0" },
+        { "id": "col_books_published_on", "name": "published_on", "type": "DATE", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_books_condition", "name": "condition", "type": "VARCHAR(20)", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'used'", "check": "condition IN ('new', 'used', 'like_new')", "comment": "Physical condition for the used copies we resell. CONDITION is a reserved word — Problems flags it as informational, and PostgreSQL just quotes it; not worth renaming." }
+      ]
+    },
+    {
+      "id": "tbl_book_authors",
+      "name": "book_authors",
+      "schema": "public",
+      "color": "blue",
+      "comment": "Some books have more than one author; this holds every credit, in author order.",
+      "position": { "x": 320, "y": 260 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_book_authors_author_id", "name": "idx_book_authors_author_id", "columnIds": ["col_book_authors_author_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_book_authors_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_book_authors_author_id", "name": "author_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_customers",
+      "name": "customers",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per person with an account.",
+      "position": { "x": 640, "y": 0 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_customers_crm_contact_id", "name": "idx_customers_crm_contact_id", "columnIds": ["col_customers_crm_contact_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_customers_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_customers_crm_contact_id", "name": "crm_contact_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Matches crm_contacts.contact_id in the vendor CRM — see the external group." },
+        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_orders",
+      "name": "orders",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per checkout.",
+      "position": { "x": 640, "y": 260 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_orders_customer_id", "name": "idx_orders_customer_id", "columnIds": ["col_orders_customer_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_orders_status", "name": "status", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
+        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
+        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" },
+        { "id": "col_orders_items_snapshot", "name": "items_snapshot", "type": "JSONB", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Serialized copy of order_items as they stood when the order was placed — see the serialized connection below. order_items stays the source of truth; this is only a point-in-time record for receipts." }
+      ]
+    },
+    {
+      "id": "tbl_order_items",
+      "name": "order_items",
+      "schema": "public",
+      "color": "blue",
+      "comment": "The grain daily_sales rolls up.",
+      "position": { "x": 640, "y": 520 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_order_items_order_id", "name": "idx_order_items_order_id", "columnIds": ["col_order_items_order_id"], "unique": false },
+        { "id": "idx_order_items_book_id", "name": "idx_order_items_book_id", "columnIds": ["col_order_items_book_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_order_items_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_order_items_order_id", "name": "order_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_order_items_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_order_items_quantity", "name": "quantity", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "1", "check": "quantity > 0" },
+        { "id": "col_order_items_unit_price_cents", "name": "unit_price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_reviews",
+      "name": "reviews",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per customer rating of a book they bought.",
+      "position": { "x": 320, "y": 520 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_reviews_book_id", "name": "idx_reviews_book_id", "columnIds": ["col_reviews_book_id"], "unique": false },
+        { "id": "idx_reviews_customer_id", "name": "idx_reviews_customer_id", "columnIds": ["col_reviews_customer_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_reviews_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_reviews_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_reviews_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_reviews_rating", "name": "rating", "type": "SMALLINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "rating BETWEEN 1 AND 5" },
+        { "id": "col_reviews_posted_at", "name": "posted_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_daily_sales",
+      "name": "daily_sales",
+      "schema": "public",
+      "color": "orange",
+      "comment": "Fed by the order_items -> daily_sales data flow below. Never written to directly.",
+      "position": { "x": 640, "y": 780 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_daily_sales_day", "name": "day", "type": "DATE", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_daily_sales_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_daily_sales_units", "name": "units", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
+        { "id": "col_daily_sales_revenue_cents", "name": "revenue_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+      ]
+    },
+    {
+      "id": "tbl_crm_contacts",
+      "name": "crm_contacts",
+      "color": "purple",
+      "groupId": "grp_crm",
+      "comment": "Lives in the CRM's database. Never created by this script.",
+      "position": { "x": 1000, "y": -40 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_crm_contacts_contact_id", "name": "contact_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_crm_contacts_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_authors_mentor",
+      "kind": "fk",
+      "sourceTableId": "tbl_authors",
+      "sourceColumnIds": ["col_authors_mentor_id"],
+      "targetTableId": "tbl_authors",
+      "targetColumnIds": ["col_authors_id"],
+      "name": "authors_mentor_id_fkey"
+    },
+    {
+      "id": "rel_books_author",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_books",
+      "sourceColumnIds": ["col_books_author_id"],
+      "targetTableId": "tbl_authors",
+      "targetColumnIds": ["col_authors_id"],
+      "name": "books_author_id_fkey"
+    },
+    {
+      "id": "rel_book_authors_book",
+      "kind": "fk",
+      "sourceTableId": "tbl_book_authors",
+      "sourceColumnIds": ["col_book_authors_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "book_authors_book_id_fkey"
+    },
+    {
+      "id": "rel_book_authors_author",
+      "kind": "fk",
+      "sourceTableId": "tbl_book_authors",
+      "sourceColumnIds": ["col_book_authors_author_id"],
+      "targetTableId": "tbl_authors",
+      "targetColumnIds": ["col_authors_id"],
+      "name": "book_authors_author_id_fkey"
+    },
+    {
+      "id": "rel_customers_crm",
+      "kind": "fk",
+      "sourceTableId": "tbl_customers",
+      "sourceColumnIds": ["col_customers_crm_contact_id"],
+      "targetTableId": "tbl_crm_contacts",
+      "targetColumnIds": ["col_crm_contacts_contact_id"],
+      "name": "customers_crm_contact_id_fkey"
+    },
+    {
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": ["col_orders_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "orders_customer_id_fkey"
+    },
+    {
+      "id": "rel_order_items_order",
+      "kind": "fk",
+      "verb": "part-of",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_order_items_order_id"],
+      "targetTableId": "tbl_orders",
+      "targetColumnIds": ["col_orders_id"],
+      "name": "order_items_order_id_fkey"
+    },
+    {
+      "id": "rel_order_items_book",
+      "kind": "fk",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_order_items_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "order_items_book_id_fkey",
+      "onDelete": "RESTRICT"
+    },
+    {
+      "id": "rel_reviews_book",
+      "kind": "fk",
+      "sourceTableId": "tbl_reviews",
+      "sourceColumnIds": ["col_reviews_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "reviews_book_id_fkey"
+    },
+    {
+      "id": "rel_reviews_customer",
+      "kind": "fk",
+      "sourceTableId": "tbl_reviews",
+      "sourceColumnIds": ["col_reviews_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "reviews_customer_id_fkey"
+    },
+    {
+      "id": "rel_orders_snapshot",
+      "kind": "embed",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": ["col_orders_items_snapshot"],
+      "targetTableId": "tbl_order_items",
+      "targetColumnIds": [],
+      "note": "Snapshot taken at checkout; order_items remains authoritative for anything still being fulfilled."
+    },
+    {
+      "id": "rel_order_items_daily_sales",
+      "kind": "flow",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_daily_sales",
+      "targetColumnIds": [],
+      "derivations": [
+        { "id": "drv_day", "targetColumnId": "col_daily_sales_day", "expression": "CAST(orders.placed_at AS DATE)", "groupBy": ["book_id", "CAST(orders.placed_at AS DATE)"] },
+        { "id": "drv_units", "targetColumnId": "col_daily_sales_units", "expression": "quantity", "aggregate": "SUM", "groupBy": ["book_id", "CAST(orders.placed_at AS DATE)"] },
+        { "id": "drv_revenue", "targetColumnId": "col_daily_sales_revenue_cents", "expression": "quantity * unit_price_cents", "aggregate": "SUM", "groupBy": ["book_id", "CAST(orders.placed_at AS DATE)"] }
+      ]
+    }
+  ],
+  "groups": [
+    { "id": "grp_crm", "name": "CRM (read-only)", "color": "purple", "external": true, "note": "Vendor CRM reached over a foreign data wrapper. We only ever SELECT from it.", "position": { "x": 1000, "y": -160 } }
+  ],
+  "customTypes": [],
+  "notes": [
+    {
+      "id": "note_lint",
+      "text": "This is the fixed end state for \"Fix what Problems finds.\" Every error and warning the linter can catch on this schema has been resolved.\n\nThree Problems entries are still here on purpose, all informational: books.condition is a reserved word (fine, just gets quoted), book_authors is a many-to-many join table (that is its job), and customers -> crm_contacts crosses into an external group (also its job). None of those are mistakes.",
+      "position": { "x": 0, "y": -220 },
+      "width": 380,
+      "height": 190,
+      "color": "yellow"
+    }
+  ]
+}
