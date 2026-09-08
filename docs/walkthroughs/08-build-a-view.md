@@ -8,6 +8,7 @@ dialect: postgresql
 covers:
   - Adding a view
   - View definition (SELECT …)
+  - Materialized views
   - Detect from SQL
   - Source links (flow edges)
   - Views in the generated script
@@ -113,6 +114,13 @@ query. A rollup table pays that cost once, at write time, and something has to
 own keeping it caught up. Reach for a view first; reach for the derived table
 in 05 only once the view's query shows up in a slow-query log.
 
+There is a third point on that spectrum, and PostgreSQL has it built in: a
+**materialized** view, which stores its rows like a table and recomputes them
+only when somebody runs `REFRESH MATERIALIZED VIEW`. It is a rollup table where
+the database owns the refresh instead of your nightly job — cheap reads, and
+data as of the last refresh rather than as of now. The inspector has a
+checkbox for it, and step 6 tries it.
+
 ## Steps
 
 ### 1. Find the three tables the view will read
@@ -188,7 +196,45 @@ carry no `PK`/`NN`/`UQ`/`AI` meaning because none of them reach the DDL.
 display*, four rows appear inside the node on the canvas, and the **SQL** tab
 does not change by one character.
 
-### 6. Find the view in the generated script
+### 6. Tick Materialized, read the statement, and turn it back off
+
+Still on `v_customer_orders`, tick **Materialized (store the rows, refresh on
+demand)** in the inspector.
+
+**You should see:** the field hint above it change from "Written into the
+script as CREATE VIEW after every table" to "…as CREATE MATERIALIZED VIEW",
+the **SQL** tab's statement become `CREATE MATERIALIZED VIEW
+public.v_customer_orders AS`, and the node on the canvas relabel itself
+**MAT VIEW**.
+
+The `SELECT` underneath did not change by a character. That is the whole
+feature: same query, different question about *when* it runs. A plain view runs
+it on every read and is always current; a materialized one runs it on `REFRESH
+MATERIALIZED VIEW` and is current as of whenever that last happened.
+
+Now switch the dialect selector at the top to **MariaDB** and look above the
+script. A generator warning reads *"MariaDB has no materialized views, so
+v_customer_orders was written as a regular view: its rows are recomputed on
+every query instead of stored until refreshed."* — and the statement is an
+ordinary view again, spelled MariaDB's way: `CREATE OR REPLACE VIEW
+public.v_customer_orders AS`. The checkbox stays ticked, so switching back to
+**PostgreSQL** restores the materialized statement rather than making you
+remember it.
+
+That fallback is a choice worth noticing. The app could have cleared the flag
+on the dialect switch, or emitted a statement MariaDB cannot run; instead it
+degrades at *generation* time and leaves the diagram alone — the same trick it
+plays with enum types on SQLite, which become `CHECK (col IN (…))` without the
+type disappearing from the **Types** tab.
+
+Untick **Materialized** before moving on. This particular view is read on an
+account page and wants to be current, and the rest of the series expects a
+plain `CREATE VIEW`.
+
+**You should see:** the badge back to **VIEW**, and `CREATE VIEW
+public.v_customer_orders AS` in the SQL tab.
+
+### 7. Find the view in the generated script
 
 Open the bottom drawer → **SQL**, on *Whole schema*.
 
@@ -297,6 +343,11 @@ really does contain `CREATE VIEW public.v_customer_orders AS`.
 - Flip `orders` from **Table** to **View** in the inspector, look at what
   happens to its foreign key and its rows in the **SQL** tab, then flip it
   back and confirm nothing was lost.
+- Tick **Materialized** again and turn on *Prefix DROP TABLE statements*: the
+  drop line becomes `DROP MATERIALIZED VIEW IF EXISTS
+  public.v_customer_orders;`, because you cannot drop a materialized view with
+  plain `DROP VIEW`. Switch to SQLite and watch that same line fall back to
+  `DROP VIEW`. Untick it again afterwards.
 
 ## Gotchas
 
@@ -314,12 +365,21 @@ really does contain `CREATE VIEW public.v_customer_orders AS`.
   — is not created as a stand-in and does not appear in the "no sources found"
   toast's reasoning; it is just absent from the result, same as any other name
   the scan does not recognize.
-- **`MATERIALIZED`, `ALGORITHM=`/`DEFINER=` and `WITH CHECK OPTION` parse
-  clean but do not survive.** Import SQL accepts all three without a warning,
-  but nothing in the model remembers a view was materialized or check-optioned
-  — regenerate the script and you get back a plain `CREATE VIEW`. If those
+- **`ALGORITHM=`/`DEFINER=` and `WITH CHECK OPTION` parse clean but do not
+  survive.** Import SQL accepts them without a warning, but nothing in the
+  model remembers a view was check-optioned — regenerate the script and you
+  get back a `CREATE VIEW` without them. (`MATERIALIZED` is the exception: it
+  is a real field on the view, so it survives import, the `.dbviz.json`, a
+  share link and reading the schema back off PostgreSQL.) If those other
   clauses matter, keep the original DDL as your source of truth and treat this
   app's copy as a diagram, not a mirror.
+- **Materialized is PostgreSQL's alone, and the flag outlives the dialect.**
+  Switch to MariaDB or SQLite and the script falls back to a plain
+  `CREATE VIEW` with a warning above it — neither engine has materialized
+  views — rather than emitting a statement they cannot run. The checkbox stays
+  ticked, so switching back to PostgreSQL restores the real statement. What it
+  does *not* do is warn you that the rows are now recomputed per query unless
+  you read the generator warnings.
 - **A view cannot be either end of a foreign key.** The canvas already makes
   this awkward — a view has no column handles, only the header one, so any
   connection you drag onto or out of it starts as a *Data flow* — but nothing

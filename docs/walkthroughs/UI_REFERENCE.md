@@ -80,9 +80,13 @@ Source: `src/components/inspector/*.tsx`
 toggles (expand a row for *Default*, *Check*, *Comment*), *Indexes (N)*,
 *Table checks (N)*, *Connections (N)* and *Quick actions*.
 
-**View** (`ViewEditor.tsx`) — *View definition (SELECT …)* and *Source tables
+**View** (`ViewEditor.tsx`) — *View definition (SELECT …)*, the checkbox
+*Materialized (store the rows, refresh on demand)* (PostgreSQL emits
+`CREATE MATERIALIZED VIEW`; MariaDB and SQLite fall back to a plain view with a
+generator warning, and the flag is kept for switching back), and *Source tables
 (N)* with a **Detect from SQL** button that links the diagram tables named in
-the `SELECT`.
+the `SELECT`. A materialized view's canvas badge reads **MAT VIEW** rather than
+**VIEW**.
 
 **Connection** (`RelationshipEditor.tsx`) — *Kind* (the four **Connection
 types**), *Reads as* (the verb, previewed in both directions), the direction
@@ -258,9 +262,11 @@ source. Worth a `## Gotchas` entry wherever it is relevant:
   Nothing stops you switching its **Kind** to *Foreign key* afterwards, at which
   point the generator drops it with a warning — views cannot take part in
   foreign keys.
-- **`CREATE MATERIALIZED VIEW` parses without a warning but is demoted.**
-  Materialized-ness and `WITH CHECK OPTION` are not in the model, so a round trip
-  gives you back a plain view.
+- **`CREATE MATERIALIZED VIEW` survives a round trip; `WITH CHECK OPTION` does
+  not.** `materialized` is a real field on the table, carried through the
+  parser, the `.dbviz.json`, share links and PostgreSQL introspection
+  (`relkind` `'m'`). `WITH CHECK OPTION` and `ALGORITHM=`/`DEFINER=` parse
+  without a warning and are then forgotten, so a round trip drops them.
 - **DBML is export-only.** There is no DBML importer anywhere in the codebase,
   so a `.dbml` file cannot be dropped or pasted. Drop accepts `.sql`, `.txt`,
   `.dbviz.json` and SQLite database files (`.sqlite`, `.sqlite3`, `.db`).
