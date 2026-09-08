@@ -212,19 +212,23 @@ applies all of them in a single `Ctrl+Z` step.
 Select `order_items`, press `F2`, and rename it to `reviews` — the exact name
 a different table three rows down already has.
 
-**You should see:** the error badge jump to `1`, a red badge appear on the
-**Problems** tab itself, and a new entry: `Two tables are named "reviews" in
-schema public.` Click its chip — it reads `reviews`, and it selects the
-*original* `reviews` table, not the one you just renamed: the linter reports
-whichever table it reaches second while scanning the diagram in order.
+**You should see:** the error badge jump to `2`, a red badge appear on the
+**Problems** tab itself, and *two* new entries, both reading `Two tables are
+named "reviews" in schema public.` — one for each table now sharing the name.
+Click each chip in turn: one selects the table you just renamed (still
+`order_items` underneath, now wearing the name `reviews`), the other selects
+the original `reviews` table three rows down. The linter no longer guesses
+which one you meant — it flags both, so you can click through and check.
 
-### 7. Notice the offered fix targets the wrong table
+### 7. Fix the table you actually renamed
 
-Read that finding's fix, **Rename to reviews_2** — and don't click it. It
-would rename the table it's pointing at (the original `reviews`) to
-`reviews_2`, leaving your renamed `order_items` permanently stuck as
-`reviews` and the real reviews table orphaned under the wrong name. Press
-`Ctrl+Z` instead.
+On the entry whose chip selected the table you just renamed, read its fix,
+**Rename to reviews_2**, and click it.
+
+**You should see:** only that table pick up the name `reviews_2` — the
+original `reviews` table is left exactly as it was. Both the error badge and
+the tab's red badge drop back to `0`. Press `Ctrl+Z` to undo the fix, then
+`Ctrl+Z` again to undo the rename itself.
 
 **You should see:** the table's name revert to `order_items`, the error badge
 drop back to `0`, and the tab's red badge disappear.
@@ -440,7 +444,7 @@ groups them, with the exact message and what leaving it costs you.
 
 | Problems says | Costs you | Fix |
 | --- | --- | --- |
-| `Two tables are named "reviews" in schema public.` | The script emits `CREATE TABLE public.reviews` twice; PostgreSQL runs the first and rejects the second outright. | **Rename to X_2** (not safe — read which table it targets first; see Steps 6-7). |
+| `Two tables are named "reviews" in schema public.` | The script emits `CREATE TABLE public.reviews` twice; PostgreSQL runs the first and rejects the second outright. | **Rename to X_2** (not safe) — Problems lists one entry per clashing table, so each one's fix only ever touches the table its chip points at; see Steps 6-7. |
 | `Table "daily_sales" has no columns.` | `CREATE TABLE public.daily_sales ()` isn't valid PostgreSQL — an empty column list. | **Add an id column** (safe) — a start, not a finish. |
 | `Table "reviews" has a column with no name.` | The generator skips a nameless column (with its own warning) rather than emit a broken line — it silently never reaches the database. | **Remove the column** (not safe). |
 | `Table "order_items" has two columns named "quantity".` | PostgreSQL rejects the statement: `column "quantity" specified more than once`. | **Rename to X_2** (not safe — right only if they're genuinely different columns; here one is a plain duplicate, so delete it instead). |
