@@ -1,6 +1,7 @@
 import {
   AGGREGATE_FUNCTIONS,
   isRelationshipKind,
+  isWindowFunction,
   normalizeVerb,
   type AggregateFunction,
   type CustomType,
@@ -49,6 +50,10 @@ function parseDerivations(v: unknown): Derivation[] | undefined {
     .filter((e: unknown): e is Record<string, unknown> => Boolean(e) && typeof e === 'object')
     .map((e) => {
       const aggregate = AGGREGATE_FUNCTIONS.includes(e.aggregate as AggregateFunction) ? (e.aggregate as AggregateFunction) : undefined;
+      // A window needs a known function; an unknown one is dropped rather than
+      // kept as a value the app would not know how to evaluate.
+      const w = e.window && typeof e.window === 'object' ? (e.window as Record<string, unknown>) : null;
+      const window = w && isWindowFunction(w.fn) ? { fn: w.fn, orderBy: strArray(w.orderBy), partitionBy: strArray(w.partitionBy) } : undefined;
       return {
         id: typeof e.id === 'string' && e.id ? e.id : newId('drv'),
         targetColumnId: str(e.targetColumnId),
@@ -56,6 +61,7 @@ function parseDerivations(v: unknown): Derivation[] | undefined {
         groupBy: strArray(e.groupBy),
         ...(aggregate ? { aggregate } : {}),
         ...(typeof e.filter === 'string' && e.filter ? { filter: e.filter } : {}),
+        ...(window ? { window } : {}),
       };
     });
 }

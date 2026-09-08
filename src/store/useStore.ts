@@ -40,7 +40,7 @@ import { sampleDiagram } from '@/lib/sample';
 import { newId } from '@/lib/ids';
 
 export type Theme = 'dark' | 'light';
-export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'types' | 'problems' | 'query';
+export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'simulate' | 'types' | 'problems' | 'query';
 
 export type { Selection };
 

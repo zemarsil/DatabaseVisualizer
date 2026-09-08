@@ -54,6 +54,14 @@ CREATE TABLE daily_sales (
   PRIMARY KEY (day, product_id)
 );
 COMMENT ON TABLE daily_sales IS 'Nightly rollup built from order_items';
+
+CREATE TABLE order_gaps (
+  id BIGSERIAL PRIMARY KEY,
+  customer_id INTEGER NOT NULL REFERENCES customers(id),
+  order_id BIGINT NOT NULL REFERENCES orders(id),
+  gap_seconds INTEGER
+);
+COMMENT ON TABLE order_gaps IS 'Seconds between consecutive paid orders of the same customer';
 `;
 
 /** A second database the shop reads from but does not own. */
@@ -82,6 +90,7 @@ export function sampleDiagram(): Diagram {
   const orderItems = d.tables.find((t) => t.name === 'order_items');
   const daily = d.tables.find((t) => t.name === 'daily_sales');
   const orders = d.tables.find((t) => t.name === 'orders');
+  const gaps = d.tables.find((t) => t.name === 'order_gaps');
 
   // Show what each reading of a foreign key looks like: customers *has*
   // addresses, orders *contains* its items, orders merely *uses* an address.
@@ -97,10 +106,12 @@ export function sampleDiagram(): Diagram {
 
   if (orderItems && daily && orders) {
     const dailyCol = (name: string) => daily.columns.find((c) => c.name === name)?.id ?? '';
-    // Two derived columns off one flow, both rolled up the same way. The free-text
-    // query below says the same thing plus the join to orders, which the structured
-    // form does not model - the two are meant to be read side by side.
-    const rollup = { groupBy: ['product_id', 'day'], filter: "status = 'paid'", aggregate: 'SUM' as const };
+    // Three derived columns off one flow, all rolled up the same way. The filter
+    // and the day key read orders through the order_id foreign key (orders.status,
+    // orders.placed_at), so the diagram's own connections say how the two tables
+    // combine. The free-text query says the same thing plus the "yesterday only"
+    // condition a nightly job adds - the two are meant to be read side by side.
+    const rollup = { groupBy: ['product_id', 'CAST(orders.placed_at AS DATE)'], filter: "orders.status = 'paid'" };
     d.relationships.push(
       createRelationship({
         kind: 'flow',
@@ -111,8 +122,9 @@ export function sampleDiagram(): Diagram {
         targetColumnIds: [],
         note: 'Runs at 02:00 via cron; replaces the previous day.',
         derivations: [
-          createDerivation({ ...rollup, targetColumnId: dailyCol('units_sold'), expression: 'quantity' }),
-          createDerivation({ ...rollup, targetColumnId: dailyCol('revenue_cents'), expression: 'quantity * unit_price_cents' }),
+          createDerivation({ ...rollup, targetColumnId: dailyCol('day'), expression: 'CAST(orders.placed_at AS DATE)' }),
+          createDerivation({ ...rollup, targetColumnId: dailyCol('units_sold'), expression: 'quantity', aggregate: 'SUM' }),
+          createDerivation({ ...rollup, targetColumnId: dailyCol('revenue_cents'), expression: 'quantity * unit_price_cents', aggregate: 'SUM' }),
         ],
         query: `INSERT INTO daily_sales (day, product_id, units_sold, revenue_cents)
 SELECT o.placed_at::date, oi.product_id,
@@ -146,6 +158,34 @@ GROUP BY 1, 2;`,
     );
   }
 
+  if (orders && gaps) {
+    const gapCol = (name: string) => gaps.columns.find((c) => c.name === name)?.id ?? '';
+    // A sequence derivation: put each customer's paid orders in time order and
+    // take the difference between consecutive placed_at values.
+    const paid = { filter: "status = 'paid'" };
+    d.relationships.push(
+      createRelationship({
+        kind: 'flow',
+        name: 'gap between orders',
+        sourceTableId: orders.id,
+        sourceColumnIds: [],
+        targetTableId: gaps.id,
+        targetColumnIds: [],
+        note: 'One row per paid order; the first order of a customer has no previous one, so its gap is NULL.',
+        derivations: [
+          createDerivation({ ...paid, targetColumnId: gapCol('customer_id'), expression: 'customer_id' }),
+          createDerivation({ ...paid, targetColumnId: gapCol('order_id'), expression: 'id' }),
+          createDerivation({
+            ...paid,
+            targetColumnId: gapCol('gap_seconds'),
+            expression: 'placed_at',
+            window: { fn: 'DIFF', orderBy: ['placed_at'], partitionBy: ['customer_id'] },
+          }),
+        ],
+      }),
+    );
+  }
+
   // The CRM lives in its own database: grouped, marked external, so the schema
   // script documents it instead of trying to create it.
   const crm = importSql(CRM_SQL, 'postgresql', d);
@@ -158,6 +198,10 @@ GROUP BY 1, 2;`,
   const contacts = crm.tables.find((t) => t.name === 'crm_contacts');
   const customers = d.tables.find((t) => t.name === 'customers');
   if (contacts && customers) {
+    const customerCol = (name: string) => customers.columns.find((c) => c.name === name)?.id ?? '';
+    // A per-row copy across the database boundary. The filter reads the account
+    // through crm_contacts.account_id, a foreign key inside the CRM.
+    const live = { filter: "crm_accounts.tier <> 'churned'" };
     d.relationships.push(
       createRelationship({
         kind: 'flow',
@@ -167,6 +211,10 @@ GROUP BY 1, 2;`,
         targetTableId: customers.id,
         targetColumnIds: [],
         note: 'Pulled from the CRM database; no foreign key, the tables are not in the same server.',
+        derivations: [
+          createDerivation({ ...live, targetColumnId: customerCol('email'), expression: 'email' }),
+          createDerivation({ ...live, targetColumnId: customerCol('full_name'), expression: 'full_name' }),
+        ],
         query: `INSERT INTO customers (email, full_name)
 SELECT c.email, c.full_name
 FROM crm_contacts c

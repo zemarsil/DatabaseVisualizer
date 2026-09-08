@@ -65,7 +65,7 @@ export function createGroup(partial: Partial<Group> = {}): Group {
 }
 
 export function createDerivation(partial: Partial<Derivation> = {}): Derivation {
-  const { aggregate, ...rest } = partial;
+  const { aggregate, window, ...rest } = partial;
   return {
     id: newId('drv'),
     targetColumnId: '',
@@ -75,6 +75,7 @@ export function createDerivation(partial: Partial<Derivation> = {}): Derivation 
     // null is accepted on the type ("no aggregate") but never stored, so a
     // derivation round-trips through JSON unchanged.
     ...(aggregate ? { aggregate } : {}),
+    ...(window ? { window: { fn: window.fn, orderBy: [...(window.orderBy ?? [])], partitionBy: [...(window.partitionBy ?? [])] } } : {}),
   };
 }
 

@@ -91,3 +91,51 @@ export function referencingTables(d: Diagram, tableId: string): Table[] {
   const ids = new Set(d.relationships.filter((r) => r.kind === 'fk' && r.targetTableId === tableId).map((r) => r.sourceTableId));
   return d.tables.filter((t) => ids.has(t.id));
 }
+
+export interface FkPathStep {
+  relationship: Relationship;
+  /** The table this step arrives at. */
+  parentId: string;
+}
+
+/**
+ * Shortest chain of foreign keys from `fromId` to a table called `tableName`
+ * ("schema.table" also matches), walking child -> parent only so every row at
+ * the start lands on at most one row at the end. This is how a derivation's
+ * table.column reference (orders.status from order_items) is resolved, both
+ * to look the value up in a simulation and to write the JOIN in generated SQL.
+ * null when no such chain exists.
+ */
+export function foreignKeyPath(d: Diagram, fromId: string, tableName: string): FkPathStep[] | null {
+  const wanted = tableName.trim().toLowerCase();
+  const targets = new Set(d.tables.filter((t) => t.name.toLowerCase() === wanted || (t.schema && `${t.schema}.${t.name}`.toLowerCase() === wanted)).map((t) => t.id));
+  if (!targets.size) return null;
+  const prev = new Map<string, FkPathStep>();
+  const seen = new Set<string>([fromId]);
+  const queue = [fromId];
+  let found: string | null = null;
+  while (queue.length && found === null) {
+    const cur = queue.shift()!;
+    for (const r of d.relationships) {
+      if (r.kind !== 'fk' || r.sourceTableId !== cur || r.sourceColumnIds.length === 0) continue;
+      const parent = r.targetTableId;
+      if (seen.has(parent)) continue;
+      seen.add(parent);
+      prev.set(parent, { relationship: r, parentId: parent });
+      if (targets.has(parent)) {
+        found = parent;
+        break;
+      }
+      queue.push(parent);
+    }
+  }
+  if (found === null) return null;
+  const steps: FkPathStep[] = [];
+  let cur = found;
+  while (cur !== fromId) {
+    const step = prev.get(cur)!;
+    steps.unshift(step);
+    cur = step.relationship.sourceTableId;
+  }
+  return steps;
+}

@@ -1,5 +1,7 @@
 import { useEffect } from 'react';
 import { useStore } from '@/store/useStore';
+import { useSimulation } from '@/store/useSimulation';
+import { simulationTargets } from '@/lib/simulate/engine';
 import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { Canvas } from './components/canvas/Canvas';
@@ -82,6 +84,21 @@ export default function App() {
           e.preventDefault();
           s.requestFitView();
           break;
+        case 's':
+        case 'S': {
+          // Simulate into the selected table when something feeds it; otherwise offer the picker.
+          e.preventDefault();
+          const sim = useSimulation.getState();
+          if (sim.targetId) {
+            sim.stop();
+            break;
+          }
+          const fed = simulationTargets(s.diagram);
+          const picked = s.selection.tableIds.find((id) => fed.some((t) => t.id === id));
+          if (picked) sim.start(picked);
+          else s.openDrawer('simulate');
+          break;
+        }
         case '?':
           e.preventDefault();
           useDialogStore.getState().setHelp(true);
@@ -99,6 +116,7 @@ export default function App() {
         case 'Escape':
           if (s.trace.picking) s.setTracePicking(false);
           else if (s.trace.result) s.clearTrace();
+          else if (useSimulation.getState().targetId) useSimulation.getState().stop();
           else s.clearSelection();
           break;
         default:

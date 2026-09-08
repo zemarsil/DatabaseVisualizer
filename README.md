@@ -10,6 +10,8 @@ A locally hosted web app for designing relational schemas visually.
 - **Problems**: a schema linter that flags missing primary keys, foreign keys onto non-unique columns, type mismatches, duplicate names, reserved words and more — most findings fix themselves with one click — plus foreign-key suggestions read off column names.
 - **Detangle**: a layered auto-layout that ranks referenced tables before the tables that reference them and minimises edge crossings. Align, distribute, snap to grid and nudge with the arrow keys for the last few pixels.
 - **Trace**: pick two tables and get the shortest chain of connections between them, highlighted on the canvas, plus the `JOIN` query for that path.
+- **Simulate**: pick a table and watch sample rows flow into it. Every data flow upstream runs once, stage by stage: dots travel the connections on the canvas, the columns being read and written light up, and a grid shows each produced row with the rows it came from and how every value was computed. Edit a raw input cell and the change propagates.
+- **Describe how data moves**: a data-flow connection carries one derivation per target column: an expression, an aggregate over a grouping, a filter, and, for sequences, an operation over rows in order (change since the previous row, running total, rank…). Expressions may read columns of other tables as `table.column`; the diagram's own foreign keys say how they join. The same description drives the edge summary, the generated `INSERT … SELECT` (window functions and joins included, per dialect) and the simulation.
 - **Read a big diagram**: collapse tables to keys or headers (automatically when zoomed out), focus on one table and its neighbours, cardinality labels on every connection, and one-click grouping by schema.
 - **Command palette** (`Ctrl+K`): jump to any table or run any action by typing a few letters.
 - **Migrate and seed**: diff the diagram against a live database and get the `ALTER` statements that bring it up to date; generate deterministic seed rows that respect foreign keys, uniqueness and enums.
@@ -62,7 +64,8 @@ docker compose up --build
 | Mark a group as another database | Select the region, tick **These tables live in another database** in the inspector |
 | Any other connection | Drag the orange handle in a table header onto another table, then pick the kind in the inspector (data flow, serialized, dependency) |
 | Change how a connection reads | Select it; **Reads as** offers the verbs that fit its kind and previews the sentence in both directions |
-| Derived columns | On a data-flow edge, add one entry per target column: target column, aggregate, source expression, group-by keys, filter. The edge shows a `Σ` count and a per-column summary, and the script gets an `INSERT ... SELECT ... GROUP BY` skeleton built from it |
+| Derived columns | On a data-flow edge, add one entry per target column: target column, aggregate, source expression, group-by keys, filter, and optionally a **sequence** operation (previous / next value, change since the previous row, running total or average, row number, rank) with its order-by and partition-by keys. Expressions are SQL and may name a column of any table the source points at through foreign keys as `table.column` (`orders.status` from `order_items`). The edge shows a `Σ` count and a per-column summary, and the script gets an `INSERT ... SELECT` skeleton with the `JOIN`s and window functions written for the current dialect |
+| Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express |
 | See / copy DDL | Bottom drawer → **SQL** (whole schema or the selected table). The table inspector also has a preview |
 | Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. Dropping a `.sql`, `.dbml` or `.dbviz.json` file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
@@ -121,6 +124,44 @@ Only foreign keys become `JOIN` conditions in a trace. The other kinds are
 still walked (a path can cross them) but appear as `CROSS JOIN` plus a comment
 saying why there is nothing to join on.
 
+## Describing and simulating how data moves
+
+A data-flow connection says *that* rows in the target are built from the source.
+Its **derived columns** say *how*, one entry per target column, and each entry is
+made of parts the app can reason about:
+
+| Part | Example | Meaning |
+| --- | --- | --- |
+| Expression | `quantity * unit_price_cents` | SQL evaluated on each source row. May use another table's column as `table.column` when the source reaches it through foreign keys: `orders.status` from `order_items` follows `order_items.order_id → orders.id` |
+| Aggregate | `SUM`, `COUNT`, `AVG`, `MIN`, `MAX` | Wrapped around the expression; the rows are grouped by the group-by keys first |
+| Group by | `product_id`, `CAST(orders.placed_at AS DATE)` | Keys that define the groups. A key that names a target column fills it |
+| Filter | `orders.status = 'paid'` | Source rows the flow ignores |
+| Sequence | change since the previous row, ordered by `placed_at`, partitioned by `customer_id` | Put the rows in order and compute each value from its neighbours: previous / next value, the difference to the previous row (seconds for timestamps, days for dates), a running total or average, a row number or rank. A sequence result can then be aggregated: the average gap between orders |
+
+So "table B's `key1` is the average of table A's `key2` grouped by A's `key1`"
+is one entry: target `key1`, aggregate `AVG`, expression `key2`, group by
+`key1`. "Table C holds the time between consecutive points of table D where
+`key3 >= 4`" is one entry too: target `gap`, sequence *change since the previous
+row* over expression `ts` ordered by `ts`, filter `key3 >= 4`.
+
+**Simulate** turns that description into rows you can watch. Pick the table you
+want to see fed and every flow upstream of it runs once over generated sample
+data, in dependency order: raw inputs are seeded (values a filter compares
+against are planted so it has something to match), each flow filters, orders,
+groups and aggregates its source, and the result becomes the input of the next
+flow. Playback walks the stages: on the canvas the flow in play pulses, dots
+travel it from source to target, the columns being read and written light up,
+and every table shows how many rows it holds so far; in the drawer the source
+grid marks which rows survived the filter, the target grid grows, and clicking
+a produced row highlights the rows that fed it and spells out each column
+(`units_sold = SUM(quantity) over 3 rows [#2: 4, #5: 1, #9: 12] = 17`). Raw
+input cells can be edited in place to try a what-if. The simulation is a
+model of the derivations, not a database: expressions use a SQL subset
+(arithmetic, comparisons, `AND`/`OR`/`NOT` with `NULL` logic, `IN`, `BETWEEN`,
+`LIKE`, `CASE`, `CAST`, `EXTRACT`, and the common scalar functions), joins that
+are not foreign keys stay in the free-text query, and anything it cannot compute
+is reported as a warning on the stage rather than guessed.
+
 ## Project layout
 
 ```
@@ -129,6 +170,7 @@ src/lib/sql/             tokenizer, parser (DDL -> model), generator (model -> D
 src/lib/groups.ts        table groups: region geometry, membership, external tables
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
+src/lib/simulate/        expression.ts: SQL expression parser/evaluator; engine.ts: runs the data flows over sample rows with lineage
 src/lib/io.ts            .dbviz.json save/load
 src/lib/lint.ts          schema linter with one-click fixes; suggest.ts proposes foreign keys
 src/lib/migrate/         diagram vs. database diff and per-dialect ALTER generation
@@ -138,11 +180,12 @@ src/lib/share.ts         share links (diagram compressed into the URL hash)
 src/lib/library.ts       IndexedDB diagram library and checkpoints
 src/lib/sqlite/          in-browser SQLite engine (sql.js) behind the same interface as the server
 src/store/useStore.ts    zustand store with undo/redo and autosave
+src/store/useSimulation.ts  simulation mode: target, sample options, playback, recompute on edit
 src/components/          React UI (canvas, inspector, drawer panels, command palette)
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
 scripts/                 validate-dbviz.mjs: structural check for a hand-written diagram file
 docs/                    ADVISOR_OUTPUT_FORMAT.md + an example diagram
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout and file format
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format and the simulation
 ```
 
 ```bash

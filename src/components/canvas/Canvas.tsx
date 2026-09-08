@@ -18,6 +18,8 @@ import {
 import { Crosshair, X } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
+import { useSimulation } from '@/store/useSimulation';
+import { rowsAtStage } from '@/lib/simulate/engine';
 import { isContextMenuOpen, openContextMenu } from '@/components/ui/ContextMenu';
 import type { SelectionChange } from '@/lib/selection';
 import { paletteHue } from '@/lib/palette';
@@ -29,8 +31,9 @@ import { copySelectionToClipboard, cutSelection, openDroppedFiles, pasteText } f
 import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode';
 import { NoteNode, type NoteNodeType } from './NoteNode';
 import { GroupNode, GROUP_DRAG_HANDLE, type GroupNodeType } from './GroupNode';
-import { RelationEdge, type RelationEdgeType } from './RelationEdge';
+import { RelationEdge, type RelationEdgeData, type RelationEdgeType } from './RelationEdge';
 import { FocusBanner, MAX_FOCUS_HOPS } from './FocusBanner';
+import { SimulationBanner } from './SimulationBanner';
 import { DropOverlay } from './DropOverlay';
 import '@/styles/canvas-extras.css';
 
@@ -123,6 +126,11 @@ export function Canvas() {
   const setViewportInStore = useStore((s) => s.setViewport);
   const nudgeSelection = useStore((s) => s.nudgeSelection);
 
+  const simResult = useSimulation((s) => s.result);
+  const simStage = useSimulation((s) => s.stage);
+  const simNonce = useSimulation((s) => s.nonce);
+  const simPlaying = useSimulation((s) => s.playing);
+
   const focus = useUi((s) => s.focus);
   const snapToGrid = useUi((s) => s.snapToGrid);
   const showCardinality = useUi((s) => s.showCardinality);
@@ -207,6 +215,19 @@ export function Canvas() {
   const traceRels = useMemo(() => new Set(trace.result?.relationshipIds ?? []), [trace.result]);
   const selectedTableId = selection.tableIds.length === 1 ? selection.tableIds[0] : null;
 
+  /* ---------- data-flow simulation ---------- */
+
+  // Which tables and connections take part, and what the stage in play touches.
+  const simulating = simResult !== null;
+  const simTables = useMemo(() => new Set(simResult?.tableIds ?? []), [simResult]);
+  const simCurrent = simResult && simStage >= 0 ? simResult.stages[simStage] : null;
+  const simFlowIndex = useMemo(() => new Map((simResult?.flowIds ?? []).map((id, i) => [id, i])), [simResult]);
+  const simLookupRels = useMemo(() => new Set(simCurrent?.lookupRelationshipIds ?? []), [simCurrent]);
+  const simActiveTables = useMemo(
+    () => new Set(simCurrent ? [simCurrent.sourceTableId, simCurrent.targetTableId, ...simCurrent.lookupTableIds] : []),
+    [simCurrent],
+  );
+
   /* ---------- collapse modes, focus, cardinality ---------- */
 
   const shownColumns = useMemo(() => {
@@ -215,9 +236,9 @@ export function Canvas() {
     return m;
   }, [diagram.tables, fkColumnsByTable, lodCollapsed]);
 
-  // Neighborhood focus: tables within N hops of the focused one; a trace wins while it is active.
+  // Neighborhood focus: tables within N hops of the focused one; a trace or a simulation wins while it is active.
   const focusSet = useMemo(() => {
-    if (!focus || tracing || !tableMap.has(focus.tableId)) return null;
+    if (!focus || tracing || simulating || !tableMap.has(focus.tableId)) return null;
     const dist = reachableTables(diagram, focus.tableId);
     return new Set([...dist.entries()].filter(([, d]) => d <= focus.hops).map(([id]) => id));
   }, [focus, tracing, diagram, tableMap]);
@@ -247,10 +268,21 @@ export function Canvas() {
           display: effectiveDisplay(t, lodCollapsed),
           lod: lodCollapsed,
           joinTable: joinTables.has(t.id),
-          dimmed: (tracing && !traceTables.has(t.id)) || (focusSet !== null && !focusSet.has(t.id)),
+          dimmed: (tracing && !traceTables.has(t.id)) || (focusSet !== null && !focusSet.has(t.id)) || (simulating && !simTables.has(t.id)),
           traceRole: role,
           picking: trace.picking,
           renaming: renamingTableId === t.id,
+          simulation:
+            simResult && simTables.has(t.id)
+              ? {
+                  role: simResult.roles[t.id] ?? 'input',
+                  rowCount: rowsAtStage(simResult, t.id, simStage),
+                  active: simActiveTables.has(t.id),
+                  isTarget: t.id === simResult.targetId,
+                  readColumnIds: simCurrent ? simCurrent.reads.filter((r) => r.tableId === t.id).map((r) => r.columnId) : [],
+                  writtenColumnIds: simCurrent && simCurrent.targetTableId === t.id ? simCurrent.writes : [],
+                }
+              : null,
         },
         selected: selection.tableIds.includes(t.id),
         measured: nodeSizes[t.id],
@@ -262,7 +294,7 @@ export function Canvas() {
       position: n.position,
       width: n.width,
       height: n.height,
-      data: { note: n, dimmed: tracing || focusSet !== null },
+      data: { note: n, dimmed: tracing || simulating || focusSet !== null },
       selected: selection.noteIds.includes(n.id),
       measured: nodeSizes[n.id],
     }));
@@ -280,7 +312,7 @@ export function Canvas() {
           group: g,
           tableCount: groupTableCounts[g.id] ?? 0,
           selected: selection.groupId === g.id,
-          dimmed: tracing || focusSet !== null,
+          dimmed: tracing || simulating || focusSet !== null,
           dropTarget: dropTargetId === g.id,
         },
         selectable: false,
@@ -313,6 +345,12 @@ export function Canvas() {
     joinTables,
     focusSet,
     renamingTableId,
+    simResult,
+    simStage,
+    simTables,
+    simActiveTables,
+    simCurrent,
+    simulating,
   ]);
 
   const edges = useMemo<RelationEdgeType[]>(() => {
@@ -344,6 +382,23 @@ export function Canvas() {
       anchorSeen.set(anchorKey, siblingIndex + 1);
       const card = showCardinality && r.kind === 'fk' ? relationshipCardinality(diagram, r) : null;
       const inFocus = focusSet === null || (focusSet.has(r.sourceTableId) && focusSet.has(r.targetTableId));
+      // A flow in the simulation is pending, in play or done; a foreign key the
+      // stage in play reads through is a lookup; everything else fades.
+      let simulation: RelationEdgeData['simulation'] = null;
+      if (simResult) {
+        const idx = simFlowIndex.get(r.id);
+        if (idx !== undefined) {
+          const stage = simResult.stages[idx];
+          const produced = stage.producedRange[1] - stage.producedRange[0];
+          simulation = {
+            state: idx < simStage ? 'done' : idx === simStage ? 'active' : 'pending',
+            packets: Math.min(12, Math.max(produced > 0 ? 1 : 0, produced)),
+            nonce: simNonce,
+            loop: !simPlaying,
+          };
+        } else if (simLookupRels.has(r.id)) simulation = { state: 'lookup', packets: 0, nonce: simNonce, loop: false };
+      }
+      const simDim = simulating && simulation === null;
       out.push({
         id: r.id,
         type: 'relation',
@@ -355,8 +410,9 @@ export function Canvas() {
           sourceRow,
           targetRow,
           hue: paletteHue(src.color),
-          dimmed: (tracing && !traceRels.has(r.id)) || !inFocus,
+          dimmed: (tracing && !traceRels.has(r.id)) || !inFocus || simDim,
           traced: traceRels.has(r.id),
+          simulation,
           attached: selectedTableId !== null && (r.sourceTableId === selectedTableId || r.targetTableId === selectedTableId),
           optional: r.kind === 'fk' && Boolean(srcCol?.nullable),
           siblingIndex,
@@ -366,7 +422,7 @@ export function Canvas() {
       });
     }
     return out;
-  }, [diagram, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet]);
+  }, [diagram, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet, simResult, simFlowIndex, simStage, simNonce, simPlaying, simLookupRels, simulating]);
 
   /* ---------- change handlers ---------- */
 
@@ -731,6 +787,15 @@ export function Canvas() {
     focusTable(null);
   }, [focusTableId, fitView, focusTable]);
 
+  // Starting a simulation frames every table that takes part.
+  const simKey = simResult ? `${simResult.targetId}:${simResult.tableIds.join(',')}` : '';
+  useEffect(() => {
+    if (!simKey) return;
+    const ids = simKey.slice(simKey.indexOf(':') + 1).split(',').filter(Boolean);
+    const t = setTimeout(() => fitView({ nodes: ids.map((id) => ({ id })), duration: 500, padding: 0.25, maxZoom: 1.1 }), 60);
+    return () => clearTimeout(t);
+  }, [simKey, fitView]);
+
   // A diagram that carried a saved viewport reopens where it was left.
   useEffect(() => {
     if (viewportNonce === 0) return;
@@ -928,7 +993,8 @@ export function Canvas() {
           maskColor="rgba(0,0,0,0.25)"
         />
       </ReactFlow>
-      {!pickingLabel && <FocusBanner />}
+      {!pickingLabel && !simulating && <FocusBanner />}
+      {!pickingLabel && <SimulationBanner />}
       <DropOverlay visible={dropping} />
       {pickingLabel && (
         <div className="canvas__picking-banner">

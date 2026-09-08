@@ -19,6 +19,8 @@ const ACTIONS = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT'];
 const DIALECTS = ['postgresql', 'mariadb', 'sqlite'];
 const KINDS = ['fk', 'flow', 'embed', 'dependency'];
 const AGGREGATES = ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX'];
+const WINDOW_FUNCTIONS = ['DIFF', 'LAG', 'LEAD', 'RUNNING_SUM', 'RUNNING_AVG', 'ROW_NUMBER', 'RANK'];
+const WINDOWS_WITHOUT_EXPRESSION = ['ROW_NUMBER', 'RANK'];
 /** Verb id -> the kinds it may describe. A verb outside its kind's list is dropped on load. */
 const VERBS = {
   references: ['fk'],
@@ -242,11 +244,21 @@ function validate(doc) {
           claim(dv.id, dw);
           if (typeof dv.targetColumnId !== 'string' || !dv.targetColumnId) err(`${dw} has no targetColumnId; the generator skips it.`);
           else if (tgt && !tgt.has(dv.targetColumnId)) err(`${dw}: targetColumnId "${dv.targetColumnId}" is not a column of the target table.`);
-          if (typeof dv.expression !== 'string' || !dv.expression.trim()) err(`${dw} has no expression; the generator skips it.`);
+          const w = dv.window;
+          const countsRows = w && typeof w === 'object' && WINDOWS_WITHOUT_EXPRESSION.includes(w.fn);
+          if ((typeof dv.expression !== 'string' || !dv.expression.trim()) && !countsRows) err(`${dw} has no expression; the generator skips it.`);
           if (dv.aggregate !== undefined && dv.aggregate !== null && !AGGREGATES.includes(dv.aggregate)) {
             err(`${dw}: aggregate "${dv.aggregate}" is not one of ${AGGREGATES.join(', ')}; it is dropped on load.`);
           }
           if (dv.groupBy !== undefined && !Array.isArray(dv.groupBy)) err(`${dw}: "groupBy" must be an array of strings.`);
+          if (w !== undefined) {
+            if (!w || typeof w !== 'object') err(`${dw}: "window" must be an object { fn, orderBy, partitionBy }.`);
+            else {
+              if (!WINDOW_FUNCTIONS.includes(w.fn)) err(`${dw}: window fn "${w.fn}" is not one of ${WINDOW_FUNCTIONS.join(', ')}; the window is dropped on load.`);
+              if (!Array.isArray(w.orderBy) || !w.orderBy.some((k) => typeof k === 'string' && k.trim())) err(`${dw}: a window needs a non-empty "orderBy" array, or "previous row" means nothing.`);
+              if (w.partitionBy !== undefined && !Array.isArray(w.partitionBy)) err(`${dw}: "partitionBy" must be an array of strings.`);
+            }
+          }
         }
       }
     }
