@@ -8,7 +8,6 @@
       "name": "authors",
       "schema": "public",
       "color": "blue",
-      "comment": "One row per person who wrote something we sell.",
       "position": { "x": 0, "y": 0 },
       "checks": [],
       "indexes": [],
@@ -22,7 +21,6 @@
       "name": "books",
       "schema": "public",
       "color": "blue",
-      "comment": "One row per book. Every row belongs to exactly one author.",
       "position": { "x": 320, "y": 0 },
       "checks": [],
       "indexes": [],
@@ -41,10 +39,7 @@
       "sourceTableId": "tbl_books",
       "sourceColumnIds": ["col_books_author_id"],
       "targetTableId": "tbl_authors",
-      "targetColumnIds": ["col_authors_id"],
-      "name": "books_author_id_fkey",
-      "onDelete": "NO ACTION",
-      "onUpdate": "NO ACTION"
+      "targetColumnIds": ["col_authors_id"]
     }
   ],
   "notes": [

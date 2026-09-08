@@ -6,3 +6,6 @@ dist-server/
 .vite/
 coverage/
 *.local
+
+# Scratch tests agents use to print generated SQL while writing a walkthrough.
+tests/__scratch-*.test.ts

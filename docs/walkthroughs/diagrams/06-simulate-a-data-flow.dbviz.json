@@ -1,0 +1,143 @@
+{
+  "version": 1,
+  "name": "Simulate a data flow — order lines to book totals",
+  "dialect": "postgresql",
+  "customTypes": [
+    {
+      "id": "typ_order_status",
+      "name": "order_status",
+      "kind": "enum",
+      "values": ["pending", "paid", "shipped", "cancelled"],
+      "comment": "The daily_sales flow only counts paid orders, so simulating filters most of orders out."
+    }
+  ],
+  "tables": [
+    {
+      "id": "tbl_orders",
+      "name": "orders",
+      "schema": "public",
+      "color": "blue",
+      "comment": "Raw input. One row per placed order; the flow below reads status and placed_at through order_items' foreign key.",
+      "position": { "x": 0, "y": 0 },
+      "checks": ["total_cents >= 0"],
+      "indexes": [],
+      "columns": [
+        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "No customers table in this small companion diagram; see walkthrough 02 for a real foreign key." },
+        { "id": "col_orders_status", "name": "status", "type": "order_status", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
+        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
+        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()", "comment": "The flow reads this as orders.placed_at and casts it to a DATE for daily_sales.day." }
+      ]
+    },
+    {
+      "id": "tbl_order_items",
+      "name": "order_items",
+      "schema": "public",
+      "color": "blue",
+      "comment": "Raw input. One row per line item. Feeds daily_sales through the data flow below; every row also reaches orders through order_id.",
+      "position": { "x": 320, "y": 0 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_order_items_order_id", "name": "order_items_order_id_idx", "columnIds": ["col_oi_order_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_oi_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_oi_order_id", "name": "order_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_oi_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "book_id BETWEEN 1 AND 5", "comment": "No books table in this small companion diagram; book_id is just the grouping key for the rollup. Bounded to 5 values so sample rows actually collide and the rollup has something to sum." },
+        { "id": "col_oi_quantity", "name": "quantity", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "quantity > 0" },
+        { "id": "col_oi_unit_price_cents", "name": "unit_price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "unit_price_cents >= 0" }
+      ]
+    },
+    {
+      "id": "tbl_daily_sales",
+      "name": "daily_sales",
+      "schema": "public",
+      "color": "orange",
+      "comment": "Stage 1 output. One row per (day, book), built by simulating order_items -> daily_sales: filter to paid orders, group by day and book, sum quantity and revenue.",
+      "position": { "x": 320, "y": 260 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_ds_day", "name": "day", "type": "DATE", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_ds_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_ds_units", "name": "units", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
+        { "id": "col_ds_revenue_cents", "name": "revenue_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+      ]
+    },
+    {
+      "id": "tbl_book_totals",
+      "name": "book_totals",
+      "schema": "public",
+      "color": "orange",
+      "comment": "Stage 2 output. One row per book, built by simulating daily_sales -> book_totals: sum units and revenue across every day daily_sales already produced. The second stage of the chain, so Simulate into book_totals runs both flows.",
+      "position": { "x": 320, "y": 520 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_bt_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_bt_total_units", "name": "total_units", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
+        { "id": "col_bt_total_revenue_cents", "name": "total_revenue_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_order_items_orders",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_oi_order_id"],
+      "targetTableId": "tbl_orders",
+      "targetColumnIds": ["col_orders_id"],
+      "name": "order_items_order_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION",
+      "note": "Without this foreign key, orders.status and orders.placed_at could not be written as orders.status / orders.placed_at in the flow below — Simulate would report them as unreachable."
+    },
+    {
+      "id": "rel_flow_daily_sales",
+      "kind": "flow",
+      "verb": "feeds",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_daily_sales",
+      "targetColumnIds": [],
+      "name": "daily rollup",
+      "inverseName": "rolled up from",
+      "note": "Runs at ingest, one line item at a time, in the same transaction as the order line write.",
+      "derivations": [
+        { "id": "drv_ds_day", "targetColumnId": "col_ds_day", "expression": "CAST(orders.placed_at AS DATE)", "groupBy": ["CAST(orders.placed_at AS DATE)", "book_id"], "filter": "orders.status = 'paid'" },
+        { "id": "drv_ds_book_id", "targetColumnId": "col_ds_book_id", "expression": "book_id", "groupBy": ["CAST(orders.placed_at AS DATE)", "book_id"], "filter": "orders.status = 'paid'" },
+        { "id": "drv_ds_units", "targetColumnId": "col_ds_units", "expression": "quantity", "aggregate": "SUM", "groupBy": ["CAST(orders.placed_at AS DATE)", "book_id"], "filter": "orders.status = 'paid'" },
+        { "id": "drv_ds_revenue_cents", "targetColumnId": "col_ds_revenue_cents", "expression": "quantity * unit_price_cents", "aggregate": "SUM", "groupBy": ["CAST(orders.placed_at AS DATE)", "book_id"], "filter": "orders.status = 'paid'" }
+      ]
+    },
+    {
+      "id": "rel_flow_book_totals",
+      "kind": "flow",
+      "verb": "feeds",
+      "sourceTableId": "tbl_daily_sales",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_book_totals",
+      "targetColumnIds": [],
+      "name": "book totals rollup",
+      "inverseName": "rolled up from",
+      "note": "Runs nightly: re-aggregates every day daily_sales holds for each book. Nothing here reads order_items or orders directly — that is why this is a second stage, not a second derivation on the first flow.",
+      "derivations": [
+        { "id": "drv_bt_book_id", "targetColumnId": "col_bt_book_id", "expression": "book_id", "groupBy": ["book_id"], "filter": "" },
+        { "id": "drv_bt_total_units", "targetColumnId": "col_bt_total_units", "expression": "units", "aggregate": "SUM", "groupBy": ["book_id"], "filter": "" },
+        { "id": "drv_bt_total_revenue_cents", "targetColumnId": "col_bt_total_revenue_cents", "expression": "revenue_cents", "aggregate": "SUM", "groupBy": ["book_id"], "filter": "" }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "id": "note_two_stages",
+      "text": "Deliberately two stages deep, so stage playback is worth watching.\n\nSimulate into daily_sales: one stage, order_items -> daily_sales.\nSimulate into book_totals: two stages, order_items -> daily_sales -> book_totals. Stage 2 reads the rows stage 1 just produced, not the raw orders again.",
+      "position": { "x": 660, "y": 260 },
+      "width": 300,
+      "height": 190,
+      "color": "yellow"
+    }
+  ]
+}

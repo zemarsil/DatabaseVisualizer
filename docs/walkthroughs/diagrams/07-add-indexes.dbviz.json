@@ -2,15 +2,6 @@
   "version": 1,
   "name": "Add indexes that get used — the bookshop order path",
   "dialect": "postgresql",
-  "customTypes": [
-    {
-      "id": "typ_order_status",
-      "name": "order_status",
-      "kind": "enum",
-      "values": ["pending", "paid", "shipped", "cancelled"],
-      "comment": "The usual four states; not the point of this diagram."
-    }
-  ],
   "groups": [],
   "tables": [
     {
@@ -75,7 +66,7 @@
       "columns": [
         { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
         { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_orders_status", "name": "status", "type": "order_status", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
+        { "id": "col_orders_status", "name": "status", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'", "check": "status IN ('pending', 'paid', 'shipped', 'cancelled')" },
         { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
         { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
       ]
