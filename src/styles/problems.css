@@ -61,6 +61,18 @@
   font-family: var(--mono);
   font-size: 12px;
 }
+.table-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+.table-link:hover {
+  text-decoration: underline;
+}
 .problems__empty {
   display: flex;
   align-items: center;

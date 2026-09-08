@@ -14,6 +14,8 @@ const ICONS: Record<LintSeverity, React.ReactNode> = {
 
 const LABELS: Record<LintSeverity, string> = { error: 'Errors', warning: 'Warnings', info: 'Notes' };
 
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 export function ProblemsPanel() {
   const diagram = useStore((s) => s.diagram);
   const mutate = useStore((s) => s.mutate);
@@ -31,6 +33,45 @@ export function ProblemsPanel() {
   const counts = useMemo(() => summarizeFindings(findings), [findings]);
   const tableName = (id: string | undefined) => diagram.tables.find((t) => t.id === id)?.name;
   const columnName = (tableId: string | undefined, columnId: string | undefined) => diagram.tables.find((t) => t.id === tableId)?.columns.find((c) => c.id === columnId)?.name;
+
+  // Recognize any table name mentioned inside a finding's message text so it can be turned into a "go to table" link.
+  const tableNameLookup = useMemo(() => {
+    const named = diagram.tables.filter((t) => t.name.trim());
+    const byName = new Map(named.map((t) => [t.name, t.id]));
+    const pattern = [...byName.keys()]
+      .sort((a, b) => b.length - a.length)
+      .map(escapeRegExp)
+      .join('|');
+    return { byName, regex: pattern ? new RegExp(`\\b(${pattern})\\b`, 'g') : null };
+  }, [diagram.tables]);
+
+  const goToTable = (id: string) => {
+    selectTable(id);
+    focusTable(id);
+  };
+
+  const renderMessage = (message: string) => {
+    const { regex, byName } = tableNameLookup;
+    if (!regex) return message;
+    regex.lastIndex = 0;
+    const parts: React.ReactNode[] = [];
+    let last = 0;
+    let match: RegExpExecArray | null;
+    let key = 0;
+    while ((match = regex.exec(message))) {
+      const name = match[1];
+      const id = byName.get(name)!;
+      if (match.index > last) parts.push(message.slice(last, match.index));
+      parts.push(
+        <button key={key++} type="button" className="table-link" onClick={() => goToTable(id)} title={`Go to ${name}`}>
+          {name}
+        </button>,
+      );
+      last = match.index + name.length;
+    }
+    if (last < message.length) parts.push(message.slice(last));
+    return parts;
+  };
 
   const visible = useMemo(() => {
     const q = filter.trim().toLowerCase();
@@ -59,10 +100,7 @@ export function ProblemsPanel() {
       setSelection({ ...emptySelection(), relationshipId: f.relationshipId });
       return;
     }
-    if (f.tableId) {
-      selectTable(f.tableId);
-      focusTable(f.tableId);
-    }
+    if (f.tableId) goToTable(f.tableId);
   };
 
   const addSuggestion = (s: FkSuggestion) => {
@@ -114,7 +152,7 @@ export function ProblemsPanel() {
                   <div key={f.id} className="problem">
                     {ICONS[f.severity]}
                     <div className="problem__body">
-                      <div className="problem__message">{f.message}</div>
+                      <div className="problem__message">{renderMessage(f.message)}</div>
                       <div className="row row--wrap" style={{ gap: 6, marginTop: 4 }}>
                         {(f.tableId || f.relationshipId) && (
                           <button className="chip" onClick={() => goTo(f)} title="Show on the canvas">
