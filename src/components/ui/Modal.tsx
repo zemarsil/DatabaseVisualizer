@@ -98,6 +98,11 @@ function HelpContent() {
   const K = ({ k }: { k: string }) => <span className="kbd">{k}</span>;
   return (
     <div className="help">
+      <p>
+        This is the short version. <code>docs/walkthroughs/</code> in the repository has the long one: a worked guide per task — building a table,
+        connecting two, external groups, filling one table from another, Simulate, indexes, views — each shipping a diagram you can open with{' '}
+        <K k="Ctrl" /> <K k="O" />.
+      </p>
       <h4>Find anything</h4>
       <p>
         <K k="Ctrl" /> <K k="K" /> opens the command palette. Type a table name to jump to it, or the first letters of any action (export, detangle,

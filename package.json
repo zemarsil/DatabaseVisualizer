@@ -12,6 +12,7 @@
     "start": "cross-env NODE_ENV=production tsx server/index.ts",
     "preview": "vite preview",
     "test": "vitest run",
+    "check:docs": "node scripts/validate-walkthrough.mjs && node scripts/build-walkthrough-index.mjs --check",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit"
   },

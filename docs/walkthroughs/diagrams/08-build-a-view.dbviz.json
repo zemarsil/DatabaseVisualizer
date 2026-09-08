@@ -1,0 +1,145 @@
+{
+  "version": 1,
+  "name": "Build a view — customer order summary",
+  "dialect": "postgresql",
+  "tables": [
+    {
+      "id": "tbl_customers",
+      "name": "customers",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per person who has ever placed an order.",
+      "position": { "x": 0, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_customers_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_orders",
+      "name": "orders",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per checkout.",
+      "position": { "x": 320, "y": 0 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_orders_customer", "name": "orders_customer_id_idx", "columnIds": ["col_orders_customer_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_orders_status", "name": "status", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
+        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
+        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_order_items",
+      "name": "order_items",
+      "schema": "public",
+      "color": "blue",
+      "comment": "The grain v_customer_orders aggregates: one row per line on an order.",
+      "position": { "x": 640, "y": 0 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_order_items_order", "name": "order_items_order_id_idx", "columnIds": ["col_order_items_order_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_order_items_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_order_items_order_id", "name": "order_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_order_items_quantity", "name": "quantity", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "1", "check": "quantity > 0" },
+        { "id": "col_order_items_unit_price_cents", "name": "unit_price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "unit_price_cents >= 0" }
+      ]
+    },
+    {
+      "id": "tbl_v_customer_orders",
+      "name": "v_customer_orders",
+      "schema": "public",
+      "kind": "view",
+      "color": "teal",
+      "comment": "Read-only summary for the account page: how many orders a customer has placed and what they have spent in total. Computed on every read, never stored.",
+      "viewSql": "SELECT c.id AS customer_id,\n       c.email,\n       COUNT(DISTINCT o.id) AS order_count,\n       COALESCE(SUM(oi.quantity * oi.unit_price_cents), 0) AS total_cents\nFROM customers c\nJOIN orders o ON o.customer_id = c.id\nJOIN order_items oi ON oi.order_id = o.id\nGROUP BY c.id, c.email",
+      "position": { "x": 320, "y": 280 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_vco_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vco_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vco_order_count", "name": "order_count", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vco_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": ["col_orders_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "orders_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_order_items_order",
+      "kind": "fk",
+      "verb": "part-of",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_order_items_order_id"],
+      "targetTableId": "tbl_orders",
+      "targetColumnIds": ["col_orders_id"],
+      "name": "order_items_order_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_flow_customers_vco",
+      "kind": "flow",
+      "name": "view source",
+      "sourceTableId": "tbl_customers",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_v_customer_orders",
+      "targetColumnIds": [],
+      "note": "customers is named in v_customer_orders' SELECT (FROM customers c); this link was drawn by Detect from SQL, not typed by hand."
+    },
+    {
+      "id": "rel_flow_orders_vco",
+      "kind": "flow",
+      "name": "view source",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_v_customer_orders",
+      "targetColumnIds": [],
+      "note": "orders is named in v_customer_orders' SELECT (JOIN orders o); this link was drawn by Detect from SQL, not typed by hand."
+    },
+    {
+      "id": "rel_flow_order_items_vco",
+      "kind": "flow",
+      "name": "view source",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_v_customer_orders",
+      "targetColumnIds": [],
+      "note": "order_items is named in v_customer_orders' SELECT (JOIN order_items oi); this link was drawn by Detect from SQL, not typed by hand."
+    }
+  ],
+  "notes": [
+    {
+      "id": "note_view_columns",
+      "text": "v_customer_orders lists four columns, but nothing about them is required. The generator only ever writes the SELECT above into CREATE VIEW — these rows exist so the canvas has something to draw and so another edge could point at, say, v_customer_orders.total_cents. Delete them all and the generated script does not change by one character.",
+      "position": { "x": 660, "y": 280 },
+      "width": 320,
+      "height": 190,
+      "color": "yellow"
+    }
+  ],
+  "groups": [],
+  "customTypes": []
+}

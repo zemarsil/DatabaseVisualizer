@@ -1,0 +1,134 @@
+{
+  "version": 1,
+  "name": "Group tables, and read another database",
+  "dialect": "postgresql",
+  "groups": [
+    {
+      "id": "grp_crm",
+      "name": "CRM (read-only)",
+      "color": "purple",
+      "external": true,
+      "note": "Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, and only two of its tables matter to us.",
+      "position": { "x": 660, "y": -40 }
+    }
+  ],
+  "tables": [
+    {
+      "id": "tbl_customers",
+      "name": "customers",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per shopper. crm_contact_id links out to the CRM group below when the sales team has one on file.",
+      "position": { "x": 0, "y": 0 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_customers_crm_contact", "name": "customers_crm_contact_id_idx", "columnIds": ["col_customers_crm_contact_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_customers_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_customers_crm_contact_id", "name": "crm_contact_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Points into the external CRM group. Nullable: not every customer has been synced yet." },
+        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_orders",
+      "name": "orders",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per order placed by a customer.",
+      "position": { "x": 0, "y": 300 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_orders_customer", "name": "orders_customer_id_idx", "columnIds": ["col_orders_customer_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_orders_status", "name": "status", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
+        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
+        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_crm_contacts",
+      "name": "crm_contacts",
+      "color": "purple",
+      "groupId": "grp_crm",
+      "comment": "The vendor's contact record. We read it; we never create or migrate it.",
+      "position": { "x": 700, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_crm_contacts_contact_id", "name": "contact_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_crm_contacts_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_crm_contacts_account_id", "name": "account_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_crm_accounts",
+      "name": "crm_accounts",
+      "color": "purple",
+      "groupId": "grp_crm",
+      "comment": "The vendor's company record. A contact belongs to one of these; we never link to it directly.",
+      "position": { "x": 700, "y": 300 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_crm_accounts_account_id", "name": "account_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_crm_accounts_name", "name": "name", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_crm_accounts_tier", "name": "tier", "type": "TEXT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": ["col_orders_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "orders_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_customers_crm_contact",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_customers",
+      "sourceColumnIds": ["col_customers_crm_contact_id"],
+      "targetTableId": "tbl_crm_contacts",
+      "targetColumnIds": ["col_crm_contacts_contact_id"],
+      "name": "customers_crm_contact_id_fkey",
+      "onDelete": "SET NULL",
+      "onUpdate": "NO ACTION",
+      "note": "Sales wants this join for the customer 360 report. The CRM is the vendor's database, not ours, so nothing here is enforced by our schema.",
+      "query": "SELECT c.id, c.email, k.email AS crm_email\nFROM public.customers c\nJOIN crm_contacts k ON k.contact_id = c.crm_contact_id\n-- crm_contacts is read over the FDW, not a table in this database"
+    },
+    {
+      "id": "rel_crm_contact_account",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_crm_contacts",
+      "sourceColumnIds": ["col_crm_contacts_account_id"],
+      "targetTableId": "tbl_crm_accounts",
+      "targetColumnIds": ["col_crm_accounts_account_id"],
+      "name": "crm_contacts_account_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
+    }
+  ],
+  "notes": [
+    {
+      "id": "note_group",
+      "text": "CRM (read-only) is an external group: its rectangle is derived from crm_contacts and crm_accounts, not stored. Neither table is created by this schema's script.",
+      "position": { "x": 660, "y": 560 },
+      "width": 320,
+      "height": 130,
+      "color": "yellow"
+    }
+  ]
+}
