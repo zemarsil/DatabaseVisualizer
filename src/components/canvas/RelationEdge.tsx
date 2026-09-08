@@ -47,7 +47,7 @@ type Side = 'left' | 'right';
 
 const MARKER = 16; // px reserved for the crow's foot / bar between node edge and curve start
 const GAP = 28;
-const BOW_SPACING = 26; // px separation between duplicate edges sharing the same anchor points
+const BOW_SPACING = 40; // px separation between duplicate edges sharing the same anchor points (must clear the ~20px label pill height)
 
 interface Geometry {
   sx: number;
