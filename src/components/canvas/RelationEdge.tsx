@@ -193,6 +193,15 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
   else if (hasQuery) labelClasses.push('edge-label--query');
   if (data.dimmed) labelClasses.push('edge-label--dim');
 
+  // How the connection reads from the target's side. A custom reverse label is
+  // part of the diagram so it always shows; the verb's own inverse would just be
+  // noise on every edge, so it waits until the edge is selected or traced.
+  const customInverse = r.inverseName?.trim();
+  const inverseText = customInverse || verb.inverse;
+  const showInverseLabel = showLabel && Boolean(customInverse || selected || data.traced);
+  const inverseLabelX = g.labelX + (g.tx - g.labelX) * 0.65;
+  const inverseLabelY = g.labelY + (g.ty - g.labelY) * 0.65;
+
   return (
     <>
       <BaseEdge id={id} path={g.path} style={{ stroke: color, strokeWidth: width, opacity, strokeDasharray: style.dash }} interactionWidth={18} />
@@ -247,6 +256,17 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
                 {derivationCount}
               </span>
             )}
+          </div>
+        </EdgeLabelRenderer>
+      )}
+      {showInverseLabel && (
+        <EdgeLabelRenderer>
+          <div
+            className={[...labelClasses, 'edge-label--inverse'].join(' ')}
+            style={{ transform: `translate(-50%, -50%) translate(${inverseLabelX}px, ${inverseLabelY}px)` }}
+            title={`${tTable?.name ?? 'target'} ${inverseText} ${sTable?.name ?? 'source'}`}
+          >
+            <span>{inverseText}</span>
           </div>
         </EdgeLabelRenderer>
       )}
