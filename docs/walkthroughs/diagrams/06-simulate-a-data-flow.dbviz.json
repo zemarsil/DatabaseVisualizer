@@ -1,142 +1,1055 @@
 {
   "version": 1,
-  "name": "Simulate a data flow — order lines to book totals",
+  "name": "Bookshop — after 06 Simulate a data flow",
   "dialect": "postgresql",
-  "customTypes": [
-    {
-      "id": "typ_order_status",
-      "name": "order_status",
-      "kind": "enum",
-      "values": ["pending", "paid", "shipped", "cancelled"],
-      "comment": "The daily_sales flow only counts paid orders, so simulating filters most of orders out."
-    }
-  ],
   "tables": [
     {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_authors",
+      "name": "authors",
+      "comment": "One row per person who wrote something we sell.",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "columns": [
+        {
+          "id": "col_authors_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true,
+          "comment": "Surrogate key. Nothing outside the database ever sees it."
+        },
+        {
+          "id": "col_authors_name",
+          "name": "name",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_authors_country",
+          "name": "country",
+          "type": "CHAR(2)",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "check": "country = upper(country)",
+          "comment": "ISO 3166-1 alpha-2. Nullable: we often do not know."
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "blue",
+      "checks": [
+        "published_on IS NULL OR published_on >= DATE '1450-01-01'"
+      ],
+      "indexes": [],
+      "id": "tbl_books",
+      "name": "books",
+      "comment": "One row per edition we stock.",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_books_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_books_author_id",
+          "name": "author_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_title",
+          "name": "title",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_isbn",
+          "name": "isbn",
+          "type": "CHAR(13)",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": true,
+          "autoIncrement": false,
+          "comment": "The natural key. UNIQUE, but not the primary key: ISBNs get reassigned and mistyped."
+        },
+        {
+          "id": "col_books_price_cents",
+          "name": "price_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0",
+          "check": "price_cents >= 0",
+          "comment": "Integer cents, never a float: 0.1 + 0.2 is not 0.3 in binary floating point."
+        },
+        {
+          "id": "col_books_published_on",
+          "name": "published_on",
+          "type": "DATE",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_in_print",
+          "name": "in_print",
+          "type": "BOOLEAN",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "true"
+        },
+        {
+          "id": "col_books_added_at",
+          "name": "added_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        },
+        {
+          "id": "col_books_contributors_json",
+          "name": "contributors_json",
+          "type": "JSONB",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "Holds the serialized contributors rows. The embed connection is what says so."
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_customers",
+      "name": "customers",
+      "comment": "One row per person who buys from us. Typed from scratch in walkthrough 01.",
+      "position": {
+        "x": 680,
+        "y": 0
+      },
+      "columns": [
+        {
+          "id": "col_customers_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_customers_email",
+          "name": "email",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": true,
+          "autoIncrement": false,
+          "comment": "The natural key: one account per address."
+        },
+        {
+          "id": "col_customers_crm_contact_id",
+          "name": "crm_contact_id",
+          "type": "BIGINT",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "Their id in the vendor CRM. Nullable: not every customer is in it."
+        },
+        {
+          "id": "col_customers_mailing_address",
+          "name": "mailing_address",
+          "type": "postal_address",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "One column, four fields. Nullable: we only need it once someone orders something physical."
+        },
+        {
+          "id": "col_customers_created_at",
+          "name": "created_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
+      ],
+      "groupId": "grp_shop"
+    },
+    {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
       "id": "tbl_orders",
       "name": "orders",
+      "comment": "One row per order placed. status is an order_status enum, so only four values can ever be stored.",
+      "position": {
+        "x": 680,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_orders_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_orders_customer_id",
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_orders_status",
+          "name": "status",
+          "type": "order_status",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "'pending'",
+          "comment": "Was TEXT until walkthrough 04. The enum is what stops a typo becoming a status."
+        },
+        {
+          "id": "col_orders_total_cents",
+          "name": "total_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0",
+          "check": "total_cents >= 0"
+        },
+        {
+          "id": "col_orders_placed_at",
+          "name": "placed_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
+      ],
+      "groupId": "grp_shop"
+    },
+    {
       "schema": "public",
       "color": "blue",
-      "comment": "Raw input. One row per placed order; the flow below reads status and placed_at through order_items' foreign key.",
-      "position": { "x": 0, "y": 0 },
-      "checks": ["total_cents >= 0"],
+      "checks": [],
       "indexes": [],
+      "id": "tbl_contributors",
+      "name": "contributors",
+      "comment": "Translators, illustrators, editors. Few enough per book that they ride along inside books.contributors_json.",
+      "position": {
+        "x": 340,
+        "y": 0
+      },
       "columns": [
-        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "No customers table in this small companion diagram; see walkthrough 02 for a real foreign key." },
-        { "id": "col_orders_status", "name": "status", "type": "order_status", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
-        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
-        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()", "comment": "The flow reads this as orders.placed_at and casts it to a DATE for daily_sales.day." }
+        {
+          "id": "col_contributors_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_contributors_name",
+          "name": "name",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_contributors_role",
+          "name": "role",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
       ]
     },
     {
+      "schema": "public",
+      "color": "orange",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_customer_cadence",
+      "name": "customer_cadence",
+      "comment": "How often a customer orders. Every column is derived from orders — the flow drawn in walkthrough 02, kept in walkthrough 05.",
+      "position": {
+        "x": 1020,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_cc_customer_id",
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_cc_avg_gap_days",
+          "name": "avg_gap_days",
+          "type": "NUMERIC(10,2)",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "NULL until a customer has placed two orders: there is no gap to average yet."
+        },
+        {
+          "id": "col_cc_order_count",
+          "name": "order_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        }
+      ],
+      "groupId": "grp_shop"
+    },
+    {
+      "schema": "public",
+      "color": "orange",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_catalog_export",
+      "name": "catalog_export",
+      "comment": "What the nightly feed to the price-comparison sites writes. Reads books, but nothing stops books rows disappearing under it.",
+      "position": {
+        "x": 340,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_ce_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_ce_book_id",
+          "name": "book_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "Deliberately not a foreign key: the export keeps rows for books we have stopped selling."
+        },
+        {
+          "id": "col_ce_title",
+          "name": "title",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_ce_price_cents",
+          "name": "price_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_ce_exported_at",
+          "name": "exported_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "purple",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_crm_contacts",
+      "name": "crm_contacts",
+      "groupId": "grp_crm",
+      "comment": "Lives in the vendor CRM, not in our database. Documented here, never created by our script.",
+      "position": {
+        "x": 1360,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_crm_contacts_contact_id",
+          "name": "contact_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_crm_contacts_email",
+          "name": "email",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_crm_contacts_account_id",
+          "name": "account_id",
+          "type": "BIGINT",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "purple",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_crm_accounts",
+      "name": "crm_accounts",
+      "groupId": "grp_crm",
+      "comment": "The CRM company a contact belongs to.",
+      "position": {
+        "x": 1360,
+        "y": 0
+      },
+      "columns": [
+        {
+          "id": "col_crm_accounts_account_id",
+          "name": "account_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_crm_accounts_name",
+          "name": "name",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_crm_accounts_tier",
+          "name": "tier",
+          "type": "TEXT",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
       "id": "tbl_order_items",
       "name": "order_items",
-      "schema": "public",
-      "color": "blue",
-      "comment": "Raw input. One row per line item. Feeds daily_sales through the data flow below; every row also reaches orders through order_id.",
-      "position": { "x": 320, "y": 0 },
-      "checks": [],
-      "indexes": [
-        { "id": "idx_order_items_order_id", "name": "order_items_order_id_idx", "columnIds": ["col_oi_order_id"], "unique": false }
-      ],
+      "groupId": "grp_shop",
+      "comment": "One row per book on an order. This is the grain everything downstream aggregates from.",
+      "position": {
+        "x": 680,
+        "y": 600
+      },
       "columns": [
-        { "id": "col_oi_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_oi_order_id", "name": "order_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_oi_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "book_id BETWEEN 1 AND 5", "comment": "No books table in this small companion diagram; book_id is just the grouping key for the rollup. Bounded to 5 values so sample rows actually collide and the rollup has something to sum." },
-        { "id": "col_oi_quantity", "name": "quantity", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "quantity > 0" },
-        { "id": "col_oi_unit_price_cents", "name": "unit_price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "unit_price_cents >= 0" }
+        {
+          "id": "col_oi_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_oi_order_id",
+          "name": "order_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_oi_book_id",
+          "name": "book_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_oi_quantity",
+          "name": "quantity",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "1",
+          "check": "quantity > 0"
+        },
+        {
+          "id": "col_oi_unit_price_cents",
+          "name": "unit_price_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "check": "unit_price_cents >= 0",
+          "comment": "Copied from books.price_cents at checkout: the price then, not the price now."
+        }
       ]
     },
     {
+      "schema": "public",
+      "color": "orange",
+      "checks": [],
+      "indexes": [],
       "id": "tbl_daily_sales",
       "name": "daily_sales",
-      "schema": "public",
-      "color": "orange",
-      "comment": "Stage 1 output. One row per (day, book), built by simulating order_items -> daily_sales: filter to paid orders, group by day and book, sum quantity and revenue.",
-      "position": { "x": 320, "y": 260 },
-      "checks": [],
-      "indexes": [],
+      "groupId": "grp_shop",
+      "comment": "Units and revenue per book per day. Derived: every row here is a fact you could recompute from order_items.",
+      "position": {
+        "x": 680,
+        "y": 900
+      },
       "columns": [
-        { "id": "col_ds_day", "name": "day", "type": "DATE", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
-        { "id": "col_ds_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
-        { "id": "col_ds_units", "name": "units", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
-        { "id": "col_ds_revenue_cents", "name": "revenue_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+        {
+          "id": "col_ds_book_id",
+          "name": "book_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_ds_day",
+          "name": "day",
+          "type": "DATE",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_ds_units",
+          "name": "units",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        },
+        {
+          "id": "col_ds_revenue_cents",
+          "name": "revenue_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        }
       ]
     },
     {
-      "id": "tbl_book_totals",
-      "name": "book_totals",
       "schema": "public",
       "color": "orange",
-      "comment": "Stage 2 output. One row per book, built by simulating daily_sales -> book_totals: sum units and revenue across every day daily_sales already produced. The second stage of the chain, so Simulate into book_totals runs both flows.",
-      "position": { "x": 320, "y": 520 },
       "checks": [],
       "indexes": [],
+      "id": "tbl_book_totals",
+      "name": "book_totals",
+      "groupId": "grp_shop",
+      "comment": "Lifetime units and revenue per book. Fed from daily_sales, which is itself fed from order_items — two stages, which is what makes it worth stepping through.",
+      "position": {
+        "x": 680,
+        "y": 1200
+      },
       "columns": [
-        { "id": "col_bt_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
-        { "id": "col_bt_total_units", "name": "total_units", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
-        { "id": "col_bt_total_revenue_cents", "name": "total_revenue_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+        {
+          "id": "col_bt_book_id",
+          "name": "book_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_bt_total_units",
+          "name": "total_units",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        },
+        {
+          "id": "col_bt_total_revenue_cents",
+          "name": "total_revenue_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        }
       ]
     }
   ],
   "relationships": [
     {
-      "id": "rel_order_items_orders",
+      "sourceColumnIds": [
+        "col_books_author_id"
+      ],
+      "targetColumnIds": [
+        "col_authors_id"
+      ],
+      "id": "rel_books_author",
       "kind": "fk",
-      "verb": "belongs-to",
-      "sourceTableId": "tbl_order_items",
-      "sourceColumnIds": ["col_oi_order_id"],
-      "targetTableId": "tbl_orders",
-      "targetColumnIds": ["col_orders_id"],
-      "name": "order_items_order_id_fkey",
-      "onDelete": "CASCADE",
-      "onUpdate": "NO ACTION",
-      "note": "Without this foreign key, orders.status and orders.placed_at could not be written as orders.status / orders.placed_at in the flow below — Simulate would report them as unreachable."
+      "verb": "references",
+      "sourceTableId": "tbl_books",
+      "targetTableId": "tbl_authors",
+      "name": "books_author_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
     },
     {
+      "sourceColumnIds": [
+        "col_orders_customer_id"
+      ],
+      "targetColumnIds": [
+        "col_customers_id"
+      ],
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "targetTableId": "tbl_customers",
+      "name": "orders_customer_id_fkey",
+      "inverseName": "placed",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [
+        "col_books_contributors_json"
+      ],
+      "targetColumnIds": [],
+      "id": "rel_books_contributors",
+      "kind": "embed",
+      "verb": "serializes",
+      "sourceTableId": "tbl_books",
+      "targetTableId": "tbl_contributors",
+      "name": "contributors_json",
+      "note": "A shape, not a constraint: the JSONB column holds copies of contributors rows, and no database rule keeps the two in step."
+    },
+    {
+      "sourceColumnIds": [],
+      "targetColumnIds": [],
+      "id": "rel_flow_customer_cadence",
+      "kind": "flow",
+      "verb": "feeds",
+      "sourceTableId": "tbl_orders",
+      "targetTableId": "tbl_customer_cadence",
+      "name": "nightly rollup",
+      "note": "Full rebuild, not incremental: one new order can change the average gap for every order this customer ever placed, so there is nothing sane to upsert.",
+      "derivations": [
+        {
+          "id": "drv_cc_avg_gap_days",
+          "targetColumnId": "col_cc_avg_gap_days",
+          "expression": "CAST(placed_at AS DATE)",
+          "aggregate": "AVG",
+          "groupBy": [
+            "customer_id"
+          ],
+          "filter": "status <> 'cancelled'",
+          "window": {
+            "fn": "DIFF",
+            "orderBy": [
+              "placed_at"
+            ],
+            "partitionBy": [
+              "customer_id"
+            ]
+          }
+        },
+        {
+          "id": "drv_cc_order_count",
+          "targetColumnId": "col_cc_order_count",
+          "expression": "*",
+          "aggregate": "COUNT",
+          "groupBy": [
+            "customer_id"
+          ],
+          "filter": "status <> 'cancelled'"
+        }
+      ]
+    },
+    {
+      "sourceColumnIds": [],
+      "targetColumnIds": [],
+      "id": "rel_catalog_export_books",
+      "kind": "dependency",
+      "verb": "uses",
+      "sourceTableId": "tbl_catalog_export",
+      "targetTableId": "tbl_books",
+      "name": "nightly feed",
+      "note": "Documentation only. Nothing in the database knows this job exists, which is exactly why the diagram should."
+    },
+    {
+      "sourceColumnIds": [
+        "col_customers_crm_contact_id"
+      ],
+      "targetColumnIds": [
+        "col_crm_contacts_contact_id"
+      ],
+      "id": "rel_customers_crm",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_customers",
+      "targetTableId": "tbl_crm_contacts",
+      "name": "customers_crm_contact_id_fkey",
+      "onDelete": "SET NULL",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [
+        "col_crm_contacts_account_id"
+      ],
+      "targetColumnIds": [
+        "col_crm_accounts_account_id"
+      ],
+      "id": "rel_crm_contacts_account",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_crm_contacts",
+      "targetTableId": "tbl_crm_accounts",
+      "name": "crm_contacts_account_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [
+        "col_oi_order_id"
+      ],
+      "targetColumnIds": [
+        "col_orders_id"
+      ],
+      "id": "rel_items_order",
+      "kind": "fk",
+      "verb": "part-of",
+      "sourceTableId": "tbl_order_items",
+      "targetTableId": "tbl_orders",
+      "name": "order_items_order_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [
+        "col_oi_book_id"
+      ],
+      "targetColumnIds": [
+        "col_books_id"
+      ],
+      "id": "rel_items_book",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_order_items",
+      "targetTableId": "tbl_books",
+      "name": "order_items_book_id_fkey",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [
+        "col_ds_book_id"
+      ],
+      "targetColumnIds": [
+        "col_books_id"
+      ],
+      "id": "rel_ds_book",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_daily_sales",
+      "targetTableId": "tbl_books",
+      "name": "daily_sales_book_id_fkey",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [
+        "col_cc_customer_id"
+      ],
+      "targetColumnIds": [
+        "col_customers_id"
+      ],
+      "id": "rel_cadence_customer",
+      "kind": "fk",
+      "verb": "extends",
+      "sourceTableId": "tbl_customer_cadence",
+      "targetTableId": "tbl_customers",
+      "name": "customer_cadence_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [],
+      "targetColumnIds": [],
       "id": "rel_flow_daily_sales",
       "kind": "flow",
       "verb": "feeds",
       "sourceTableId": "tbl_order_items",
-      "sourceColumnIds": [],
       "targetTableId": "tbl_daily_sales",
-      "targetColumnIds": [],
-      "name": "daily rollup",
-      "inverseName": "rolled up from",
-      "note": "Runs at ingest, one line item at a time, in the same transaction as the order line write.",
+      "name": "nightly rollup",
+      "note": "Rebuilt nightly, not on write: a day's sales are not final until the day is over. The upsert below is what makes re-running it safe.",
       "derivations": [
-        { "id": "drv_ds_day", "targetColumnId": "col_ds_day", "expression": "CAST(orders.placed_at AS DATE)", "groupBy": ["CAST(orders.placed_at AS DATE)", "book_id"], "filter": "orders.status = 'paid'" },
-        { "id": "drv_ds_book_id", "targetColumnId": "col_ds_book_id", "expression": "book_id", "groupBy": ["CAST(orders.placed_at AS DATE)", "book_id"], "filter": "orders.status = 'paid'" },
-        { "id": "drv_ds_units", "targetColumnId": "col_ds_units", "expression": "quantity", "aggregate": "SUM", "groupBy": ["CAST(orders.placed_at AS DATE)", "book_id"], "filter": "orders.status = 'paid'" },
-        { "id": "drv_ds_revenue_cents", "targetColumnId": "col_ds_revenue_cents", "expression": "quantity * unit_price_cents", "aggregate": "SUM", "groupBy": ["CAST(orders.placed_at AS DATE)", "book_id"], "filter": "orders.status = 'paid'" }
-      ]
+        {
+          "id": "drv_ds_day",
+          "targetColumnId": "col_ds_day",
+          "expression": "CAST(orders.placed_at AS DATE)",
+          "groupBy": [
+            "book_id",
+            "CAST(orders.placed_at AS DATE)"
+          ],
+          "filter": "orders.status = 'paid'"
+        },
+        {
+          "id": "drv_ds_units",
+          "targetColumnId": "col_ds_units",
+          "expression": "quantity",
+          "aggregate": "SUM",
+          "groupBy": [
+            "book_id",
+            "CAST(orders.placed_at AS DATE)"
+          ],
+          "filter": "orders.status = 'paid'"
+        },
+        {
+          "id": "drv_ds_revenue_cents",
+          "targetColumnId": "col_ds_revenue_cents",
+          "expression": "quantity * unit_price_cents",
+          "aggregate": "SUM",
+          "groupBy": [
+            "book_id",
+            "CAST(orders.placed_at AS DATE)"
+          ],
+          "filter": "orders.status = 'paid'"
+        }
+      ],
+      "query": "INSERT INTO daily_sales (book_id, day, units, revenue_cents)\nSELECT oi.book_id, CAST(o.placed_at AS DATE), SUM(oi.quantity), SUM(oi.quantity * oi.unit_price_cents)\nFROM order_items oi\nJOIN orders o ON o.id = oi.order_id\nWHERE o.status = 'paid'\nGROUP BY oi.book_id, CAST(o.placed_at AS DATE)\nON CONFLICT (book_id, day) DO UPDATE\n  SET units = daily_sales.units + EXCLUDED.units,\n      revenue_cents = daily_sales.revenue_cents + EXCLUDED.revenue_cents;"
     },
     {
+      "sourceColumnIds": [
+        "col_bt_book_id"
+      ],
+      "targetColumnIds": [
+        "col_books_id"
+      ],
+      "id": "rel_bt_book",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_book_totals",
+      "targetTableId": "tbl_books",
+      "name": "book_totals_book_id_fkey",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [],
+      "targetColumnIds": [],
       "id": "rel_flow_book_totals",
       "kind": "flow",
       "verb": "feeds",
       "sourceTableId": "tbl_daily_sales",
-      "sourceColumnIds": [],
       "targetTableId": "tbl_book_totals",
-      "targetColumnIds": [],
-      "name": "book totals rollup",
-      "inverseName": "rolled up from",
-      "note": "Runs nightly: re-aggregates every day daily_sales holds for each book. Nothing here reads order_items or orders directly — that is why this is a second stage, not a second derivation on the first flow.",
+      "name": "lifetime rollup",
+      "note": "Reads daily_sales, not order_items: the second stage of a two-stage flow, so simulating into book_totals reruns the first stage on the way.",
       "derivations": [
-        { "id": "drv_bt_book_id", "targetColumnId": "col_bt_book_id", "expression": "book_id", "groupBy": ["book_id"], "filter": "" },
-        { "id": "drv_bt_total_units", "targetColumnId": "col_bt_total_units", "expression": "units", "aggregate": "SUM", "groupBy": ["book_id"], "filter": "" },
-        { "id": "drv_bt_total_revenue_cents", "targetColumnId": "col_bt_total_revenue_cents", "expression": "revenue_cents", "aggregate": "SUM", "groupBy": ["book_id"], "filter": "" }
+        {
+          "id": "drv_bt_total_units",
+          "targetColumnId": "col_bt_total_units",
+          "expression": "units",
+          "aggregate": "SUM",
+          "groupBy": [
+            "book_id"
+          ]
+        },
+        {
+          "id": "drv_bt_total_revenue_cents",
+          "targetColumnId": "col_bt_total_revenue_cents",
+          "expression": "revenue_cents",
+          "aggregate": "SUM",
+          "groupBy": [
+            "book_id"
+          ]
+        }
       ]
+    }
+  ],
+  "groups": [
+    {
+      "id": "grp_shop",
+      "name": "shop",
+      "color": "slate",
+      "external": false,
+      "note": "The tables we own on the sales side. A region is a label, not a namespace: nothing about the generated script changes.",
+      "position": {
+        "x": 680,
+        "y": 0
+      }
+    },
+    {
+      "id": "grp_crm",
+      "name": "CRM (read-only)",
+      "color": "purple",
+      "external": true,
+      "note": "Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, so nothing here is created by the generated script.",
+      "position": {
+        "x": 1360,
+        "y": 0
+      }
+    }
+  ],
+  "customTypes": [
+    {
+      "id": "typ_order_status",
+      "name": "order_status",
+      "kind": "enum",
+      "values": [
+        "pending",
+        "paid",
+        "shipped",
+        "cancelled"
+      ],
+      "comment": "The order lifecycle. Adding a value later is cheap; removing one is not."
+    },
+    {
+      "id": "typ_postal_address",
+      "name": "postal_address",
+      "kind": "composite",
+      "fields": [
+        {
+          "id": "fld_pa_street",
+          "name": "street",
+          "type": "TEXT"
+        },
+        {
+          "id": "fld_pa_city",
+          "name": "city",
+          "type": "TEXT"
+        },
+        {
+          "id": "fld_pa_postal_code",
+          "name": "postal_code",
+          "type": "TEXT"
+        },
+        {
+          "id": "fld_pa_country",
+          "name": "country",
+          "type": "CHAR(2)"
+        }
+      ],
+      "comment": "One address, four fields, reusable wherever an address is needed."
     }
   ],
   "notes": [
     {
-      "id": "note_two_stages",
-      "text": "Deliberately two stages deep, so stage playback is worth watching.\n\nSimulate into daily_sales: one stage, order_items -> daily_sales.\nSimulate into book_totals: two stages, order_items -> daily_sales -> book_totals. Stage 2 reads the rows stage 1 just produced, not the raw orders again.",
-      "position": { "x": 660, "y": 260 },
-      "width": 300,
-      "height": 190,
+      "id": "note_simulate",
+      "text": "Simulate is a dry run, not a state: it invents sample rows, runs every flow upstream of the table you pick, and throws the lot away. Nothing it shows you — including a what-if edit — is ever written to the diagram.",
+      "position": {
+        "x": 1780,
+        "y": 0
+      },
+      "width": 330,
+      "height": 200,
       "color": "yellow"
     }
   ]

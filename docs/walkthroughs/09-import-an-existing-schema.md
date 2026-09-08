@@ -1,7 +1,7 @@
 ---
 title: Import an existing schema
 slug: 09-import-an-existing-schema
-summary: Paste, drop or read in someone else's CREATE TABLE script and get a real diagram back, plus the foreign keys the DDL never bothered to declare.
+summary: Merge the warehouse team's CREATE TABLE script into the diagram you have built, plus the foreign keys their DDL never bothered to declare.
 level: beginner
 minutes: 12
 dialect: postgresql
@@ -16,16 +16,17 @@ shortcuts:
   - Ctrl+V
   - L
   - Ctrl+K
+start: diagrams/08-build-a-view.dbviz.json
 diagram: diagrams/09-import-an-existing-schema.dbviz.json
 checks:
-  - tables | authors, books, customers, orders, order_items
-  - types | order_status
-  - kinds | fk:4
-  - indexes | 1
-  - contains | Only these four values are valid
-  - lint clean
+  - kinds | fk:15, flow:6, embed:1, dependency:1
+  - indexes | 7
+  - contains | CREATE TABLE stock_levels
+  - contains | cost FLOAT DEFAULT 0
+  - omits | CREATE TABLE public.stock_levels
+  - lint errors | 2
 prerequisites:
-  - 01-set-up-a-table
+  - 08-build-a-view
 next:
   - 10-fix-what-problems-finds
 ---
@@ -33,53 +34,69 @@ next:
 
 ## What you'll build
 
-The same five-table bookshop you would get from a real database dump: `authors`,
-`books`, `customers`, `orders` and `order_items`, an `order_status` enum, one
-index, and a comment that survived the trip. You get there by pasting one
-`CREATE TABLE` script into **Import SQL**, then doing the two things every
-import is missing — accepting the foreign keys the script never declared and
-tidying the layout.
+Four more tables on the same canvas, and not one of them typed by you. The
+warehouse team runs its own database — `warehouses`, `stock_levels`,
+`shipments`, `shipment_items` — and has sent over the `CREATE TABLE` script for
+it. You paste it into **Import SQL**, choose *Add to the current diagram*, and
+the bookshop you have spent eight walkthroughs building grows a warehouse side.
+
+Then you do the two things every import needs: accept the foreign keys the
+script never declared, and lay the result out.
+
+What you will **not** do is clean it up. The script is a real one, which means
+it arrives with a table that has no primary key, two indexes on the same
+column, money in a `FLOAT`, and a foreign key onto a column nothing makes
+unique. **Problems** will have plenty to say, and that is exactly what
+[the next walkthrough](10-fix-what-problems-finds.md) is for — this is the
+first time in the series the diagram ends with errors in it, on purpose.
 
 ```mermaid
 erDiagram
-    AUTHORS ||--o{ BOOKS : has
-    CUSTOMERS ||--o{ ORDERS : has
-    ORDERS ||--o{ ORDER_ITEMS : has
-    BOOKS ||--o{ ORDER_ITEMS : has
-    AUTHORS {
-        bigint id PK
-        text name
+    WAREHOUSES ||--o{ STOCK_LEVELS : "stocks (on code, not id)"
+    WAREHOUSES ||--o{ SHIPMENTS : "ships from"
+    SHIPMENTS ||--o{ SHIPMENT_ITEMS : contains
+    BOOKS ||--o{ STOCK_LEVELS : "suggested FK"
+    BOOKS ||--o{ SHIPMENT_ITEMS : "suggested FK"
+    ORDERS ||--o{ SHIPMENTS : "suggested FK"
+    WAREHOUSES {
+        integer id PK
+        varchar code "NOT NULL, not unique"
+        varchar city
     }
-    BOOKS {
-        bigint id PK
-        bigint author_id FK
-        char_13 isbn UK
+    STOCK_LEVELS {
+        varchar warehouse_code FK "no primary key at all"
+        integer book_id
+        integer row_ "a reserved word"
+        integer on_hand
     }
-    CUSTOMERS {
-        bigint id PK
-        text email UK
+    SHIPMENTS {
+        integer id PK
+        integer order_id
+        integer warehouse_id FK "NOT NULL, ON DELETE SET NULL"
+        float cost "money in a float"
     }
-    ORDERS {
-        bigint id PK
-        bigint customer_id FK
-        order_status status
-    }
-    ORDER_ITEMS {
-        bigint id PK
-        bigint order_id FK
-        bigint book_id FK
+    SHIPMENT_ITEMS {
+        integer id PK
+        integer shipment_id FK
+        integer book_id
+        integer quantity
     }
 ```
 
 ## Before you start
 
-[Set up a table](01-set-up-a-table.md) is worth reading first so the column
-grid and the four flags (**PK** / **NN** / **UQ** / **AI**) are already
-familiar — this walkthrough hands you a script instead of a keyboard, but the
-diagram it produces is made of the same pieces. Have the app open on an empty
-diagram with **PostgreSQL** selected in the dialect selector, since the script
-below is written in PostgreSQL's spelling (`BIGSERIAL`, `TIMESTAMPTZ`,
-`CREATE TYPE … AS ENUM`).
+You need what [Build a view](08-build-a-view.md) leaves behind: thirteen
+tables, two regions, and a **Problems** tab with no errors and no warnings in
+it. Press **Set up the canvas** at the top of this walkthrough in the drawer's
+**Walkthrough** tab if it is not already in front of you.
+
+That quiet **Problems** tab matters more than usual here. Everything it says
+by the end of this walkthrough came in with the import, and you will be able
+to tell because nothing was there before.
+
+Have **PostgreSQL** selected in the dialect selector, since the script below
+is written in PostgreSQL's spelling (`SERIAL`, `VARCHAR`, a quoted
+identifier).
 
 If you would rather read the finished thing than type it, open
 [`diagrams/09-import-an-existing-schema.dbviz.json`](diagrams/09-import-an-existing-schema.dbviz.json)
@@ -117,87 +134,140 @@ Open the bottom drawer → **Import SQL**. Paste this into the text box on the
 left (or save it as a file and use **Load .sql file** instead):
 
 ```sql
-CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
-
-CREATE TABLE authors (
-  id BIGSERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  country CHAR(2)
+-- warehouse.sql — the warehouse team's schema, dumped years ago and barely touched since.
+CREATE TABLE warehouses (
+    id    SERIAL PRIMARY KEY,
+    code  VARCHAR(8) NOT NULL,
+    name  VARCHAR(120),
+    city  VARCHAR(120)
 );
 
-CREATE TABLE books (
-  id BIGSERIAL PRIMARY KEY,
-  author_id BIGINT NOT NULL REFERENCES authors (id),
-  title TEXT NOT NULL,
-  isbn CHAR(13) NOT NULL UNIQUE,
-  price_cents INTEGER NOT NULL DEFAULT 0
+CREATE TABLE stock_levels (
+    warehouse_code  VARCHAR(8) NOT NULL REFERENCES warehouses (code),
+    book_id         INTEGER NOT NULL,
+    aisle           VARCHAR(4),
+    "row"           INTEGER,
+    on_hand         INTEGER DEFAULT 0,
+    reorder_at      INTEGER DEFAULT 0
 );
 
-CREATE TABLE customers (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE INDEX stock_levels_book_id_idx ON stock_levels (book_id);
+CREATE INDEX idx_sl_book ON stock_levels (book_id);
+
+CREATE TABLE shipments (
+    id            SERIAL PRIMARY KEY,
+    order_id      INTEGER NOT NULL,
+    warehouse_id  INTEGER NOT NULL REFERENCES warehouses (id) ON DELETE SET NULL,
+    shipped_at    TIMESTAMP,
+    cost          FLOAT DEFAULT 0
 );
 
-CREATE TABLE orders (
-  id BIGSERIAL PRIMARY KEY,
-  customer_id BIGINT NOT NULL REFERENCES customers (id),
-  status order_status NOT NULL DEFAULT 'pending',
-  total_cents INTEGER NOT NULL DEFAULT 0,
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE shipment_items (
+    id           SERIAL PRIMARY KEY,
+    shipment_id  INTEGER NOT NULL REFERENCES shipments (id),
+    book_id      INTEGER NOT NULL,
+    quantity     INTEGER DEFAULT 1
 );
-
-CREATE INDEX orders_customer_id_idx ON orders (customer_id);
-
-CREATE TABLE order_items (
-  id BIGSERIAL PRIMARY KEY,
-  order_id BIGINT NOT NULL,
-  book_id BIGINT NOT NULL,
-  quantity INTEGER NOT NULL DEFAULT 1,
-  unit_price_cents INTEGER NOT NULL
-);
-
-COMMENT ON COLUMN orders.status IS 'Only these four values are valid; add new ones with ALTER TYPE order_status ADD VALUE.';
 ```
 
-Notice `order_items.order_id` and `order_items.book_id` on purpose: real dumps
-often skip a constraint that the application enforces instead, and this script
-is no different.
+Read it once before importing it. This is not a schema anyone designed in one
+sitting: `stock_levels` has no primary key, `book_id` appears in two tables
+with no constraint on it, `stock_levels` is indexed twice on the same column
+under two different names, `"row"` is quoted because it is a reserved word,
+`cost` is a `FLOAT`, and the foreign key on `stock_levels.warehouse_code`
+points at `warehouses.code`, which is `NOT NULL` but not `UNIQUE`.
+
+Import it anyway. Reading someone else's schema *as it is* is the whole job;
+fixing it comes after you can see it.
 
 **You should see:** the **Import** and **Preview only** buttons switch from
 greyed out to active — nothing lands on the canvas until you click one of
-them.
+them. Click **Preview only** first if you want to see the table list, the
+column counts and any warnings without touching the diagram.
 
-### 2. Import it
+### 2. Import it into the diagram you already have
 
-With the diagram empty, *Replace the current diagram* is already selected.
-Click **Import**.
+Check the radio buttons above the buttons. Because the canvas is *not* empty,
+*Add to the current diagram* is already selected rather than *Replace the
+current diagram* — which is what you want. Click **Import**.
 
-**You should see:** two toasts, back to back — "Imported 5 table(s), 2 foreign
-key(s) and 1 type(s)." then "2 foreign keys look implied by column names. Open
-Problems to add them." — and five tables land on the canvas in a plain grid.
+This is the step that makes the import part of your schema rather than a
+separate drawing of somebody else's. Merge mode keeps every table, region,
+type and connection you have, appends the parsed ones, and resolves references
+by name across both: had the warehouse script said `REFERENCES books (id)`,
+the parser would have wired it straight into *your* `books` table rather than
+inventing a second one. (It does not, which is why step 3 exists.)
 
-### 3. Accept the suggested foreign keys
+**You should see:** two toasts, back to back — "Imported 4 table(s), 3 foreign
+key(s)." then "4 foreign keys look implied by column names. Open Problems to
+add them." — and four new tables land on the canvas below everything else.
 
-Open the bottom drawer → **Problems**, look at the right-hand *Suggested
-foreign keys* column, and click **Add all likely** (or click **Add foreign
-key** beside `order_items.order_id → orders.id` and
-`order_items.book_id → books.id` one at a time — both are badged *likely*).
-These two never existed in the script — the app inferred them from `order_id`
-sitting next to a table called `orders`, the same way it would if you had
-typed the columns yourself.
+### 3. Accept three of the four suggested foreign keys
 
-**You should see:** two new crow's-foot lines from `order_items` to `orders`
-and to `books`, and the suggestions disappear from the list.
+Open the bottom drawer → **Problems** and look at the right-hand *Suggested
+foreign keys* column. Four entries, all badged *likely*. Click **Add foreign
+key** on three of them:
+
+| Suggestion | Why it is right |
+| --- | --- |
+| `stock_levels.book_id → books.id` | stock is stock *of a book*; the warehouse script simply never said so |
+| `shipment_items.book_id → books.id` | same again, one table down |
+| `shipments.order_id → orders.id` | a shipment exists because an order did |
+
+Leave the fourth — `catalog_export.book_id → books.id` — exactly where it is.
+That column has been deliberately unconstrained since walkthrough 02: the
+export keeps rows for books you have stopped selling, and adding this foreign
+key would make deleting such a book impossible. The suggestion engine reads
+column names, not intent, and this is the case where it is wrong.
+
+Do not press **Add all likely**, which would take all four.
+
+**You should see:** three new crow's-foot lines running from the warehouse
+tables up into `books` and `orders`, one suggestion still listed, and — now
+that those foreign keys exist — the **Problems** list on the left grow
+considerably.
 
 ### 4. Lay it out
 
-Press `L` (**Detangle**).
+The four new tables landed in a plain grid wherever there was room. Drag them
+into a block underneath the rest of the diagram, or select all four with
+`Shift+click` and press `L` (**Detangle**) to have the layout engine place
+them.
 
-**You should see:** `authors` and `customers` move to the top rank (nothing
-references them), `books` and `orders` settle underneath the table they
-depend on, and `order_items` — which depends on both — drops to the bottom,
-underneath the two of them.
+Detangle works on the whole diagram, so expect your other tables to move too;
+`Ctrl+Z` puts everything back if you would rather place these four by hand.
+Positions are not part of the schema — this step is entirely for you.
+
+**You should see:** the warehouse tables sitting together as a block, with
+their three long edges running up to `books` and `orders` rather than crossing
+the middle of the diagram.
+
+### 5. Read what the import cost you
+
+Open **Problems** properly and read the whole list. Two errors, ten warnings
+and a note that the import brought in — plus the one note about the CRM
+foreign key that has been there since walkthrough 03:
+
+```
+error    shipments → warehouses uses SET NULL, but shipments.warehouse_id is NOT NULL
+error    stock_levels → warehouses references warehouses(code), which is not a primary key or UNIQUE
+warning  stock_levels.book_id is INTEGER but references books.id, which is BIGSERIAL
+warning  shipments.order_id is INTEGER but references orders.id, which is BIGSERIAL
+warning  shipment_items.book_id is INTEGER but references books.id, which is BIGSERIAL
+warning  Table "stock_levels" has no primary key
+warning  Table "stock_levels" indexes (book_id) twice
+warning  … five more unindexed foreign keys
+note     "stock_levels.row" is a reserved word
+```
+
+Every one of those came from the script, and two of them you caused by
+accepting a suggestion in step 3 — the type mismatches only exist because
+there is now a foreign key for the types to disagree across. That is not an
+argument against accepting them: the mismatch was always there, silently, and
+the constraint is what made it visible.
+
+**You should see:** the **Problems** tab badge lit for the first time in the
+series — it counts errors, and until now there were none.
 
 ## Other ways to do it
 
@@ -237,69 +307,67 @@ script it would have produced it from. The format is documented in
 
 ## Check your work
 
-Open the bottom drawer → **SQL**, leave it on *Whole schema*, and compare.
-This is the entire generated script for the diagram above — note that
-`order_items` moved to the end, after the tables its two new foreign keys
-point at:
+Open the bottom drawer → **SQL**, leave it on *Whole schema*, and scroll to
+the four new tables. Two details give away that they came from someone else's
+script rather than from your keyboard:
 
 ```sql
--- Import an existing schema — bookshop (PostgreSQL)
--- Generated by Database Visualizer
--- Tables: 5, foreign keys: 4
-
--- Custom types
-CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
-
-CREATE TABLE authors (
-  id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-  name TEXT NOT NULL,
-  country CHAR(2)
+CREATE TABLE warehouses (
+  id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  code VARCHAR(8) NOT NULL,
+  name VARCHAR(120),
+  city VARCHAR(120)
 );
 
-CREATE TABLE books (
-  id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-  author_id BIGINT NOT NULL,
-  title TEXT NOT NULL,
-  isbn CHAR(13) NOT NULL UNIQUE,
-  price_cents INTEGER NOT NULL DEFAULT 0,
-  CONSTRAINT fk_books_authors FOREIGN KEY (author_id) REFERENCES authors (id)
+CREATE TABLE shipments (
+  id INTEGER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
+  order_id INTEGER NOT NULL,
+  warehouse_id INTEGER NOT NULL,
+  shipped_at TIMESTAMP,
+  cost FLOAT DEFAULT 0,
+  CONSTRAINT fk_shipments_warehouses FOREIGN KEY (warehouse_id) REFERENCES warehouses (id) ON DELETE SET NULL,
+  CONSTRAINT fk_shipments_orders FOREIGN KEY (order_id) REFERENCES public.orders (id)
 );
 
-CREATE TABLE customers (
-  id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+CREATE TABLE stock_levels (
+  warehouse_code VARCHAR(8) NOT NULL,
+  book_id INTEGER NOT NULL,
+  aisle VARCHAR(4),
+  "row" INTEGER,
+  on_hand INTEGER DEFAULT 0,
+  reorder_at INTEGER DEFAULT 0,
+  CONSTRAINT fk_stock_levels_warehouses FOREIGN KEY (warehouse_code) REFERENCES warehouses (code),
+  CONSTRAINT fk_stock_levels_books FOREIGN KEY (book_id) REFERENCES public.books (id)
 );
-
-CREATE TABLE orders (
-  id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-  customer_id BIGINT NOT NULL,
-  status order_status NOT NULL DEFAULT 'pending',
-  total_cents INTEGER NOT NULL DEFAULT 0,
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT fk_orders_customers FOREIGN KEY (customer_id) REFERENCES customers (id)
-);
-CREATE INDEX orders_customer_id_idx ON orders (customer_id);
-COMMENT ON COLUMN orders.status IS 'Only these four values are valid; add new ones with ALTER TYPE order_status ADD VALUE.';
-
-CREATE TABLE order_items (
-  id BIGINT GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,
-  order_id BIGINT NOT NULL,
-  book_id BIGINT NOT NULL,
-  quantity INTEGER NOT NULL DEFAULT 1,
-  unit_price_cents INTEGER NOT NULL,
-  CONSTRAINT fk_order_items_orders FOREIGN KEY (order_id) REFERENCES orders (id),
-  CONSTRAINT fk_order_items_books FOREIGN KEY (book_id) REFERENCES books (id)
-);
+CREATE INDEX stock_levels_book_id_idx ON stock_levels (book_id);
+CREATE INDEX idx_sl_book ON stock_levels (book_id);
 ```
 
-Then open **Problems** again. It is not empty: three *fk-without-index*
-warnings remain, for `books.author_id`, `order_items.order_id` and
-`order_items.book_id` — the script only ever indexed `orders.customer_id`.
-That is deliberate, not a mistake in this walkthrough's example: an import is
-exactly when a schema's gaps become visible, and closing them one click at a
-time is the whole subject of
-[Fix what Problems finds](10-fix-what-problems-finds.md).
+First, `CREATE TABLE warehouses` and not `CREATE TABLE public.warehouses`. The
+script never named a schema, so the parser left the field empty and the
+generator writes the name unqualified — while every table you typed yourself
+still says `public.`. It is a small thing that tells you exactly which half of
+the diagram you wrote.
+
+Second, look at the constraint the parser built on `shipments`:
+`REFERENCES public.orders (id)` — the fully qualified name of *your* `orders`
+table, not a second copy of it. That is the merge working: the suggestion you
+accepted in step 3 pointed at a table that was already there, and so the
+diagram now has one `orders` with a warehouse-side reader, rather than two
+schemas sitting side by side pretending not to know each other.
+
+Then press **Check my work** at the foot of this walkthrough. Its last check
+is unusual and worth reading:
+
+```
+lint errors | 2
+```
+
+Every other walkthrough in the series checks `lint clean`. This one asserts
+that Problems reports *exactly two errors*, because a diagram that came out of
+this walkthrough clean would mean the import silently fixed something, and
+imports do not fix things. Passing this check means you have successfully
+brought in someone else's mess.
 
 ## Reference
 
@@ -329,21 +397,28 @@ statement in the script — before and after it — still lands. Try it under
 
 ## Try it yourself
 
-- Delete the comma after `name TEXT NOT NULL` in `authors` and re-import.
-  **Import SQL**'s preview shows one error pinned to that line; `books`,
-  `customers`, `orders` and `order_items` still import. This is the behavior
-  that makes pasting a 40-table dump worthwhile even when one `CREATE TABLE`
-  in it uses a feature the parser has never seen.
-- Add `full_title TEXT GENERATED ALWAYS AS (title) STORED` to `books` and
-  re-import. Watch the warning name the column and say the expression was
-  "not modelled and was dropped" — then check that `books.full_title` really
-  is missing from the table on the canvas.
-- Select `orders` and look at the `status` column's type cell: it reads
-  `ORDER_STATUS`, in shouting case, even though the script says
-  `order_status`. Open the **Types** tab next to it — the enum itself is
-  still named `order_status`, lower-case. Now check the **SQL** tab: it
-  prints `status order_status`, correctly, either way. See the second Gotcha
-  below for why the mismatch is real but harmless.
+- Press `Ctrl+Z` back to before the import, then delete the comma after
+  `code VARCHAR(8) NOT NULL` in `warehouses` and import again. **Import
+  SQL**'s preview shows one error pinned to that line and `warehouses` is
+  left out; `stock_levels`, `shipments` and `shipment_items` still land. This
+  is the behaviour that makes pasting a 40-table dump worthwhile even when one
+  `CREATE TABLE` in it uses a feature the parser has never seen.
+- Add `full_location TEXT GENERATED ALWAYS AS (aisle) STORED` to
+  `stock_levels` and re-import. Watch the warning name the column and say the
+  expression was "not modelled and was dropped" — then check that
+  `stock_levels.full_location` really is missing from the table on the canvas.
+- Import the script a second time without undoing the first. Every table name
+  is already taken, so you get four warnings ("Table warehouses already exists
+  in the diagram; the imported copy was renamed") and four new tables called
+  `warehouses_2`, `stock_levels_2` and so on. Merge mode never overwrites a
+  table you already have — which is the safe default, and also why importing
+  a *newer* version of a script you already imported is not an update.
+  `Ctrl+Z` to undo it.
+- Select `shipments` and look at the `shipped_at` column: the script said
+  `TIMESTAMP`, and that is exactly what the diagram says, not the
+  `TIMESTAMPTZ` the rest of your schema uses. The importer records what the
+  script says, never what it thinks you meant. That one is on the list for the
+  next walkthrough.
 
 ## Gotchas
 
@@ -354,14 +429,21 @@ statement in the script — before and after it — still lands. Try it under
   and PostgreSQL prints `BIGINT GENERATED BY DEFAULT AS IDENTITY`: the same
   sequence-backed column, different characters. Do not diff the reimported
   script against the original expecting an exact match.
-- **A bare custom-type name gets shouted at you.** Reference an enum by its
-  bare, unquoted name (`status order_status`, not `status "order_status"`)
-  and the importer stores the column's type in upper case —
-  `ORDER_STATUS` — even though the enum itself is recorded as lower-case
-  `order_status`. It is harmless: the **SQL** tab matches the two
+- **A bare custom-type name gets shouted at you.** Import a script that
+  references an enum by its bare, unquoted name (`status order_status`, not
+  `status "order_status"`) and the importer stores the column's type in upper
+  case — `ORDER_STATUS` — even though the enum itself is recorded as
+  lower-case `order_status`. It is harmless: the **SQL** tab matches the two
   case-insensitively and prints the correct `order_status` either way, and
   the column's type *cell* is the only place you will ever see the shouting
   version. Retype it if it bothers you; nothing depends on the casing.
+- **An imported table has no schema, and that is not cosmetic.** The four
+  tables you just added generate as `CREATE TABLE warehouses`, not
+  `CREATE TABLE public.warehouses`, because the script never said. On a
+  database with a single search path this makes no difference; on one where
+  it matters, it means those four tables land somewhere the other thirteen do
+  not. Fixing it is one field in the inspector (*Schema*), and the next
+  walkthrough does exactly that.
 - **Dropping or pasting a `.dbml` file does not work, despite what the app's
   own help (`?`) claims.** The help panel's shortcut list says `Ctrl+V`
   "also pastes DDL, DBML or a .dbviz.json" — but there is no DBML parser
@@ -393,5 +475,8 @@ statement in the script — before and after it — still lands. Try it under
 
 ## Where to go next
 
-- [Fix what Problems finds](10-fix-what-problems-finds.md) — close the three
-  missing-index warnings this import left behind, one click at a time.
+- [Fix what Problems finds](10-fix-what-problems-finds.md) — next in the
+  series, and it starts exactly where this one stops: two errors, ten
+  warnings and one note, worked through one at a time until the tab is empty
+  again. Some of them have a one-click fix; two of the worst are invisible to
+  the linter entirely.

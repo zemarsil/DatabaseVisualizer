@@ -1,7 +1,7 @@
 ---
 title: Connect two tables
 slug: 02-connect-two-tables
-summary: Turn a plain column into a real foreign key, then meet the three other kinds of connection a foreign key cannot express.
+summary: Hang orders off the customers table, learn what the foreign key you dragged in walkthrough 00 really did, and meet the three other kinds of connection.
 level: beginner
 minutes: 12
 dialect: postgresql
@@ -15,58 +15,64 @@ covers:
 shortcuts:
   - T
   - Ctrl+Z
+start: diagrams/01-set-up-a-table.dbviz.json
 diagram: diagrams/02-connect-two-tables.dbviz.json
 checks:
-  - tables | authors, books, contributors, book_stats, catalog_export
-  - kinds | fk:1, flow:1, embed:1, dependency:1
-  - contains | REFERENCES public.authors (id)
+  - tables | authors, books, customers, orders, contributors, customer_cadence, catalog_export
+  - kinds | fk:2, flow:1, embed:1, dependency:1
+  - contains | REFERENCES public.customers (id) ON DELETE RESTRICT
   - omits | REFERENCES public.contributors
-  - omits | REFERENCES public.book_stats
-  - omits | REFERENCES public.books
-  - trace | authors -> book_stats
+  - omits | REFERENCES public.customer_cadence
+  - trace | catalog_export -> authors
   - lint clean
 prerequisites:
   - 01-set-up-a-table
 next:
   - 03-group-tables
-  - 07-add-indexes
 ---
 # Connect two tables
 
 ## What you'll build
 
-`books.author_id` stops being a bare number and becomes a real foreign key
-into `authors`. Then three more tables show up around it — `contributors`,
-`book_stats`, `catalog_export` — each joined to `books` by one of the three
-connection kinds a foreign key cannot express: a serialized copy, a data flow,
-and a plain dependency. By the end, one diagram carries all four kinds side by
-side so you can see them drawn differently and read differently in the
-generated script.
+`orders` joins the canvas and gets a real foreign key into the `customers`
+table you typed in walkthrough 01 — the same move you made by feel in
+walkthrough 00, this time with every field in the inspector explained. Then
+three more tables show up — `contributors`, `customer_cadence`,
+`catalog_export` — each joined by one of the three connection kinds a foreign
+key cannot express: a serialized copy, a data flow, and a plain dependency. By
+the end, one diagram carries all four kinds side by side so you can see them
+drawn differently and read differently in the generated script.
+
+`customer_cadence` is deliberately left as an empty promise here: a rollup
+table with a data-flow edge pointing at it and nothing yet saying how its
+columns are computed. Walkthrough 05 keeps that promise.
 
 ```mermaid
 erDiagram
-    AUTHORS ||--o{ BOOKS : "referenced by (fk)"
+    CUSTOMERS ||--o{ ORDERS : "placed (fk)"
     BOOKS ||--o| CONTRIBUTORS : "serializes (embed)"
-    BOOKS ||--o{ BOOK_STATS : "feeds (flow)"
+    ORDERS ||--o{ CUSTOMER_CADENCE : "feeds (flow)"
     CATALOG_EXPORT }o--|| BOOKS : "uses (dependency)"
-    AUTHORS {
+    CUSTOMERS {
         bigserial id PK
-        text name
+        text email
     }
-    BOOKS {
+    ORDERS {
         bigserial id PK
-        bigint author_id FK
-        jsonb contributors_json "embed target"
+        bigint customer_id FK
+        text status
+        integer total_cents
+        timestamptz placed_at
     }
     CONTRIBUTORS {
         bigserial id PK
         text name
         text role
     }
-    BOOK_STATS {
-        bigserial id PK
-        bigint book_id "not a FK"
-        integer units_sold
+    CUSTOMER_CADENCE {
+        bigint customer_id PK
+        numeric avg_gap_days "computed in 05"
+        integer order_count "computed in 05"
     }
     CATALOG_EXPORT {
         bigserial id PK
@@ -76,10 +82,12 @@ erDiagram
 
 ## Before you start
 
-Do [Set up a table](01-set-up-a-table.md) first, or at least have an `authors`
-table and a `books` table with a plain `author_id BIGINT` column on the
-canvas — that column is exactly where this walkthrough picks up. Keep
-**PostgreSQL** selected in the dialect selector: this walkthrough leans on
+You need what [Set up a table](01-set-up-a-table.md) leaves behind: `authors`,
+`books` and `customers`, with one foreign key already drawn between `books` and
+`authors`. Press **Set up the canvas** at the top of this walkthrough in the
+drawer's **Walkthrough** tab if it is not already in front of you.
+
+Keep **PostgreSQL** selected in the dialect selector: this walkthrough leans on
 `JSONB` for the serialized column and on `RESTRICT` as a deliberate choice for
 `ON DELETE`, both spelled the PostgreSQL way.
 
@@ -110,19 +118,41 @@ before you commit to one.
 
 ## Steps
 
-### 1. Make the foreign key
+### 1. Add the orders table
 
-Hover `books` and drag the small handle beside `author_id` onto the `id` row
-of `authors`.
+Press `T`, rename the new table `orders` with `F2`, and give it these columns
+(the `id` row is already there — change its type):
+
+| Name | Type | Flags | Default |
+| --- | --- | --- | --- |
+| `id` | `BIGSERIAL` | **PK** **NN** **AI** | |
+| `customer_id` | `BIGINT` | **NN** | |
+| `status` | `TEXT` | **NN** | `'pending'` |
+| `total_cents` | `INTEGER` | **NN** | `0` |
+| `placed_at` | `TIMESTAMPTZ` | **NN** | `now()` |
+
+Leave `status` as plain `TEXT` for now: walkthrough 04 turns it into an enum,
+and the difference is easier to feel once you have seen what `TEXT` lets
+through. Give `total_cents` the check `total_cents >= 0` while you are in the
+row.
+
+**You should see:** a fourth table on the canvas with five columns, and
+`customer_id BIGINT NOT NULL` sitting in the SQL tab as a plain number that
+points at nothing.
+
+### 2. Make the foreign key
+
+Hover `orders` and drag the small handle beside `customer_id` onto the `id`
+row of `customers`.
 
 Which table you start the drag from is not a detail — it is the whole
 decision. The table you drag *from* becomes the connection's **source**, the
 one you drop *onto* becomes its **target**, and for a foreign key those map
 directly onto SQL: source is the referencing (child, "many") side, target is
-the referenced (parent, "one") side. You started at `books`, so `books`
-referencing `authors` is exactly what gets built. Starting at `authors`
+the referenced (parent, "one") side. You started at `orders`, so `orders`
+referencing `customers` is exactly what gets built. Starting at `customers`
 instead would still draw a line — the app never refuses a drag — and it would
-mean the opposite: `authors` referencing `books.author_id`, a column that
+mean the opposite: `customers` referencing `orders.customer_id`, a column that
 does not happen to be unique. Sometimes a backwards foreign key still runs,
 quietly meaning the opposite of what you intended; this one does not even get
 that far, because **Problems** rejects a reference onto a non-unique column
@@ -130,12 +160,12 @@ on sight (more on that below). Either way, checking the direction is cheaper
 than finding out later, and two places tell you at a glance: the crow's foot
 sits on the *referencing* end, and the inspector spells it out in words.
 
-**You should see:** a solid line with a crow's foot at the `books` end and a
-plain bar at the `authors` end, and the inspector opens on the new connection
+**You should see:** a solid line with a crow's foot at the `orders` end and a
+plain bar at the `customers` end, and the inspector opens on the new connection
 with **Kind** set to *Foreign key* and the **Referencing → referenced** row
-reading `books` → `authors`.
+reading `orders` → `customers`.
 
-### 2. Choose how it reads
+### 3. Choose how it reads
 
 With the connection selected, open **Reads as** and pick *belongs to*.
 
@@ -144,38 +174,38 @@ The dropdown only offers verbs that fit a foreign key: *references*,
 shorter lists, because "feeds" makes no sense on a constraint and "references"
 makes no sense on a copy. Below the dropdown the inspector previews both
 directions at once, so you do not have to hold the sentence in your head:
-forward it reads `books belongs to authors`, and underneath, in grey, the
-reading you get for free — `authors has books`.
+forward it reads `orders belongs to customers`, and underneath, in grey, the
+reading you get for free — `customers has orders`.
 
 **You should see:** the edge's label change from the default `FK` tag to
-*belongs to*, and the preview lines update to `books belongs to authors` /
-`authors has books`.
+*belongs to*, and the preview lines update to `orders belongs to customers` /
+`customers has orders`.
 
-### 3. Give the far end its own words
+### 4. Give the far end its own words
 
-Still on the same connection, type `wrote` into **Reverse label**.
+Still on the same connection, type `placed` into **Reverse label**.
 
 *Reverse label* overrides only the inverse phrasing — the one shown at the
 target end, read target → source — without touching the verb, which still
 governs the forward sentence and the SQL tab. Leave it empty and you get the
-verb's own inverse, which is *has*; typed in, `authors wrote books` reads
-better than *has* does for a table that is really about authorship.
+verb's own inverse, which is *has*; typed in, `customers placed orders` reads
+better than *has* does for a table that is really about ordering.
 
-**You should see:** the label near the `authors` end of the edge switch from
-*has* to *wrote*.
+**You should see:** the label near the `customers` end of the edge switch from
+*has* to *placed*.
 
-### 4. Decide what happens on delete
+### 5. Decide what happens on delete
 
-Scroll to **On delete** and **On update**, still on the `books` → `authors`
+Scroll to **On delete** and **On update**, still on the `orders` → `customers`
 connection. Leave **On update** on its default, *NO ACTION*. Set **On delete**
 to *RESTRICT*.
 
 *Belongs to*'s own hint says it is "usually paired with `ON DELETE CASCADE`,"
 and for plenty of ownership relationships that is the right call — delete the
-parent, delete the children. Here it is not: cascading would let deleting an
-`authors` row silently erase every book (and every sale) attached to it.
-*RESTRICT* makes PostgreSQL refuse the delete until a human reassigns or
-removes those books on purpose. These two fields are the only place `ON
+parent, delete the children. Here it is not: cascading would let deleting a
+`customers` row silently erase every order they ever placed, including the
+money. *RESTRICT* makes PostgreSQL refuse the delete until a human closes or
+anonymises those orders on purpose. These two fields are the only place `ON
 DELETE` / `ON UPDATE` live, and they mean nothing at all on the other three
 kinds — flow, embed and dependency move no rows and enforce nothing, so the
 inspector does not even show the fields once you switch away from *Foreign
@@ -185,19 +215,20 @@ key*.
 in the SQL tab; `ON UPDATE` stays absent, because `NO ACTION` is the
 generator's silent default.
 
-### 5. Turn on cardinality labels
+### 6. Turn on cardinality labels
 
 Open **View** in the top bar and tick **Cardinality labels**.
 
-**You should see:** small `N` and `1` markers appear on the `books` ↔
-`authors` edge — `N` by the crow's foot at `books`, `1` by the bar at
-`authors` — because `books.author_id` is not itself unique but `authors.id`
-is. (A table whose primary key is made entirely of foreign-key columns into
-two or more other tables gets its own badge instead — **N:M** in its header —
-because that shape *is* a many-to-many join table; `books` only ever
-references one parent here, so you will not see the badge on this diagram.)
+**You should see:** small `N` and `1` markers appear on the `orders` ↔
+`customers` edge — `N` by the crow's foot at `orders`, `1` by the bar at
+`customers` — because `orders.customer_id` is not itself unique but
+`customers.id` is. The same markers appear on the `books` ↔ `authors` edge you
+drew in walkthrough 00, for the same reason. (A table whose primary key is made
+entirely of foreign-key columns into two or more other tables gets its own
+badge instead — **N:M** in its header — because that shape *is* a many-to-many
+join table; nothing on this canvas is one yet.)
 
-### 6. Add contributors and connect it
+### 7. Add contributors and connect it
 
 Press `T`, rename the new table `contributors`, and give it `id BIGSERIAL
 PRIMARY KEY`, `name TEXT NOT NULL` and `role TEXT NOT NULL`. Then hover
@@ -213,7 +244,7 @@ related." It defaults to the most common case.
 `books` to `contributors` with **Kind** already open in the inspector, set to
 *Data flow* — the header handle's default, not yet what you want here.
 
-### 7. Turn that connection into a serialized copy
+### 8. Turn that connection into a serialized copy
 
 With the new connection still selected, click **Serialized** in the **Kind**
 row, then set **Stored in column** to `contributors_json` — add that column
@@ -232,22 +263,32 @@ column you typed by hand.
 diamond at the `books` end, the **Kind** hint change to describe a serialized
 copy, and the direction row relabel itself **Container → embedded**.
 
-### 8. Add book_stats and feed it from books
+### 9. Promise customer_cadence a feed
 
-Press `T` for a table named `book_stats` with `id BIGSERIAL PRIMARY KEY`,
-`book_id BIGINT NOT NULL`, `units_sold INTEGER NOT NULL DEFAULT 0` and
-`updated_at TIMESTAMPTZ NOT NULL DEFAULT now()`. Drag the orange handle from
-`books` onto `book_stats`.
+Press `T` for a table named `customer_cadence` with `customer_id BIGINT`
+(**PK**), `avg_gap_days NUMERIC(10,2)` (nullable) and `order_count INTEGER NOT
+NULL DEFAULT 0`. Colour it `orange` — the convention in these walkthroughs for
+a table whose rows are computed rather than entered. Then drag the orange
+header handle from `orders` onto `customer_cadence`, and name the connection
+`nightly rollup` in the inspector.
 
 Leave **Kind** exactly where it lands. A header-handle drag already defaults
-to *Data flow*, and that is what this edge should be: `book_stats.book_id` is
-a plain `BIGINT`, not a foreign key, because a nightly rollup job — not a
-constraint — is what keeps this table filled in.
+to *Data flow*, and that is what this edge should be: `customer_cadence` holds
+no facts of its own — every column in it is a summary of that customer's rows
+in `orders`, produced by a job rather than kept in step by a constraint.
 
-**You should see:** a second dashed arrow, this one from `books` to
-`book_stats`, with **Kind** already reading *Data flow* — no change needed.
+Right now the edge says only *that* rows flow, not *how*: the inspector's
+**Derived columns** section is empty, and it will stay empty until
+[Fill one table from another](05-fill-one-table-from-another.md), which is
+where you write the expressions that compute each column. An unfilled data
+flow is a perfectly honest thing to leave on a diagram — it is a promise, and
+the diagram is where you keep track of promises.
 
-### 9. Add catalog_export and mark it a dependency
+**You should see:** a dashed arrow from `orders` to `customer_cadence` labelled
+*nightly rollup*, **Kind** reading *Data flow*, and **Derived columns (0)** in
+the inspector.
+
+### 10. Add catalog_export and mark it a dependency
 
 Press `T` for a table named `catalog_export` with `id BIGSERIAL PRIMARY KEY`,
 `book_id BIGINT NOT NULL`, `title TEXT NOT NULL`, `price_cents INTEGER NOT
@@ -270,8 +311,8 @@ forward as `catalog_export uses books`.
 
 - **Right-click any connection** for *Swap direction* and the four **Kind**
   buttons directly, without opening the inspector.
-- The **column-to-column** drag you used in step 1 only ever produces a
-  foreign key; the **header-handle** drag you used from step 6 onward only
+- The **column-to-column** drag you used in step 2 only ever produces a
+  foreign key; the **header-handle** drag you used from step 7 onward only
   ever produces a data flow. Every other kind starts as one of those two and
   gets switched afterward.
 - **`Ctrl+K`** opens the command palette to jump to a table by name, but it
@@ -291,94 +332,70 @@ forward as `catalog_export uses books`.
 
 ## Check your work
 
-Open the bottom drawer → **SQL**, leave it on *Whole schema*, and compare.
-This is the entire output for the diagram above:
+Open the bottom drawer → **SQL**, leave it on *Whole schema*, and read the
+header comment first:
 
 ```sql
--- Connect two tables — the four kinds (PostgreSQL)
+-- Bookshop — after 02 Connect two tables (PostgreSQL)
 -- Generated by Database Visualizer
--- Tables: 5, foreign keys: 1, documented connections: 3
+-- Tables: 7, foreign keys: 2, documented connections: 3
+```
 
-CREATE TABLE public.authors (
-  id BIGSERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  country CHAR(2)
-);
-COMMENT ON TABLE public.authors IS 'One row per person who wrote something we sell.';
-COMMENT ON COLUMN public.authors.country IS 'ISO 3166-1 alpha-2. Nullable: we often do not know.';
+`foreign keys: 2` next to `documented connections: 3` is the whole lesson in
+one line: five connections exist on the canvas, and only the two built from a
+column-to-column drag became something PostgreSQL enforces.
 
-CREATE TABLE public.book_stats (
-  id BIGSERIAL PRIMARY KEY,
-  book_id BIGINT NOT NULL,
-  units_sold INTEGER NOT NULL DEFAULT 0,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-COMMENT ON TABLE public.book_stats IS 'Fed by a nightly rollup, not a constraint. See the Data flow connection from books.';
-COMMENT ON COLUMN public.book_stats.book_id IS 'Not a foreign key: this table is fed by a data flow, not constrained by one.';
+The statements the other tables get are the ones you would expect, unchanged
+from walkthrough 01. These are the new ones — `orders` with its constraint, and
+the appendix the three unenforced connections go into:
 
-CREATE TABLE public.books (
-  id BIGSERIAL PRIMARY KEY,
-  author_id BIGINT NOT NULL,
-  title TEXT NOT NULL,
-  isbn CHAR(13) NOT NULL UNIQUE,
-  price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
-  published_on DATE,
-  contributors_json JSONB,
-  CONSTRAINT books_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.authors (id) ON DELETE RESTRICT
+```sql
+CREATE TABLE public.customer_cadence (
+  customer_id BIGINT PRIMARY KEY,
+  avg_gap_days NUMERIC(10,2),
+  order_count INTEGER NOT NULL DEFAULT 0
 );
-COMMENT ON TABLE public.books IS 'One row per edition we stock. author_id is now a real foreign key into authors.';
-COMMENT ON COLUMN public.books.author_id IS 'The referencing (child) side of the foreign key into authors.id.';
-COMMENT ON COLUMN public.books.isbn IS 'The natural key. UNIQUE, but not the primary key.';
-COMMENT ON COLUMN public.books.contributors_json IS 'Denormalized snapshot of this edition''s contributors, embedded so a page render needs no join. contributors stays the source of truth; see the Kind: Serialized connection below.';
 
-CREATE TABLE public.catalog_export (
+CREATE TABLE public.orders (
   id BIGSERIAL PRIMARY KEY,
-  book_id BIGINT NOT NULL,
-  title TEXT NOT NULL,
-  price_cents INTEGER NOT NULL,
-  exported_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  customer_id BIGINT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending',
+  total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
+  placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id) ON DELETE RESTRICT
 );
-COMMENT ON TABLE public.catalog_export IS 'Nightly feed pushed to the retailer catalog API. Reads books; nothing here is a foreign key.';
-
-CREATE TABLE public.contributors (
-  id BIGSERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  role TEXT NOT NULL
-);
-COMMENT ON TABLE public.contributors IS 'Illustrators, translators and editors credited besides the author of record.';
-COMMENT ON COLUMN public.contributors.role IS 'e.g. illustrator, translator, editor.';
 
 -- ----------------------------------------------------------------
 -- Connections the schema does not enforce, and tagged queries
 -- (documentation only, not executed)
--- [embed] books serializes contributors in books.contributors_json (contributors snapshot)
---   Denormalized on purpose: a book page reads books alone. contributors is still a real table for the roster itself.
--- [flow] books feeds book_stats (nightly stats rollup)
---   Nightly job, not a constraint: dropping a book does not touch its stale book_stats row.
--- [uses] catalog_export uses books (reads books nightly)
---   Nothing enforces this. Dropping books would silently break the export job with no constraint violation to warn you.
+-- [embed] books serializes contributors in books.contributors_json (contributors_json)
+-- [flow] orders feeds customer_cadence (nightly rollup)
+-- [uses] catalog_export uses books (nightly feed)
 ```
 
-Read the header comment first: `foreign keys: 1` next to `documented
-connections: 3` is the whole lesson in one line — four connections exist, and
-only the one built from a column-to-column drag ever became something
-PostgreSQL enforces. The other three live entirely in the appendix at the
-bottom, as comments, in the order you built them, each tagged with its short
-kind (`[embed]`, `[flow]`, the dependency kind's own short tag is literally
-`uses`) and the sentence it reads as.
+Three connections, three comments, in the order you built them, each tagged
+with its short kind (`[embed]`, `[flow]`, and the dependency kind's own short
+tag, which is literally `uses`) and the sentence it reads as. Nothing about
+`contributors_json` says it holds contributors; nothing about
+`customer_cadence` says where its rows come from. That is not the app being
+lazy — SQL has no syntax for either statement.
 
-Then open **Problems**. It reports one warning, not an error — lint clean
-only demands zero errors — `books(author_id) references authors but has no
-index`, which is exactly what [Add indexes that get used](07-add-indexes.md)
-picks up next.
+Press **Check my work** at the foot of this walkthrough to have the seven
+tables, the four kinds and the `ON DELETE RESTRICT` checked against your
+canvas.
+
+Then open **Problems**. It reports warnings, not errors — `books(author_id)`
+and `orders(customer_id)` each reference a table with no index to read them
+by — which is exactly what [Add indexes that get used](07-add-indexes.md)
+picks up later in the series.
 
 ## Try it yourself
 
-- Right-click the `books` → `authors` connection and choose **Swap
-  direction**. **Problems** immediately reports an error — `authors → books
-  references books(author_id), which is not a primary key or UNIQUE.
+- Right-click the `orders` → `customers` connection and choose **Swap
+  direction**. **Problems** immediately reports an error — `customers → orders
+  references orders(customer_id), which is not a primary key or UNIQUE.
   PostgreSQL and SQLite reject the constraint` — the exact mistake you would
-  have built in step 1 by starting the drag at `authors` instead of `books`.
+  have built in step 2 by starting the drag at `customers` instead of `orders`.
   Swap it back (or `Ctrl+Z`) to clear the error.
 - With that connection selected, click through **Data flow** and
   **Dependency** in **Kind**: watch **Column pairs** disappear (composite
@@ -386,14 +403,18 @@ picks up next.
   **Serialized** and watch it reappear as **Stored in column** instead.
   `Ctrl+Z` back to *Foreign key* when you are done — nothing here needs to
   stay.
-- Open the bottom drawer → **Trace**, pick `authors` as *From table…* and
-  `book_stats` as *To table…*. The query joins `authors` to `books` with a
-  real `JOIN … ON`, then reaches `book_stats` with `CROSS JOIN` and a comment
-  explaining there is nothing to join on — one query, two very different
-  lines, because only one of the two hops is a foreign key.
+- Open the bottom drawer → **Trace**, pick `catalog_export` as *From table…*
+  and `authors` as *To table…*. The query reaches `books` with a `CROSS JOIN`
+  and a comment saying there is nothing to join on, then reaches `authors`
+  with a real `JOIN … ON` — one query, two very different lines, because only
+  one of the two hops is a foreign key.
+- Try tracing `authors` to `customer_cadence` and watch it fail. Nothing
+  connects the `books` half of this diagram to the `orders` half yet:
+  walkthrough 05 adds `order_items`, which is the table that finally joins
+  them.
 - Toggle **View → Cardinality labels** off, then on again, and compare the
-  `books` ↔ `authors` edge with the `books` ↔ `book_stats` edge sitting right
-  next to it. Only the foreign key ever grows numbers.
+  `orders` ↔ `customers` edge with the `orders` ↔ `customer_cadence` edge
+  sitting right next to it. Only the foreign key ever grows numbers.
 
 ## Gotchas
 
@@ -426,11 +447,9 @@ picks up next.
 
 ## Where to go next
 
-- [Group tables](03-group-tables.md) — put `catalog_export` and its nightly
-  job in a region of their own, or mark a whole group as a database you only
-  read from.
-- [Add indexes that get used](07-add-indexes.md) — close out the warning
-  **Problems** just raised on `books.author_id`.
-- [Trace a path between tables](11-trace-a-path-between-tables.md) — the
-  `Try it yourself` trace above, with more than two hops and an external
-  group in the mix.
+- [Group tables, and read another database](03-group-tables.md) — next in the
+  series. Box the sales tables you just built into a named region, then add two
+  tables that live in someone else's database entirely.
+
+The canvas now has seven tables and one of each kind of connection on it.
+Everything from here builds on exactly this.

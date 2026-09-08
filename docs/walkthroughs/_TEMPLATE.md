@@ -11,12 +11,13 @@ covers:
   - TODO feature
 shortcuts:
   - T
+start: diagrams/PP-previous-slug.dbviz.json
 diagram: diagrams/NN-todo-slug.dbviz.json
 checks:
   - tables | TODO, TODO
   - lint clean
 prerequisites:
-  - none
+  - PP-previous-slug
 next:
   - none
 ---
@@ -43,8 +44,12 @@ erDiagram
 
 ## Before you start
 
-TODO which walkthroughs come first, which dialect is selected in the top bar and
-why it matters here.
+You need what [TODO previous walkthrough](PP-previous-slug.md) leaves behind:
+TODO one sentence naming the tables and features this one builds on. Press
+**Set up the canvas** at the top of this walkthrough in the drawer's
+**Walkthrough** tab if it is not already in front of you.
+
+TODO which dialect is selected in the top bar and why it matters here.
 
 If you would rather read the finished thing than type it, open
 [`diagrams/NN-todo-slug.dbviz.json`](diagrams/NN-todo-slug.dbviz.json) with
@@ -85,11 +90,15 @@ the command palette (`Ctrl+K`), **Import SQL**, dropping a file, hand-written
 ## Check your work
 
 TODO how the reader proves it worked. Open the bottom drawer → **SQL** and
-compare — copy this block from the app, do not write it from memory:
+compare — copy this block from the app, do not write it from memory. On a
+large stage, quote only the part this walkthrough changed and say so:
 
 ```sql
 -- TODO paste the real generated script
 ```
+
+Then press **Check my work** at the foot of this walkthrough: TODO one line on
+what its checks pin down that the script above does not make obvious.
 
 ## Gotchas
 
@@ -99,4 +108,5 @@ compare — copy this block from the app, do not write it from memory:
 
 ## Where to go next
 
-- TODO [Title](NN-slug.md) — one line on why.
+- TODO [Title](NN-slug.md) — the next walkthrough in the series, and one line
+  on what it does with what you just built.

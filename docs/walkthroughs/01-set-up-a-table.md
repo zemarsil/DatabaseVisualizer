@@ -1,7 +1,7 @@
 ---
 title: Set up a table
 slug: 01-set-up-a-table
-summary: Two tables typed almost entirely from the keyboard, with the right types, keys, flags, defaults and checks on every column.
+summary: The two sketched tables from walkthrough 00 get every type, key, flag, default and check they should have, and customers joins them.
 level: beginner
 minutes: 15
 dialect: postgresql
@@ -19,13 +19,14 @@ shortcuts:
   - F2
   - Arrow keys
   - Ctrl+K
+start: diagrams/00-your-first-diagram.dbviz.json
 diagram: diagrams/01-set-up-a-table.dbviz.json
 checks:
-  - tables | authors, books
+  - tables | authors, books, customers
   - contains | id BIGSERIAL PRIMARY KEY
   - contains | isbn CHAR(13) NOT NULL UNIQUE
   - contains | price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0)
-  - omits | REFERENCES
+  - contains | email TEXT NOT NULL UNIQUE
   - indexes | 0
   - lint clean
 prerequisites:
@@ -38,13 +39,19 @@ next:
 
 ## What you'll build
 
-Two tables of a bookshop schema — `authors` and `books` — with every column
-carrying the type, nullability, key and default it should have. No connections
-yet: `books.author_id` is deliberately left as a plain number so that
-[Connect two tables](02-connect-two-tables.md) has something to connect.
+Walkthrough 00 sketched `authors` and `books` in about four columns between
+them. Here they get the rest: every column carrying the type, nullability, key,
+default and check it should have. Then you add `customers` from nothing, which
+is the one table in this series you type end to end — it is where the orders in
+the next walkthrough will hang from.
+
+The foreign key you dragged in walkthrough 00 stays exactly where it is.
+Nothing in this series is rebuilt from scratch; each walkthrough picks the
+canvas up where the last one put it down.
 
 ```mermaid
 erDiagram
+    AUTHORS ||--o{ BOOKS : has
     AUTHORS {
         bigserial id PK
         text name "NOT NULL"
@@ -52,7 +59,7 @@ erDiagram
     }
     BOOKS {
         bigserial id PK
-        bigint author_id "NOT NULL, no FK yet"
+        bigint author_id FK
         text title "NOT NULL"
         char_13 isbn "UNIQUE"
         integer price_cents "DEFAULT 0, CHECK >= 0"
@@ -60,13 +67,23 @@ erDiagram
         boolean in_print "DEFAULT true"
         timestamptz added_at "DEFAULT now()"
     }
+    CUSTOMERS {
+        bigserial id PK
+        text email "UNIQUE"
+        timestamptz created_at "DEFAULT now()"
+    }
 ```
 
 ## Before you start
 
-Have the app open on an empty diagram (**File → New diagram**) with
-**PostgreSQL** selected in the dialect selector at the top — the types below are
-spelled the PostgreSQL way, and `BIGSERIAL` in particular has no MariaDB or
+You need what [Your first diagram](00-your-first-diagram.md) leaves behind:
+`authors` and `books`, joined by one foreign key. If you have just done it, it
+is already on your canvas. If not, press **Set up the canvas** at the top of
+this walkthrough in the drawer's **Walkthrough** tab — it loads exactly that
+diagram, and you can start here without having typed walkthrough 00.
+
+Keep **PostgreSQL** selected in the dialect selector at the top: the types below
+are spelled the PostgreSQL way, and `BIGSERIAL` in particular has no MariaDB or
 SQLite equivalent. If you switch dialects later the app translates the known
 types for you and `Ctrl+Z` puts them back.
 
@@ -99,43 +116,29 @@ but never emitted as DDL.
 
 ## Steps
 
-### 1. Add the authors table
+### 1. Tighten what walkthrough 00 left loose
 
-Press `T`. (Double-clicking empty canvas, the **+ Table** button, and
-right-click → *Add table here* all do the same thing; the last two put the table
-where you clicked.)
+Select `authors`. Its `id` is already `BIGSERIAL` with **PK**, **NN** and **AI**
+lit, from the last walkthrough. `name` is not: it has no flags at all, which
+means a row with no author name is legal today. Tick **NN** on it.
 
-The new table is called `new_table` and already has one column: `id`, `INTEGER`,
-primary key, not null, auto-increment. Rename it by pressing `F2` and typing
-`authors`, or by editing *Name* at the top of the inspector.
+While you are there, expand the `id` row with the chevron at its left and put
+something in *Comment*: `Surrogate key. Nothing outside the database ever sees
+it.` A comment becomes a `COMMENT ON` statement, so the reasoning survives an
+export, a round trip through **Import SQL**, and the Markdown data dictionary —
+it is the cheapest documentation in the app.
 
-**You should see:** a table node called `authors` on the canvas, selected, with
-the inspector open on the right showing *Name*, *Schema*, *Comment*, *Colour*,
-*Group* and a column grid holding one row.
+**You should see:** `name TEXT NOT NULL` in the drawer's **SQL** tab, and a
+`COMMENT ON COLUMN public.authors.id` statement under the `CREATE TABLE`.
 
-### 2. Fix the primary key's type
+### 2. Type the rest of the columns without touching the mouse
 
-The default `id` is `INTEGER`. Click its type cell and change it to
-`BIGSERIAL`. Leave **PK**, **NN** and **AI** on.
-
-`BIGSERIAL` is PostgreSQL's shorthand for "64-bit integer, backed by a
-sequence, defaulted from that sequence". Use `BIGSERIAL` rather than `SERIAL`
-by habit: the day a table passes two billion rows is a bad day to discover the
-column was 32 bits, and the four extra bytes cost nothing you will notice.
-
-**You should see:** the drawer's **SQL** tab change to `id BIGSERIAL PRIMARY KEY`
-— note that the generator drops the redundant `NOT NULL`, because a primary key
-is already not null.
-
-### 3. Type the rest of the columns without touching the mouse
-
-Click into the `id` row's name cell and press `Enter`. A new row appears below
+Click into the `name` row's name cell and press `Enter`. A new row appears below
 and the cursor is already in it. Type a name, `Tab` across to the type, and
-press `Enter` again for the next one. Add:
+press `Enter` again for the next one. Add one column to `authors`:
 
 | Name | Type | Flags |
 | --- | --- | --- |
-| `name` | `TEXT` | **NN** |
 | `country` | `CHAR(2)` | — |
 
 `Shift+Enter` inserts a row *above* the current one instead, and
@@ -145,7 +148,7 @@ column costs one keystroke, not a trip to the context menu.
 **You should see:** three rows in the grid, and three column lines in the
 generated `CREATE TABLE public.authors`.
 
-### 4. Put a check on a single column
+### 3. Put a check on a single column
 
 Expand the `country` row using the chevron at its left. Under the row you get
 *Default*, *Check* and *Comment*. In *Check*, type:
@@ -161,16 +164,13 @@ generator adds those. In *Comment*, write why the column is nullable:
 **You should see:** `country CHAR(2) CHECK (country = upper(country))` in the
 SQL tab, followed by a `COMMENT ON COLUMN public.authors.country` statement.
 
-### 5. Build books, and use UQ for the natural key
+### 4. Finish books, and use UQ for the natural key
 
-Press `T` again for a second table and name it `books`. Give it these columns —
-the `id` row is already there, so change its type to `BIGSERIAL` as before:
+Select `books`. It has `id`, `author_id` and `title` from walkthrough 00. Tick
+**NN** on `title`, then add the five columns it is missing:
 
 | Name | Type | Flags | Default | Check |
 | --- | --- | --- | --- | --- |
-| `id` | `BIGSERIAL` | **PK** **NN** **AI** | | |
-| `author_id` | `BIGINT` | **NN** | | |
-| `title` | `TEXT` | **NN** | | |
 | `isbn` | `CHAR(13)` | **NN** **UQ** | | |
 | `price_cents` | `INTEGER` | **NN** | `0` | `price_cents >= 0` |
 | `published_on` | `DATE` | | | |
@@ -182,20 +182,22 @@ identify a book, but natural keys get reassigned, mistyped and reissued, and a
 primary key that can change is a primary key that has to cascade. And money is
 `INTEGER` cents rather than a floating-point currency, because binary floating
 point cannot represent 0.10 exactly — this is the same reason you would not
-write `float` in application code either.
+write `float` in application code either. (Walkthrough 10 meets a table that
+got this wrong.)
 
 Defaults are raw SQL expressions, written exactly as they appear in the
 statement: `0`, `true`, `now()`. A string default needs its own quotes inside
 the field, like `'pending'`.
 
-**You should see:** eight rows, with `UQ` lit on `isbn` and a small key glyph on
-`id` in the table node on the canvas.
+**You should see:** eight rows, with `UQ` lit on `isbn`, a small key glyph on
+`id` in the table node, and the foreign-key constraint from walkthrough 00
+still sitting at the bottom of the generated statement.
 
-### 6. Add a check that spans the table
+### 5. Add a check that spans the table
 
 A condition on one column belongs to that column. A condition that mentions two
-belongs to the table. Scroll the inspector to *Table checks (0)*, add one, and
-type:
+belongs to the table. With `books` still selected, scroll the inspector to
+*Table checks (0)*, add one, and type:
 
 ```
 published_on IS NULL OR published_on >= DATE '1450-01-01'
@@ -205,16 +207,42 @@ published_on IS NULL OR published_on >= DATE '1450-01-01'
 `CHECK (...)` line after the last column in the generated statement rather than
 attached to a column.
 
+### 6. Add customers from nothing
+
+Press `T`. (Double-clicking empty canvas, the **+ Table** button, and
+right-click → *Add table here* all do the same thing; the last two put the table
+where you clicked.) The new table is called `new_table` and already has one
+column: `id`, `INTEGER`, primary key, not null, auto-increment. Press `F2` and
+type `customers` to rename it.
+
+Then change `id`'s type from `INTEGER` to `BIGSERIAL`, leaving **PK**, **NN**
+and **AI** on, and type the other two columns:
+
+| Name | Type | Flags | Default |
+| --- | --- | --- | --- |
+| `id` | `BIGSERIAL` | **PK** **NN** **AI** | |
+| `email` | `TEXT` | **NN** **UQ** | |
+| `created_at` | `TIMESTAMPTZ` | **NN** | `now()` |
+
+`BIGSERIAL` is PostgreSQL's shorthand for "64-bit integer, backed by a
+sequence, defaulted from that sequence". Use it rather than `SERIAL` by habit:
+the day a table passes two billion rows is a bad day to discover the column was
+32 bits, and the four extra bytes cost nothing you will notice.
+
+**You should see:** a third table node on the canvas, and
+`id BIGSERIAL PRIMARY KEY` in its generated statement — note that the generator
+drops the redundant `NOT NULL`, because a primary key is already not null.
+
 ### 7. Tidy the canvas
 
-Drag `books` to the right of `authors`, or select it and nudge with the
+Drag `customers` clear of the other two, or select it and nudge with the
 `Arrow keys` (10 px a press, `Shift+Arrow keys` for 50). Turn on **View → Snap to
 grid** if you would like the nudges to land on a grid. Set a colour in the
 inspector's *Colour* row — the convention across these walkthroughs is `blue`
 for source tables.
 
-**You should see:** two tidy nodes, and no change at all in the SQL tab — position
-and colour are for you, not for the database.
+**You should see:** three tidy nodes, and no change at all in the SQL tab —
+position and colour are for you, not for the database.
 
 ## Other ways to do it
 
@@ -247,9 +275,9 @@ Open the bottom drawer → **SQL**, leave it on *Whole schema*, and compare. Thi
 is the entire output for the diagram above:
 
 ```sql
--- Set up a table — authors and books (PostgreSQL)
+-- Bookshop — after 01 Set up a table (PostgreSQL)
 -- Generated by Database Visualizer
--- Tables: 2, foreign keys: 0
+-- Tables: 3, foreign keys: 1
 
 CREATE TABLE public.authors (
   id BIGSERIAL PRIMARY KEY,
@@ -269,13 +297,26 @@ CREATE TABLE public.books (
   published_on DATE,
   in_print BOOLEAN NOT NULL DEFAULT true,
   added_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK (published_on IS NULL OR published_on >= DATE '1450-01-01')
+  CHECK (published_on IS NULL OR published_on >= DATE '1450-01-01'),
+  CONSTRAINT books_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.authors (id)
+);
+
+CREATE TABLE public.customers (
+  id BIGSERIAL PRIMARY KEY,
+  email TEXT NOT NULL UNIQUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 ```
 
-Then open **Problems**. It should be empty. It will, however, offer
-`books.author_id → authors.id` under *Suggested foreign keys*, read off the
-column name — which is exactly what the next walkthrough is about.
+Then press **Check my work** at the foot of this walkthrough in the
+**Walkthrough** tab. It runs the same checks CI runs against the finished
+diagram — the three tables, the columns above, no indexes yet, and a clean
+**Problems** tab — against whatever you actually built, and names anything that
+does not match.
+
+**Problems** itself should report no errors. It will offer
+`customers.id`-shaped suggestions under *Suggested foreign keys* only once
+something references it, which is what the next walkthrough is about.
 
 ## Try it yourself
 
@@ -312,9 +353,7 @@ column name — which is exactly what the next walkthrough is about.
 
 ## Where to go next
 
-- [Connect two tables](02-connect-two-tables.md) — turn `books.author_id` into a
-  real foreign key, and meet the three other kinds of connection.
-- [Create an enum and use it](04-create-an-enum.md) — when a column should only
-  ever hold one of a fixed set of strings.
-- [Add indexes that get used](07-add-indexes.md) — including the one
-  **Problems** is about to tell you that `books.author_id` needs.
+- [Connect two tables](02-connect-two-tables.md) — next in the series. It adds
+  `orders` against the `customers` table you just typed, and uses the foreign
+  key between them to explain what walkthrough 00 did by feel — then meets the
+  three other kinds of connection a foreign key cannot express.

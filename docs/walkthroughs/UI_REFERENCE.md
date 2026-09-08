@@ -17,12 +17,12 @@ below carries where it came from so you can re-check it after the app changes.
 │ table     │              Canvas                       │ (selection-driven)  │
 │ list      │              (pan / zoom)                 │                     │
 ├───────────┴───────────────────────────────────────────┴─────────────────────┤
-│ Drawer: SQL · Types · Import SQL · Trace · Simulate · Problems · Query · DB  │
+│ Drawer: Walkthrough · SQL · Types · Import SQL · Trace · Simulate · … · DB   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 The **inspector** on the right always shows whatever is selected: a table, a
-connection, a note, or a group region. The **bottom drawer** holds the eight
+connection, a note, or a group region. The **bottom drawer** holds the nine
 tabs. The **sidebar** on the left is the table list. All three toggle from the
 **View** menu or the icon buttons at the far right of the top bar.
 
@@ -59,6 +59,7 @@ Source: `src/components/drawer/Drawer.tsx` and the panels beside it
 
 | Tab | What it does |
 | --- | --- |
+| **Walkthrough** | The walkthrough you are following, so its text stays beside the canvas. Empty until you pick one from the **?** help modal's *Browse the fifteen walkthroughs*. Carries **Set up the canvas** above the text (loads the diagram that walkthrough starts from), **Check my work** below it (runs the walkthrough's `checks:` against the live canvas and lists what does not match), **Open the finished diagram**, and a *Next:* link. |
 | **SQL** | The generated script. Format selector (SQL, Markdown, Mermaid, DBML), *Whole schema* / *Selected table*, a *Prefix DROP TABLE statements* checkbox, statement count, **Copy** and **Download**. Generator warnings appear above the code. |
 | **Types** | Enum and composite types. Its own add buttons read **+ Enum** and **+ Struct type** — *Composite type* is only the top-bar `▾` menu's and the command palette's spelling. *Values (N)* for an enum, *Fields (N)* for a composite, plus a *Comment*. Neither values nor fields can be reordered: append and delete only. Badge shows how many types exist. |
 | **Import SQL** | Paste or load a `.sql` file; *Add to the current diagram* or replace; optionally drop everything into a new group. |

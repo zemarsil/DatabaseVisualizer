@@ -1,54 +1,114 @@
 {
   "version": 1,
-  "name": "Your first diagram — authors and books",
+  "name": "Bookshop — after 00 Your first diagram",
   "dialect": "postgresql",
   "tables": [
     {
-      "id": "tbl_authors",
-      "name": "authors",
       "schema": "public",
       "color": "blue",
-      "position": { "x": 0, "y": 0 },
       "checks": [],
       "indexes": [],
+      "id": "tbl_authors",
+      "name": "authors",
+      "comment": "One row per person who wrote something we sell.",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
       "columns": [
-        { "id": "col_authors_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_authors_name", "name": "name", "type": "TEXT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+        {
+          "id": "col_authors_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_authors_name",
+          "name": "name",
+          "type": "TEXT",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
       ]
     },
     {
-      "id": "tbl_books",
-      "name": "books",
       "schema": "public",
       "color": "blue",
-      "position": { "x": 320, "y": 0 },
       "checks": [],
       "indexes": [],
+      "id": "tbl_books",
+      "name": "books",
+      "comment": "One row per edition we stock.",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
       "columns": [
-        { "id": "col_books_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_books_author_id", "name": "author_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_books_title", "name": "title", "type": "TEXT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+        {
+          "id": "col_books_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_books_author_id",
+          "name": "author_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_title",
+          "name": "title",
+          "type": "TEXT",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
       ]
     }
   ],
   "relationships": [
     {
+      "sourceColumnIds": [
+        "col_books_author_id"
+      ],
+      "targetColumnIds": [
+        "col_authors_id"
+      ],
       "id": "rel_books_author",
       "kind": "fk",
-      "verb": "belongs-to",
+      "verb": "references",
       "sourceTableId": "tbl_books",
-      "sourceColumnIds": ["col_books_author_id"],
       "targetTableId": "tbl_authors",
-      "targetColumnIds": ["col_authors_id"]
+      "name": "books_author_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
     }
   ],
+  "groups": [],
+  "customTypes": [],
   "notes": [
     {
-      "id": "note_deeper",
-      "text": "This diagram is deliberately bare — two tables, three columns each. Set up a table (01) rebuilds the same authors and books with every column, key, default and check filled in.",
-      "position": { "x": 660, "y": 0 },
-      "width": 300,
-      "height": 150,
+      "id": "note_start",
+      "text": "This is the whole bookshop, one walkthrough at a time.\n\nEverything the series builds is added to this canvas: walkthrough 01 gives these two tables real columns, and the rest grows out from there. Nothing is ever thrown away and started again.",
+      "position": {
+        "x": 1780,
+        "y": 0
+      },
+      "width": 340,
+      "height": 200,
       "color": "yellow"
     }
   ]

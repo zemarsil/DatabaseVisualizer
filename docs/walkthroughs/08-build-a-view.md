@@ -1,7 +1,7 @@
 ---
 title: Build a view
 slug: 08-build-a-view
-summary: A read-only view over three tables, its SELECT typed once and its source links drawn for you by Detect from SQL.
+summary: A read-only view over three tables you already have, its SELECT typed once and its source links drawn for you by Detect from SQL.
 level: intermediate
 minutes: 12
 dialect: postgresql
@@ -15,12 +15,13 @@ shortcuts:
   - T
   - F2
   - Ctrl+K
+start: diagrams/07-add-indexes.dbviz.json
 diagram: diagrams/08-build-a-view.dbviz.json
 checks:
-  - tables | customers, orders, order_items, v_customer_orders
   - views | v_customer_orders
   - contains | CREATE VIEW public.v_customer_orders AS
-  - kinds | fk:2, flow:3
+  - kinds | fk:9, flow:6, embed:1, dependency:1
+  - indexes | 5
   - lint clean
 prerequisites:
   - 07-add-indexes
@@ -31,11 +32,16 @@ next:
 
 ## What you'll build
 
-Three ordinary tables — `customers`, `orders` and `order_items` — and a fourth
-node, `v_customer_orders`, that has no columns of its own to insert into. It is
-a `SELECT` with a name, and the three dashed arrows feeding it are not data
-moving on a schedule; they are the app telling you which tables that `SELECT`
-reads.
+One new node over three tables you already have: `v_customer_orders`, which
+has no columns of its own to insert into. It is a `SELECT` with a name, and the
+three dashed arrows feeding it are not data moving on a schedule; they are the
+app telling you which tables that `SELECT` reads.
+
+It is worth putting next to `daily_sales` from walkthrough 05 as you build it.
+Both summarise orders per customer-ish thing; one stores its answer and one
+recomputes it. That choice — pay at write time or pay at read time — is the
+whole difference between a rollup and a view, and the diagram draws them
+almost the same way on purpose.
 
 ```mermaid
 erDiagram
@@ -70,10 +76,11 @@ erDiagram
 
 ## Before you start
 
-This picks up right where [Add indexes that get used](07-add-indexes.md) left
-off — you will hit the same *unindexed foreign key* warning here and clear it
-the same way. Have the app open on an empty diagram with **PostgreSQL**
-selected in the dialect selector at the top.
+You need what [Add indexes that get used](07-add-indexes.md) leaves behind:
+twelve tables with `customers`, `orders` and `order_items` connected and
+indexed. Press **Set up the canvas** at the top of this walkthrough in the
+drawer's **Walkthrough** tab if it is not already in front of you. Keep
+**PostgreSQL** selected in the dialect selector at the top.
 
 If you would rather read the finished thing than type it, open
 [`diagrams/08-build-a-view.dbviz.json`](diagrams/08-build-a-view.dbviz.json)
@@ -108,58 +115,25 @@ in 05 only once the view's query shows up in a slow-query log.
 
 ## Steps
 
-### 1. Set up three source tables
+### 1. Find the three tables the view will read
 
-Press `T` three times and build these columns (the keystrokes — `Enter` for
-the next row, `Tab` to the type cell — are the same ones from
-[Set up a table](01-set-up-a-table.md)):
+Nothing to build here — `customers`, `orders` and `order_items` have been on
+the canvas since walkthrough 05, connected and, since last walkthrough,
+indexed. Press `Ctrl+K`, type `order_items`, and press `Enter` to centre the
+canvas on it; the other two are its neighbours.
 
-**customers**
+Look at what you have before writing a `SELECT` over it: `orders.customer_id`
+reaches `customers`, `order_items.order_id` reaches `orders`, and both of those
+foreign keys are indexed. Those two facts are what make the view worth having
+rather than a trap — a view is only as cheap as the joins inside it, and the
+joins inside this one are the ones you indexed in steps 2 to 5 of the last
+walkthrough.
 
-| Name | Type | Flags | Default |
-| --- | --- | --- | --- |
-| `id` | `BIGSERIAL` | **PK** **NN** **AI** | |
-| `email` | `TEXT` | **NN** **UQ** | |
-| `created_at` | `TIMESTAMPTZ` | **NN** | `now()` |
+**You should see:** the three tables on screen, with solid crow's-foot lines
+running `order_items` → `orders` → `customers`, and **Problems** reporting no
+errors and no warnings.
 
-**orders**
-
-| Name | Type | Flags | Default | Check |
-| --- | --- | --- | --- | --- |
-| `id` | `BIGSERIAL` | **PK** **NN** **AI** | | |
-| `customer_id` | `BIGINT` | **NN** | | |
-| `status` | `TEXT` | **NN** | `'pending'` | |
-| `total_cents` | `INTEGER` | **NN** | `0` | `total_cents >= 0` |
-| `placed_at` | `TIMESTAMPTZ` | **NN** | `now()` | |
-
-**order_items**
-
-| Name | Type | Flags | Default | Check |
-| --- | --- | --- | --- | --- |
-| `id` | `BIGSERIAL` | **PK** **NN** **AI** | | |
-| `order_id` | `BIGINT` | **NN** | | |
-| `quantity` | `INTEGER` | **NN** | `1` | `quantity > 0` |
-| `unit_price_cents` | `INTEGER` | **NN** | | `unit_price_cents >= 0` |
-
-Set every table's *Colour* to `blue` while you are in the inspector — the
-convention this series uses for source tables.
-
-**You should see:** three table nodes on the canvas, none of them connected
-yet.
-
-### 2. Wire the two foreign keys, then let Problems index them
-
-Hover `orders` and drag the small handle beside `customer_id` onto the `id`
-row of `customers`. Do the same from `order_items.order_id` onto `orders.id`.
-Open the bottom drawer → **Problems**: you should see two *fk-without-index*
-warnings, exactly the ones [Add indexes that get used](07-add-indexes.md)
-covered. Click each finding's one-click fix, **Index orders(customer_id)** and
-**Index order_items(order_id)**.
-
-**You should see:** two crow's-foot lines on the canvas, and **Problems**
-back to empty.
-
-### 3. Turn a new node into a view
+### 2. Turn a new node into a view
 
 Right-click empty canvas below the three tables and choose *Add view here*.
 The new node is called `new_view` and starts with no columns at all — a view's
@@ -169,7 +143,7 @@ default is empty, not the single `id` column a table gets.
 on *View definition (SELECT …)* and *Source tables (0)* instead of a column
 grid.
 
-### 4. Name it and write the SELECT
+### 3. Name it and write the SELECT
 
 Rename it to `v_customer_orders` (`F2`, or edit *Name* in the inspector), and
 set its *Colour* to `teal` — this series' convention for views. In *View
@@ -194,7 +168,7 @@ around it. The generator adds that wrapper itself, the same way it adds `CHECK
 CREATE VIEW after every table* — and *Source tables (0)* still empty, because
 nothing has linked the tables yet.
 
-### 5. Detect the sources from the SQL
+### 4. Detect the sources from the SQL
 
 Click **Detect from SQL**, next to *Source tables*.
 
@@ -203,7 +177,7 @@ Click **Detect from SQL**, next to *Source tables*.
 chips, and three dashed, filled-arrow connections on the canvas running from
 each of those tables into `v_customer_orders`.
 
-### 6. Add display columns (optional)
+### 5. Add display columns (optional)
 
 Expand *Columns (0)* on `v_customer_orders` and add four rows matching the
 `SELECT` list: `customer_id` `BIGINT`, `email` `TEXT`, `order_count`
@@ -214,7 +188,7 @@ carry no `PK`/`NN`/`UQ`/`AI` meaning because none of them reach the DDL.
 display*, four rows appear inside the node on the canvas, and the **SQL** tab
 does not change by one character.
 
-### 7. Find the view in the generated script
+### 6. Find the view in the generated script
 
 Open the bottom drawer → **SQL**, on *Whole schema*.
 
@@ -227,7 +201,7 @@ AS` — after every table, never in between.
 
 - **The `▾` next to + Table** → *View* adds an empty view node at a default
   position.
-- **Right-click the canvas** → *Add view here* (what step 3 used) places it
+- **Right-click the canvas** → *Add view here* (what step 2 used) places it
   under the pointer.
 - **Command palette** (`Ctrl+K`) → *Add view*.
 - **Switch an existing table.** Select any table and use the **Table** / **View**
@@ -257,42 +231,11 @@ AS` — after every table, never in between.
 
 ## Check your work
 
-Open the bottom drawer → **SQL**, leave it on *Whole schema*, and compare —
-this is the entire output for the diagram above:
+Open the bottom drawer → **SQL**, leave it on *Whole schema*, and scroll past
+the tables. Views get their own section, after every `CREATE TABLE` and before
+the appendix:
 
 ```sql
--- Build a view — customer order summary (PostgreSQL)
--- Generated by Database Visualizer
--- Tables: 3, views: 1, foreign keys: 2, documented connections: 3
-
-CREATE TABLE public.customers (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-COMMENT ON TABLE public.customers IS 'One row per person who has ever placed an order.';
-
-CREATE TABLE public.orders (
-  id BIGSERIAL PRIMARY KEY,
-  customer_id BIGINT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id) ON DELETE CASCADE
-);
-CREATE INDEX orders_customer_id_idx ON public.orders (customer_id);
-COMMENT ON TABLE public.orders IS 'One row per checkout.';
-
-CREATE TABLE public.order_items (
-  id BIGSERIAL PRIMARY KEY,
-  order_id BIGINT NOT NULL,
-  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
-  unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
-  CONSTRAINT order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders (id) ON DELETE CASCADE
-);
-CREATE INDEX order_items_order_id_idx ON public.order_items (order_id);
-COMMENT ON TABLE public.order_items IS 'The grain v_customer_orders aggregates: one row per line on an order.';
-
 -- Views
 CREATE VIEW public.v_customer_orders AS
 SELECT c.id AS customer_id,
@@ -303,22 +246,37 @@ FROM customers c
 JOIN orders o ON o.customer_id = c.id
 JOIN order_items oi ON oi.order_id = o.id
 GROUP BY c.id, c.email;
-
--- ----------------------------------------------------------------
--- Connections the schema does not enforce, and tagged queries
--- (documentation only, not executed)
--- [flow] customers feeds v_customer_orders (view source)
---   customers is named in v_customer_orders' SELECT (FROM customers c); this link was drawn by Detect from SQL, not typed by hand.
--- [flow] orders feeds v_customer_orders (view source)
---   orders is named in v_customer_orders' SELECT (JOIN orders o); this link was drawn by Detect from SQL, not typed by hand.
--- [flow] order_items feeds v_customer_orders (view source)
---   order_items is named in v_customer_orders' SELECT (JOIN order_items oi); this link was drawn by Detect from SQL, not typed by hand.
 ```
 
-Then open **Problems**. It should be empty — the three flow edges carry a
-*note*, which is enough to satisfy the linter's "say how the data moves" rule
-even though they carry no query or derivations, because a view's `SELECT` is
-already that explanation.
+That ordering is not cosmetic: a view cannot be created before the tables it
+reads exist, so the generator emits every table first and every view after,
+and the whole script stays runnable top to bottom.
+
+The three links **Detect from SQL** drew land in the appendix at the end,
+alongside the flows you wrote by hand in walkthroughs 05 and 06:
+
+```sql
+-- [flow] customers feeds v_customer_orders (view source)
+--   Named in v_customer_orders' SELECT (FROM customers c); this link was drawn by Detect from SQL, not typed by hand.
+-- [flow] orders feeds v_customer_orders (view source)
+-- [flow] order_items feeds v_customer_orders (view source)
+```
+
+Six flow connections on the canvas now, and they mean two different things.
+The three into `daily_sales`, `book_totals` and `customer_cadence` describe a
+job that has to *run*; these three describe a `SELECT` that runs itself, every
+time somebody reads the view. Same kind of edge, because the diagram is saying
+the same thing in both cases — "rows here come from there" — and the rest is
+in what you wrote on them.
+
+Then open **Problems**: still no errors or warnings. The three new flow edges
+carry a *note*, which
+satisfies the linter's "say how the data moves" rule even though they carry no
+query or derivations, because a view's `SELECT` is already that explanation.
+
+Press **Check my work** at the foot of this walkthrough for the same three
+facts checked from the other side: one view, six flows, and a script that
+really does contain `CREATE VIEW public.v_customer_orders AS`.
 
 ## Try it yourself
 
@@ -371,12 +329,7 @@ already that explanation.
 
 ## Where to go next
 
-- [Import an existing schema](09-import-an-existing-schema.md) — paste real
-  DDL, `CREATE VIEW` included, and watch the importer draw exactly what this
-  walkthrough built by hand.
-- [Fill one table from another](05-fill-one-table-from-another.md) — the
-  materialized alternative to a view, for the day its query gets too slow to
-  run on every read.
-- [Trace a path between tables](11-trace-a-path-between-tables.md) — `flow`
-  edges like the ones on `v_customer_orders` are walked by a trace but never
-  turn into a `JOIN` condition; see exactly what that looks like.
+- [Import an existing schema](09-import-an-existing-schema.md) — next in the
+  series, and the point where somebody else's work arrives. The warehouse team
+  sends over their `CREATE TABLE` script; you merge it into the diagram you
+  have spent eight walkthroughs building, mistakes and all.

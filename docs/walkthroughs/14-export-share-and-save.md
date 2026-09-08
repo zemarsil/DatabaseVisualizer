@@ -1,7 +1,7 @@
 ---
 title: Export, share and save
 slug: 14-export-share-and-save
-summary: Turn a finished diagram into SQL, a Markdown dictionary, Mermaid, DBML, a picture, a link or a portable file, and see exactly what each one keeps.
+summary: Turn the finished bookshop into SQL, a Markdown dictionary, Mermaid, DBML, a picture, a link or a portable file, and see exactly what each one keeps.
 level: beginner
 minutes: 10
 dialect: postgresql
@@ -17,16 +17,16 @@ shortcuts:
   - Ctrl+S
   - Ctrl+O
   - Ctrl+K
-diagram: diagrams/14-export-share-and-save.dbviz.json
+start: diagrams/13-run-the-schema-on-a-real-database.dbviz.json
+diagram: diagrams/13-run-the-schema-on-a-real-database.dbviz.json
 checks:
-  - tables | authors, books, customers, orders, crm_contacts, v_order_summary
-  - views | v_order_summary
-  - groups | CRM (read-only)
-  - types | order_status
-  - kinds | fk:3, flow:2
+  - views | v_customer_orders
+  - groups | shop, CRM (read-only), catalog, warehouse
+  - types | order_status, postal_address
+  - kinds | fk:17, flow:6, embed:1, dependency:1
   - lint clean
 prerequisites:
-  - 00-your-first-diagram
+  - 13-run-the-schema-on-a-real-database
 next:
   - none
 ---
@@ -34,23 +34,34 @@ next:
 
 ## What you'll build
 
-Nothing new goes on the canvas this time. You open a small, already-finished
-bookshop schema — `authors`, `books`, `customers` and `orders`, a read-only
-`crm_contacts` table sitting in an external CRM group, an `order_status` enum,
-a `v_order_summary` view, and one sticky note — and put it through every route
-the app has for getting a diagram *out*: the four text formats in the SQL tab,
-a PNG and an SVG, a shareable link, a `.dbviz.json` file, and the app's own
-library and checkpoints. By the end you will know, from having actually looked,
-which of those seven things — the foreign key, the enum, the view, the group,
-the note, the colours, the positions — survives each route and which does not.
+Nothing new goes on the canvas this time — and for once that is the whole
+point. The diagram is finished: eighteen tables, four regions, two custom
+types, a view, six data flows, an embed, a dependency, thirteen indexes and a
+handful of sticky notes, built one walkthrough at a time since walkthrough 00.
+
+This last walkthrough puts it through every route the app has for getting a
+diagram *out*: the four text formats in the SQL tab, a PNG and an SVG, a
+shareable link, a `.dbviz.json` file, and the app's own library and
+checkpoints. By the end you will know, from having actually looked, which of
+the things you spent thirteen walkthroughs adding — the foreign keys, the
+enum, the composite type, the view, the regions, the flows and their
+derivations, the notes, the colours, the positions — survive each route, and
+which quietly do not.
+
+That last question is the one that matters. Walkthrough 13 ended by reading
+the schema back out of PostgreSQL and losing most of the diagram in the
+process. These formats lose different things, and knowing which is which is
+how you choose what to hand somebody.
 
 ```mermaid
 erDiagram
-    AUTHORS ||--o{ BOOKS : has
-    CUSTOMERS ||--o{ ORDERS : places
-    CUSTOMERS }o--o| CRM_CONTACTS : references
-    CUSTOMERS ||--o{ V_ORDER_SUMMARY : "feeds (view)"
-    ORDERS ||--o{ V_ORDER_SUMMARY : "feeds (view)"
+    AUTHORS ||--o{ BOOKS : "wrote"
+    BOOKS ||--o| CONTRIBUTORS : "serializes (embed)"
+    CUSTOMERS ||--o{ ORDERS : "placed"
+    CUSTOMERS }o--o| CRM_CONTACTS : "references (external)"
+    ORDERS ||--o{ ORDER_ITEMS : "contains"
+    ORDER_ITEMS }o..o{ DAILY_SALES : "feeds (flow)"
+    ORDER_ITEMS }o..o{ V_CUSTOMER_ORDERS : "feeds (view source)"
     AUTHORS {
         bigserial id PK
         text name
@@ -58,38 +69,42 @@ erDiagram
     BOOKS {
         bigserial id PK
         bigint author_id FK
+        jsonb contributors_json
     }
     CUSTOMERS {
         bigserial id PK
         bigint crm_contact_id FK
+        postal_address mailing_address
     }
     ORDERS {
         bigserial id PK
         order_status status
+        text internal_notes
     }
     CRM_CONTACTS {
         bigint contact_id PK
     }
-    V_ORDER_SUMMARY {
+    V_CUSTOMER_ORDERS {
         bigint customer_id
-        bigint order_id
+        integer order_count
     }
 ```
 
 ## Before you start
 
-Read [Your first diagram](00-your-first-diagram.md) first if you have not
-already; this walkthrough assumes you know your way around the canvas and the
-bottom drawer but does not otherwise depend on any other walkthrough. Have
-**PostgreSQL** selected in the dialect selector at the top — it is the only
-dialect that turns `order_status` into a real `CREATE TYPE`, which matters for
-one of the comparisons below.
+You need what [Run the schema on a real database](13-run-the-schema-on-a-real-database.md)
+leaves behind — the finished diagram. Press **Set up the canvas** at the top
+of this walkthrough in the drawer's **Walkthrough** tab if it is not already
+in front of you.
 
-Unlike the earlier walkthroughs, there is nothing to type here. Open
-[`diagrams/14-export-share-and-save.dbviz.json`](diagrams/14-export-share-and-save.dbviz.json)
-with **File → Open** (`Ctrl+O`), or drop the file on the canvas, before you
-start on the steps: this walkthrough is entirely about what you do with a
-diagram once it exists, not about building one.
+This is the only walkthrough in the series whose **Set up the canvas** and
+**Open the finished diagram** buttons load the same file, because exporting a
+diagram does not change it. Its **Check my work** button is checking that you
+still have the schema you built, not that you built something new.
+
+Have **PostgreSQL** selected in the dialect selector at the top — it is the
+only dialect that turns `order_status` and `postal_address` into real
+`CREATE TYPE` statements, which matters for several of the comparisons below.
 
 ## The mental model
 
@@ -123,23 +138,25 @@ script*, the scope on **Whole schema**, and *Prefix DROP TABLE statements*
 unticked.
 
 ```sql
+-- Custom types
 CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
+CREATE TYPE postal_address AS (street TEXT, city TEXT, postal_code TEXT, country CHAR(2));
 
 CREATE TABLE public.authors (
   id BIGSERIAL PRIMARY KEY,
   name TEXT NOT NULL,
-  country CHAR(2)
+  country CHAR(2) CHECK (country = upper(country))
 );
 ```
 
 Scroll to the bottom and you will find a commented `-- External sources`
-block that documents `crm_contacts` — table name, columns, the note on its
-group — without a `CREATE TABLE` for it anywhere, and after that a block
-documenting the two data-flow edges that feed `v_order_summary` as comments,
-because a data flow is never a constraint.
+block that documents `crm_contacts` and `crm_accounts` — table names, columns,
+the note on their group — without a `CREATE TABLE` for either anywhere, and
+after that a block documenting the embed, the dependency and all six
+data-flow edges as comments, because none of the three is ever a constraint.
 
-**You should see:** the badge reading `PostgreSQL` and `16 statements`, and
-the script running from `CREATE TYPE` through four real tables and one
+**You should see:** the badge reading `PostgreSQL` and `57 statements`, and
+the script running from two `CREATE TYPE`s through fifteen real tables and one
 `CREATE VIEW` before the two commented appendices.
 
 ### 2. Switch to the Markdown data dictionary
@@ -152,18 +169,25 @@ One row per person who wrote something we sell.
 
 | Column | Type | Nullable | Default | Key | Check | Comment |
 | --- | --- | --- | --- | --- | --- | --- |
-| id | BIGSERIAL | no |  | PK, AUTO |  |  |
+| id | BIGSERIAL | no |  | PK, AUTO |  | Surrogate key. Nothing outside the database ever sees it. |
 | name | TEXT | no |  |  |  |  |
-| country | CHAR(2) | yes |  |  |  | ISO 3166-1 alpha-2. |
+| country | CHAR(2) | yes |  |  | CHECK (country = upper(country)) | ISO 3166-1 alpha-2. Nullable: we often do not know. |
 
 **Referenced by** [books](#publicbooks)
 ```
 
+Its first line is the one to notice:
+`PostgreSQL · 17 tables · 1 view · 80 columns · 17 foreign keys · 2 custom
+types · 4 groups`. Seventeen tables, not fifteen — unlike the SQL script, the
+data dictionary documents the external CRM tables too, because documenting is
+the whole job.
+
 **You should see:** the hint above the code area reading "A README-ready
 reference with one section per table," a table of contents at the top, one
 `###` section per table with its columns, indexes and checks as Markdown
-tables, and a **Groups** table and a **Relationships** table further down —
-this single file is closer to the diagram than any of the other exports.
+tables, and a **Custom types**, **Groups** and **Relationships** section
+further down — this single file is closer to the diagram than any of the
+other exports.
 
 ### 3. Switch to Mermaid and copy it
 
@@ -172,26 +196,35 @@ Change the format selector to *Mermaid ER diagram*, then click **Copy**.
 ```mermaid
 erDiagram
     public__authors {
-        BIGSERIAL id PK
+        BIGSERIAL id PK "Surrogate key. Nothing outside the database ever sees it."
         TEXT name
-        CHAR(2) country "ISO 3166-1 alpha-2."
+        CHAR(2) country "ISO 3166-1 alpha-2. Nullable: we often do not know."
     }
     public__books {
         BIGSERIAL id PK
         BIGINT author_id FK
         TEXT title
-        CHAR(13) isbn UK "The natural key. UNIQUE, but not the primary key."
-        INTEGER price_cents
+        CHAR(13) isbn UK "The natural key. UNIQUE, but not the primary key: ISBNs get reassigned and mistyped."
+        INTEGER price_cents "Integer cents, never a float: 0.1 + 0.2 is not 0.3 in binary floating point."
     }
 ```
 
-Further down, the foreign key becomes a crow's-foot line and the enum column
-becomes just another attribute:
+Further down, every connection — whatever its kind — becomes a line, and the
+enum column becomes just another attribute:
 
 ```mermaid
     public__authors ||..o{ public__books : "books_author_id_fkey"
-    public__orders }o..o{ public__v_order_summary : "view source"
+    public__books }o..o{ public__contributors : "contributors_json"
+    public__catalog_export }o..o{ public__books : "nightly feed"
+    public__order_items }o..o{ public__v_customer_orders : "view source"
 ```
+
+Look at those four lines together. The first is a foreign key the database
+enforces; the second is the embed from walkthrough 02, the third the
+dependency, the fourth a view source — and Mermaid draws all four the same
+way, because its ER syntax has one kind of relationship. Everything this
+series taught you to distinguish between collapses here into a single dashed
+line with a label.
 
 **You should see:** a toast reading "Mermaid ER diagram copied to the
 clipboard," and — if you paste it into a scratch GitHub issue or
@@ -213,10 +246,18 @@ Enum order_status {
 ```
 
 **You should see:** the hint "Opens in dbdiagram.io and dbdocs," and — unlike
-Mermaid — a real `Enum` block. Scroll down and `crm_contacts` is still an
-ordinary `Table` block with a note on its `TableGroup` saying it lives
-elsewhere; DBML has no field for "external," so that fact survives only as
-prose.
+Mermaid — a real `Enum` block. Scroll down: all four regions come across as
+`TableGroup` blocks, and `crm_contacts` is still an ordinary `Table` inside
+one whose note begins *"Lives in another database; not created by the schema
+script."* DBML has no field for "external," so that fact survives only as
+prose. `postal_address` fares worse still — a composite type has nowhere to go
+in DBML at all, so it is written out as a standalone `Note` block:
+
+```dbml
+Note type_postal_address {
+  'Composite type postal_address (street TEXT, city TEXT, postal_code TEXT, country CHAR(2))'
+}
+```
 
 ### 5. Export a picture
 
@@ -244,13 +285,15 @@ app can tell it now disagrees with that file.
 Press `Ctrl+S` (or **File → Save as .dbviz.json**).
 
 **You should see:** a toast reading "Diagram saved.", a re-downloaded
-`export-share-and-save-bookshop.dbviz.json`, and the dot from the previous
-step gone — saving is what makes "changed since the last save" false again.
+`.dbviz.json` named after the diagram, and the dot from the previous step
+gone — saving is what makes "changed since the last save" false again.
 
 ### 8. Reopen the original and confirm it replaces the canvas
 
-Press `Ctrl+O` again, but this time pick the original file from **Before you
-start**, not the copy you just downloaded.
+Press `Ctrl+O` again, but this time pick
+[`diagrams/13-run-the-schema-on-a-real-database.dbviz.json`](diagrams/13-run-the-schema-on-a-real-database.dbviz.json)
+— the file **Set up the canvas** loaded — rather than the copy you just
+downloaded.
 
 **You should see:** the note jump back to where it started. The nudged
 position only ever existed on the canvas and in the file you saved a moment
@@ -319,90 +362,46 @@ button beside it.
 ## Check your work
 
 Open the bottom drawer → **SQL**, leave the format on *SQL script* and the
-scope on *Whole schema*, and compare. This is the entire output for the
-diagram above:
+scope on *Whole schema*, and read the four header lines. On a schema this
+size they are the fastest possible summary of everything the series built:
 
 ```sql
--- Export, share and save — bookshop (PostgreSQL)
+-- Bookshop — after 13 Run the schema on a real database (PostgreSQL)
 -- Generated by Database Visualizer
--- Tables: 4, views: 1, foreign keys: 2, documented connections: 2
--- 1 table(s) live in another database and are not created here; see "External sources" at the end.
+-- Tables: 15, views: 1, foreign keys: 15, documented connections: 8
+-- 2 table(s) live in another database and are not created here; see "External sources" at the end.
+```
 
--- Custom types
-CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
+Then scroll to the very end, where the two appendices are — the part no other
+export format has:
 
-CREATE TABLE public.authors (
-  id BIGSERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  country CHAR(2)
-);
-COMMENT ON TABLE public.authors IS 'One row per person who wrote something we sell.';
-COMMENT ON COLUMN public.authors.country IS 'ISO 3166-1 alpha-2.';
-
-CREATE TABLE public.books (
-  id BIGSERIAL PRIMARY KEY,
-  author_id BIGINT NOT NULL,
-  title TEXT NOT NULL,
-  isbn CHAR(13) NOT NULL UNIQUE,
-  price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
-  CONSTRAINT books_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.authors (id) ON DELETE RESTRICT
-);
-CREATE INDEX books_author_id_idx ON public.books (author_id);
-COMMENT ON TABLE public.books IS 'One row per edition we stock.';
-COMMENT ON COLUMN public.books.isbn IS 'The natural key. UNIQUE, but not the primary key.';
-
-CREATE TABLE public.customers (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  crm_contact_id BIGINT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX customers_crm_contact_id_idx ON public.customers (crm_contact_id);
-COMMENT ON TABLE public.customers IS 'Shoppers. crm_contact_id points into the CRM group below.';
-COMMENT ON COLUMN public.customers.crm_contact_id IS 'References crm_contacts, which lives in another database.';
-
-CREATE TABLE public.orders (
-  id BIGSERIAL PRIMARY KEY,
-  customer_id BIGINT NOT NULL,
-  status order_status NOT NULL DEFAULT 'pending',
-  total_cents INTEGER NOT NULL DEFAULT 0,
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CHECK (total_cents >= 0),
-  CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id) ON DELETE CASCADE
-);
-CREATE INDEX orders_customer_id_idx ON public.orders (customer_id);
-COMMENT ON TABLE public.orders IS 'One row per order. status is the order_status enum below.';
-
--- Views
-CREATE VIEW public.v_order_summary AS
-SELECT c.id AS customer_id,
-       c.email,
-       o.id AS order_id,
-       o.status,
-       o.total_cents,
-       o.placed_at
-FROM customers c
-JOIN orders o ON o.customer_id = c.id;
-
+```sql
 -- ----------------------------------------------------------------
 -- External sources: other databases this schema reads from.
--- Nothing below is executed; it is here so the script documents where the data comes from.
 --
--- CRM (read-only) (1 table)
---   Vendor CRM, reached over a foreign data wrapper. Marking the group external keeps crm_contacts out of the generated CREATE TABLE script.
---   crm_contacts (contact_id, email)
+-- CRM (read-only) (2 tables)
+--   crm_contacts (contact_id, email, account_id)
+--   crm_accounts (account_id, name, tier)
 --
 -- References into CRM (read-only), as foreign keys would look if the tables were local:
--- ALTER TABLE public.customers ADD CONSTRAINT customers_crm_contact_id_fkey FOREIGN KEY (crm_contact_id) REFERENCES crm_contacts (contact_id) ON DELETE SET NULL;
+-- ALTER TABLE public.customers ADD CONSTRAINT customers_crm_contact_id_fkey FOREIGN KEY (crm_contact_id) REFERENCES public.crm_contacts (contact_id) ON DELETE SET NULL;
 
 -- ----------------------------------------------------------------
 -- Connections the schema does not enforce, and tagged queries
 -- (documentation only, not executed)
--- [flow] customers feeds v_order_summary (view source)
---   Linked by v_order_summary's Detect from SQL: customers is joined in its FROM clause.
--- [flow] orders feeds v_order_summary (view source)
---   Linked by v_order_summary's Detect from SQL: orders is joined in its FROM clause.
+-- [embed] books serializes contributors in books.contributors_json (contributors_json)
+-- [flow] orders feeds customer_cadence (nightly rollup)
+-- [uses] catalog_export uses books (nightly feed)
+-- [flow] order_items feeds daily_sales (nightly rollup)
+-- [flow] daily_sales feeds book_totals (lifetime rollup)
+-- [flow] customers feeds v_customer_orders (view source)
 ```
+
+Eight connections that a database cannot be told about, written down anyway.
+Every one of them is a decision from an earlier walkthrough — the embed from
+02, the dependency from 02, the rollups from 05 and 06, the view sources from
+08 — and this appendix is the only place in any export where all of them
+survive in one piece.
 
 Then open **Problems**. It reports one finding, at the *info* level, not an
 error or a warning: `customers references crm_contacts, which lives in
@@ -410,15 +409,21 @@ another database; the script documents the link instead of creating a
 constraint.` That is the linter confirming the external group is working as
 intended, not something to fix.
 
+Finally, press **Check my work** at the foot of this walkthrough. Its checks
+are the same shape as walkthrough 13's, because exporting a diagram does not
+change it — four regions, both custom types, the view, every connection, lint
+clean. Passing them means the thing you have been carrying since walkthrough
+00 arrived at the end intact.
+
 ## Try it yourself
 
 - Tick *Prefix DROP TABLE statements* on the SQL tab and watch `DROP VIEW IF
-  EXISTS public.v_order_summary;`, four `DROP TABLE … CASCADE;` lines and
-  `DROP TYPE IF EXISTS order_status;` appear above the script, in the order
-  that lets each drop succeed before the thing it depends on is already gone.
+  EXISTS public.v_customer_orders;`, fifteen `DROP TABLE … CASCADE;` lines and
+  two `DROP TYPE IF EXISTS` lines appear above the script, in the order that
+  lets each drop succeed before the thing it depends on is already gone.
 - Select `orders` on the canvas, then click **Table: orders** under *Selected
   table* in the SQL tab. Only that table's `CREATE TABLE`, its index and its
-  comment remain — nothing from `authors`, `customers` or the view.
+  comment remain — nothing from the other fourteen tables or the view.
 - Switch the dialect selector at the top to **MariaDB**, then revisit the SQL
   and DBML tabs: `order_status` stops being a named type and becomes an
   inlined `ENUM(...)` on the column instead. `Ctrl+Z` undoes the whole
@@ -432,14 +437,21 @@ intended, not something to fix.
 What each format keeps from this diagram, verified by generating all of them
 from the file above rather than guessed:
 
-| Format | Foreign keys | `order_status` enum | `v_order_summary` view | CRM group | Sticky note | Positions & colours |
-| --- | --- | --- | --- | --- | --- | --- |
-| `.dbviz.json` | structured | structured | structured | structured, with the external flag | yes | yes |
-| SQL script | real `CONSTRAINT`s (the cross-group one as a commented `ALTER TABLE`) | real `CREATE TYPE` | real `CREATE VIEW` | commented "External sources" appendix | no | no |
-| Markdown | a Relationships table | a Custom types table | SELECT shown in a fenced block | a Groups table | no | no |
-| Mermaid | crow's-foot lines | flattened to a plain column type | drawn as an entity | one `%% external:` comment, no region | no | no |
-| DBML | `Ref` lines | real `Enum` block | a `Table` whose note carries the SELECT | a `TableGroup` note (table itself still looks ordinary) | no | no |
-| PNG / SVG | crow's-foot lines with `1` / `N` cardinality labels, no column or constraint names | drawn as a column's type label, no values listed | drawn as a node | drawn as the region | drawn, as it appears on canvas | yes, exactly as arranged |
+| Format | Foreign keys | Flows & derivations | `order_status` enum | `postal_address` composite | `v_customer_orders` view | Regions | Sticky notes | Positions & colours |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `.dbviz.json` | structured | structured, in full | structured | structured | structured | structured, with the external flag | yes | yes |
+| SQL script | real `CONSTRAINT`s (the cross-group one as a commented `ALTER TABLE`) | commented `INSERT … SELECT` in the appendix | real `CREATE TYPE` | real `CREATE TYPE` | real `CREATE VIEW` | commented "External sources" appendix | no | no |
+| Markdown | a Relationships table | listed in the Relationships table | a Custom types table | a Custom types table | SELECT shown in a fenced block | a Groups table | no | no |
+| Mermaid | crow's-foot lines | one more line, indistinguishable from the rest | flattened to a plain column type | flattened to a plain column type | drawn as an entity | one `%% external:` comment, no region | no | no |
+| DBML | `Ref` lines | dropped | real `Enum` block | a standalone `Note` block | a `Table` whose note carries the SELECT | `TableGroup` blocks, external only as a note | no | no |
+| PNG / SVG | crow's-foot lines with `1` / `N` cardinality labels, no column or constraint names | drawn as a dashed edge | drawn as a column's type label, no values listed | same | drawn as a node | drawn as the region | drawn, as they appear on canvas | yes, exactly as arranged |
+
+Read the `.dbviz.json` row against every other one. It is the only format that
+keeps the derivations, and the only one that keeps the difference between a
+foreign key, an embed, a flow and a dependency. Everything the last fourteen
+walkthroughs taught you to be careful about lives in that file and nowhere
+else — which is the argument for committing it next to the migrations rather
+than exporting a picture and calling it documentation.
 
 ## Gotchas
 
@@ -477,11 +489,21 @@ from the file above rather than guessed:
 
 ## Where to go next
 
-- [Group tables, and read another database](03-group-tables.md) — more on
-  what marking a group external actually changes, before you lean on it the
-  way this walkthrough's CRM group does.
-- [Import an existing schema](09-import-an-existing-schema.md) — the reverse
-  direction: bringing someone else's DDL in, instead of sending yours out.
+That is the series: fifteen walkthroughs, one bookshop, built once and never
+restarted. The canvas you are looking at is the same one walkthrough 00 opened
+with two tables on it.
+
+Where to go from here is your own schema. A few of these are worth re-reading
+with it in front of you rather than the bookshop:
+
+- [Fill one table from another](05-fill-one-table-from-another.md) — the
+  hardest single idea in the series, and the one most worth applying to a
+  rollup you already maintain by hand.
+- [Fix what Problems finds](10-fix-what-problems-finds.md) — point it at a
+  schema you inherited rather than one you built, and read the list.
 - [Run the schema on a real database](13-run-the-schema-on-a-real-database.md)
-  — for when a file or a link is not enough and the tables need to actually
-  exist somewhere.
+  — the shortest path from "I drew a thing" to "it runs".
+
+Every walkthrough's **Set up the canvas** button still works, so any of them
+can be reopened at its own starting point without disturbing what you are
+working on.

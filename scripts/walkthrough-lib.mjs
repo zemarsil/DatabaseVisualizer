@@ -92,6 +92,7 @@ export const FIELDS = {
   dialect: { list: false, required: true },
   covers: { list: true, required: true },
   shortcuts: { list: true, required: false },
+  start: { list: false, required: true },
   diagram: { list: false, required: false },
   checks: { list: true, required: false },
   prerequisites: { list: true, required: true },
@@ -110,6 +111,7 @@ export const CHECK_VERBS = {
   indexes: 'total number of indexes across every table',
   derivations: 'total number of derivations across every flow',
   'lint clean': null,
+  'lint errors': 'the exact number of error-severity findings Problems reports; for a walkthrough that ships a deliberately broken diagram',
   simulate: 'a table name that must simulate with rows and no warnings',
   trace: 'two table names as "a -> b" that must have a path between them',
 };
@@ -297,6 +299,19 @@ export function validateWalkthrough(file, opts = {}) {
     if (meta[key].includes('none') && meta[key].length > 1) errors.push(`"${key}" mixes "none" with real slugs`);
   }
 
+  /* ---- where it starts ---- */
+  // The series is one continuous build, so a walkthrough's "start" is the state
+  // the reader needs on the canvas before step 1 — which is the previous
+  // walkthrough's finished diagram, or "empty" for the one that opens the series.
+  // validateSeries() below checks that the chain really links up.
+  if (typeof meta.start === 'string' && meta.start !== 'empty') {
+    if (!meta.start.startsWith('diagrams/') || !meta.start.endsWith('.dbviz.json')) {
+      errors.push('"start" must be "empty" or a path like diagrams/NN-slug.dbviz.json');
+    } else if (!existsSync(resolve(dirname(file), meta.start))) {
+      errors.push(`"start" points at ${meta.start}, which does not exist`);
+    }
+  }
+
   /* ---- companion diagram ---- */
   let diagramPath = null;
   if (typeof meta.diagram === 'string') {
@@ -307,7 +322,9 @@ export function validateWalkthrough(file, opts = {}) {
     if (!existsSync(diagramPath)) {
       errors.push(`"diagram" points at ${meta.diagram}, which does not exist`);
       diagramPath = null;
-    } else if (basename(diagramPath) !== `${expectedSlug}.dbviz.json`) {
+    } else if (basename(diagramPath) !== `${expectedSlug}.dbviz.json` && meta.diagram !== meta.start) {
+      // Reusing the start diagram is how a walkthrough says "this one reads the
+      // canvas rather than changing it"; any other borrowed file is a mistake.
       warnings.push(`the companion diagram is usually named ${expectedSlug}.dbviz.json`);
     }
     if (!Array.isArray(meta.checks) || meta.checks.length < 2) {
@@ -328,7 +345,7 @@ export function validateWalkthrough(file, opts = {}) {
       if (takesArg && !arg) errors.push(`check "${raw}" needs an argument after "|" (${CHECK_VERBS[verb]})`);
       if (!takesArg && arg) errors.push(`check "${raw}" takes no argument`);
       if (verb === 'trace' && arg && !arg.includes('->')) errors.push(`check "${raw}" must read "table_a -> table_b"`);
-      if ((verb === 'indexes' || verb === 'derivations') && arg && !/^\d+$/.test(arg)) errors.push(`check "${raw}" must give a whole number`);
+      if ((verb === 'indexes' || verb === 'derivations' || verb === 'lint errors') && arg && !/^\d+$/.test(arg)) errors.push(`check "${raw}" must give a whole number`);
       if (verb === 'kinds' && arg) {
         for (const part of splitList(arg)) {
           if (!/^(fk|flow|embed|dependency):\d+$/.test(part)) errors.push(`check "${raw}" has a bad entry "${part}"; use kind:count`);
@@ -396,4 +413,79 @@ export function validateWalkthrough(file, opts = {}) {
   }
 
   return { file, meta, body, diagramPath, errors, warnings };
+}
+
+/* ------------------------------------------------------------------ */
+/* The series                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The walkthroughs are one continuous build of one database, not fifteen
+ * separate exercises: walkthrough N picks the canvas up exactly where N-1 put
+ * it down. That promise is only worth making if it is checked, so this asserts
+ * the three things that make the chain real:
+ *
+ *   - the first walkthrough starts from an empty canvas, and every later one
+ *     starts from its predecessor's finished diagram — the *same file*, so the
+ *     two can never drift apart;
+ *   - `prerequisites` and `next` are that same chain, one step each way;
+ *   - the cast only grows. A table that exists at the end of N is still there
+ *     at the end of N+1, because the reader still has it on their canvas.
+ *
+ * Returns a list of error strings; empty means the chain links up.
+ */
+export function validateSeries(dir = WALKTHROUGH_DIR) {
+  const errors = [];
+  const files = listWalkthroughFiles(dir);
+  const entries = files.map((file) => {
+    const { meta } = parseFrontMatter(readFileSync(file, 'utf8'));
+    return { slug: basename(file, '.md'), file, meta };
+  });
+
+  const tableNames = (relPath) => {
+    if (typeof relPath !== 'string' || relPath === 'empty') return [];
+    const path = join(dir, relPath);
+    if (!existsSync(path)) return [];
+    try {
+      const doc = JSON.parse(readFileSync(path, 'utf8'));
+      return (Array.isArray(doc.tables) ? doc.tables : []).map((t) => t?.name).filter((n) => typeof n === 'string');
+    } catch {
+      return [];
+    }
+  };
+
+  entries.forEach((entry, i) => {
+    const prev = entries[i - 1];
+    const next = entries[i + 1];
+    const { slug, meta } = entry;
+
+    const wantStart = prev ? prev.meta.diagram : 'empty';
+    if (meta.start !== wantStart) {
+      errors.push(
+        prev
+          ? `${slug}: "start" is ${JSON.stringify(meta.start)}, but the series continues from ${prev.slug}, whose diagram is ${JSON.stringify(wantStart)}`
+          : `${slug}: the first walkthrough must have "start: empty"`,
+      );
+    }
+
+    const wantPrereq = prev ? [prev.slug] : ['none'];
+    if ((meta.prerequisites ?? []).join(',') !== wantPrereq.join(',')) {
+      errors.push(`${slug}: "prerequisites" must be exactly "${wantPrereq.join(', ')}" — the series is a single chain`);
+    }
+    const wantNext = next ? [next.slug] : ['none'];
+    if ((meta.next ?? []).join(',') !== wantNext.join(',')) {
+      errors.push(`${slug}: "next" must be exactly "${wantNext.join(', ')}" — the series is a single chain`);
+    }
+
+    if (prev) {
+      const before = tableNames(prev.meta.diagram);
+      const after = new Set(tableNames(meta.diagram));
+      const dropped = before.filter((n) => !after.has(n));
+      if (dropped.length) {
+        errors.push(`${slug}: its diagram drops ${dropped.join(', ')}, which the reader still has on the canvas from ${prev.slug}`);
+      }
+    }
+  });
+
+  return errors;
 }

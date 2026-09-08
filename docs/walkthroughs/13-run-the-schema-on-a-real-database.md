@@ -1,7 +1,7 @@
 ---
 title: Run the schema on a real database
 slug: 13-run-the-schema-on-a-real-database
-summary: A five-table PostgreSQL bookshop schema you create inside a Docker container, query, seed, migrate after a change, and read back into the diagram.
+summary: The whole bookshop schema, created inside a Docker PostgreSQL container, queried, seeded, migrated after a change, and read back into the diagram.
 level: advanced
 minutes: 20
 dialect: postgresql
@@ -17,17 +17,18 @@ shortcuts:
   - Ctrl+O
   - Ctrl+Enter
   - Tab
+start: diagrams/12-read-a-big-diagram.dbviz.json
 diagram: diagrams/13-run-the-schema-on-a-real-database.dbviz.json
 checks:
-  - tables | authors, customers, books, orders, order_items
-  - types | order_status
-  - kinds | fk:4
-  - indexes | 4
+  - types | order_status, postal_address
+  - indexes | 13
   - contains | status order_status NOT NULL DEFAULT 'pending'
+  - contains | internal_notes TEXT
   - contains | FOREIGN KEY (order_id) REFERENCES public.orders (id) ON DELETE CASCADE
+  - omits | CREATE TABLE public.crm_contacts
   - lint clean
 prerequisites:
-  - 09-import-an-existing-schema
+  - 12-read-a-big-diagram
 next:
   - 14-export-share-and-save
 ---
@@ -35,19 +36,23 @@ next:
 
 ## What you'll build
 
-A five-table bookshop schema — `authors`, `customers`, `books`, `orders` and
-`order_items`, with an `order_status` enum and four foreign keys — that you
-create inside a real PostgreSQL container instead of only reading its SQL in
-the drawer. By the end you will have started the container, run the schema
-into it, queried it, seeded it with generated rows, changed the diagram and
-migrated the live database to match, and pulled the schema back out again.
+The schema you have spent twelve walkthroughs drawing, running for real.
+Fifteen tables, a view, two custom types, fifteen foreign keys and thirteen
+indexes go into a PostgreSQL container; the two CRM tables do not, because
+they were marked external in walkthrough 03 and the generator has been leaving
+them out ever since.
+
+By the end you will have started the container, created the schema in it,
+queried it, seeded it with generated rows, changed the diagram and migrated
+the live database to match, and pulled the schema back out again.
 
 ```mermaid
 erDiagram
-    AUTHORS ||--o{ BOOKS : "has"
-    CUSTOMERS ||--o{ ORDERS : "has"
-    ORDERS ||--o{ ORDER_ITEMS : "has"
-    BOOKS ||--o{ ORDER_ITEMS : "has"
+    AUTHORS ||--o{ BOOKS : "wrote"
+    CUSTOMERS ||--o{ ORDERS : "placed"
+    ORDERS ||--o{ ORDER_ITEMS : "contains"
+    BOOKS ||--o{ ORDER_ITEMS : "sold as"
+    ORDERS ||--o{ SHIPMENTS : "shipped as"
     AUTHORS {
         bigserial id PK
         text name
@@ -55,6 +60,7 @@ erDiagram
     CUSTOMERS {
         bigserial id PK
         text email UK
+        postal_address mailing_address
     }
     BOOKS {
         bigserial id PK
@@ -65,6 +71,7 @@ erDiagram
         bigserial id PK
         bigint customer_id FK
         order_status status "DEFAULT 'pending'"
+        text internal_notes "added in step 7"
     }
     ORDER_ITEMS {
         bigserial id PK
@@ -75,9 +82,17 @@ erDiagram
 
 ## Before you start
 
-This one assumes [Import an existing schema](09-import-an-existing-schema.md):
-you should already be comfortable with DDL going into and out of the app. Here
-it goes into and out of an actual database instead.
+You need what [Read a big diagram](12-read-a-big-diagram.md) leaves behind:
+the whole eighteen-table schema, four regions, nothing broken in **Problems**. Press **Set up the
+canvas** at the top of this walkthrough in the drawer's **Walkthrough** tab if
+it is not already in front of you.
+
+This walkthrough is the payoff for every earlier one, and it will show it. The
+enum from walkthrough 04 becomes a real `CREATE TYPE`; the external region
+from 03 is why two tables are missing from the database and nothing complains;
+the indexes from 07 are created alongside their tables; the type fixes from 10
+are why the foreign keys are accepted at all. If any of those had been left
+wrong, this is the walkthrough where PostgreSQL would tell you.
 
 You need Docker running and reachable — on Linux that usually means the
 daemon is up and your user can talk to `/var/run/docker.sock`. If you would
@@ -86,14 +101,9 @@ every Docker step below and jump straight to *Connecting*; nothing else in
 this walkthrough cares how the database got there.
 
 The dialect selector at the top of the app must read **PostgreSQL** — the
-companion diagram is written in PostgreSQL's spelling (`BIGSERIAL`,
-`TIMESTAMPTZ`, a real `CREATE TYPE … AS ENUM`), and the container you start
-below defaults to the same engine.
-
-Open [`diagrams/13-run-the-schema-on-a-real-database.dbviz.json`](diagrams/13-run-the-schema-on-a-real-database.dbviz.json)
-with **File → Open** (`Ctrl+O`), or drop the file on the canvas, rather than
-typing five tables by hand — this walkthrough is about the **Database** drawer
-tab, not about modeling.
+diagram is written in PostgreSQL's spelling (`BIGSERIAL`, `TIMESTAMPTZ`, a
+real `CREATE TYPE … AS ENUM`), and the container you start below defaults to
+the same engine.
 
 ## The mental model
 
@@ -168,23 +178,31 @@ else.
 
 Scroll to **Create the schema**. Leave *Drop existing tables first* unticked
 (there is nothing to drop yet) and *Stop on first error* ticked, then click
-**Run 19 statements**.
+**Run 57 statements**.
 
 **You should see:** a confirmation dialog naming the statement count and
 noting the run happens inside one transaction that is rolled back on any
 failure (PostgreSQL only — MariaDB's DDL commits statement by statement, so
 the dialog says so instead). After you confirm, a scrollable list appears
 with one line per statement — a green check or red cross, the SQL, and how
-long it took — and a toast reads `Schema created: 19 statements ran.`
+long it took — and a toast reads `Schema created: 57 statements ran.`
 
-The order is not the order the tables sit on the canvas: the enum type is
-created first (a column can only use a type that already exists), then
-tables in dependency order — `authors` and `customers` before `books` and
-`orders`, and `order_items` last, since it references both — with indexes,
-foreign keys and comments following each table. None of these five tables
-sit in an external group, so all of them get created; a table you had marked
-*These tables live in another database* would be left out of this list
-entirely and documented in an "External sources" appendix instead.
+Read the order rather than just watching it scroll, because it is the whole
+diagram sorted into something a database will accept. Both custom types are
+created first (a column can only use a type that already exists), then tables
+in dependency order — `authors` and `customers` before `books` and `orders`,
+`order_items` after both — with each table's indexes, foreign keys and
+comments following it, and `v_customer_orders` last of all, because a view
+cannot be created before the tables it reads.
+
+Count the tables in the list: fifteen, not eighteen. `crm_contacts` and
+`crm_accounts` are in the external region from walkthrough 03, so the
+generator has never created them and does not start now. The one generator
+warning at the top of the **SQL** tab says why: a foreign key cannot cross
+into a database you do not own, so `customers.crm_contact_id` is documented
+rather than enforced. This is the moment that decision becomes real — had they
+not been marked external, PostgreSQL would be creating two tables here that
+already exist somewhere else.
 
 ### 5. Run a read-only query
 
@@ -200,9 +218,10 @@ moving focus, so writing multi-line SQL does not fight you.
 
 **You should see:** an empty results grid with the five real column headers —
 there are no rows yet, since nothing has been seeded. Open the *Insert a
-tagged query or snippet…* dropdown: because this diagram has no data-flow
-edges or tagged queries yet, it offers exactly one entry per table,
-`SELECT * FROM <table> LIMIT 100;`. Without ticking **Allow writes**, only
+tagged query or snippet…* dropdown: it offers one `SELECT * FROM <table>
+LIMIT 100;` per table, and above them the tagged query you wrote on the
+`order_items → daily_sales` flow in walkthrough 05 — the `ON CONFLICT` upsert,
+ready to run against a database that now actually has those tables in it. Without ticking **Allow writes**, only
 `SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `DESCRIBE` and a few other read-only
 leaders are accepted at all — the server wraps whatever you send in a
 transaction and rolls it back once it has read the result, so a stray
@@ -217,15 +236,16 @@ Open the **Database** tab again and scroll to **Seed data**. Leave *Rows per
 table* at `10` and *Seed* at `1`, then click **Insert rows**.
 
 **You should see:** a result list of `INSERT` statements (one batch per
-table, largest tables split into chunks of 50 rows) and a toast reading
-`Inserted 50 rows.` Go back to the **Query** tab and re-run the same
+table, largest tables split into chunks of 50 rows) and a toast naming how
+many rows landed — ten per table, across every table the schema created. Go back to the **Query** tab and re-run the same
 `SELECT * FROM order_items LIMIT 100;` — now it returns rows.
 
 The generator respects the schema rather than guessing: every `book_id` and
 `order_id` in `order_items` points at a row that really exists in `books`
 and `orders`, `isbn` and `email` never repeat because they are marked
 **UQ**, and `orders.status` only ever gets one of the four `order_status`
-values. Column *names* steer plausible content too — `email` becomes
+values — the enum you defined in walkthrough 04 constrains the fixture data
+as tightly as it constrains everything else. Column *names* steer plausible content too — `email` becomes
 `alan.hopper1@example.com`, `created_at` becomes a recent timestamp — and
 the same seed number always produces the same rows, so a seed script can
 live next to the schema and be re-run. Two real rows it produces for seed
@@ -298,16 +318,23 @@ Scroll to **Import from the database**. Leave *Replace diagram* selected
 (the default) with *Put them in a group* and *Another database* both ticked,
 and click **Read schema**.
 
-**You should see:** the canvas clears and redraws with the same five tables,
-freshly laid out, all inside one region named after the connected database
-(`app`) with *These tables live in another database* already ticked — and a
-toast reading `Imported 5 tables from PostgreSQL 16.x.`. `internal_notes`
-comes back too, since it now really exists in the database; table and
-column comments come back as well, since PostgreSQL stores them as real
-`COMMENT ON` objects. Sticky notes, table colours and canvas positions do
-not — those never left the `.dbviz.json` in the first place, so the database
-never had them to give back. Press `Ctrl+Z` to get your hand-built diagram
-back.
+**You should see:** the canvas clears and redraws with the fifteen tables the
+database actually has, freshly laid out, all inside one region named after the
+connected database (`app`) with *These tables live in another database*
+already ticked — and a toast reading `Imported 15 tables from PostgreSQL
+16.x.`. `internal_notes` comes back too, since it now really exists in the
+database; table and column comments come back as well, since PostgreSQL stores
+them as real `COMMENT ON` objects.
+
+What does *not* come back is most of what makes the diagram worth having.
+Sticky notes, table colours, canvas positions, the four regions, the embed,
+the dependency and all six data flows with their derivations are gone —
+because none of them were ever in the database. The `.dbviz.json` is the only
+place they exist, which is the single best argument for keeping it in version
+control next to the migrations.
+
+Press `Ctrl+Z` to get your hand-built diagram back — and notice how much
+`Ctrl+Z` just restored.
 
 ## Other ways to do it
 
@@ -334,76 +361,45 @@ back.
 
 ## Check your work
 
-Open **SQL** in the bottom drawer with the diagram in its original,
-unmodified state (before step 7's extra column) and compare — this is the
-entire output, statement for statement:
+The database is the check here, not the SQL tab. Open the **Query** tab and
+ask PostgreSQL what it actually has:
 
 ```sql
--- Run the schema on a real database — bookshop orders (PostgreSQL)
--- Generated by Database Visualizer
--- Tables: 5, foreign keys: 4
-
--- Custom types
-CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
-
-CREATE TABLE public.authors (
-  id BIGSERIAL PRIMARY KEY,
-  name TEXT NOT NULL,
-  country CHAR(2)
-);
-COMMENT ON TABLE public.authors IS 'One row per person who wrote something we sell.';
-COMMENT ON COLUMN public.authors.country IS 'ISO 3166-1 alpha-2. Nullable: we often do not know.';
-
-CREATE TABLE public.books (
-  id BIGSERIAL PRIMARY KEY,
-  author_id BIGINT NOT NULL,
-  title TEXT NOT NULL,
-  isbn CHAR(13) NOT NULL UNIQUE,
-  price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
-  published_on DATE,
-  CONSTRAINT books_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.authors (id)
-);
-CREATE INDEX books_author_id_idx ON public.books (author_id);
-COMMENT ON TABLE public.books IS 'One row per edition we stock.';
-COMMENT ON COLUMN public.books.isbn IS 'The natural key. UNIQUE, but not the primary key: ISBNs get reassigned and mistyped.';
-COMMENT ON COLUMN public.books.price_cents IS 'Integer cents, never a float.';
-
-CREATE TABLE public.customers (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-COMMENT ON TABLE public.customers IS 'One row per person who has placed at least one order.';
-
-CREATE TABLE public.orders (
-  id BIGSERIAL PRIMARY KEY,
-  customer_id BIGINT NOT NULL,
-  status order_status NOT NULL DEFAULT 'pending',
-  total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id)
-);
-CREATE INDEX orders_customer_id_idx ON public.orders (customer_id);
-COMMENT ON TABLE public.orders IS 'One row per checkout. status walks pending -> paid -> shipped, or -> cancelled.';
-
-CREATE TABLE public.order_items (
-  id BIGSERIAL PRIMARY KEY,
-  order_id BIGINT NOT NULL,
-  book_id BIGINT NOT NULL,
-  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
-  unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
-  CONSTRAINT order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders (id) ON DELETE CASCADE,
-  CONSTRAINT order_items_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books (id)
-);
-CREATE INDEX order_items_order_id_idx ON public.order_items (order_id);
-CREATE INDEX order_items_book_id_idx ON public.order_items (book_id);
-COMMENT ON TABLE public.order_items IS 'The grain: one row per book within one order.';
-COMMENT ON COLUMN public.order_items.unit_price_cents IS 'Copied from books.price_cents at order time, so a later price change never rewrites history.';
+SELECT table_name
+FROM information_schema.tables
+WHERE table_schema = 'public'
+ORDER BY table_name;
 ```
 
-19 statements in all. Open **Problems** and it is empty — every foreign key
-here has its own index, which is exactly what keeps this diagram out of the
-*fk-without-index* warning you would otherwise see on PostgreSQL.
+Fifteen tables and one view come back — and `crm_contacts` and `crm_accounts`
+are not among them, exactly as designed. Then ask about the column you
+migrated:
+
+```sql
+SELECT column_name, data_type, is_nullable
+FROM information_schema.columns
+WHERE table_name = 'orders'
+ORDER BY ordinal_position;
+```
+
+`internal_notes`, `text`, `YES` — the last row, added by an `ALTER TABLE`
+rather than by recreating anything, with the rows seeded in step 6 still
+sitting in the table underneath it.
+
+One more, because it is the whole series in one query:
+
+```sql
+SELECT enum_range(NULL::order_status);
+```
+
+`{pending,paid,shipped,cancelled}` — the enum you typed into the **Types** tab
+in walkthrough 04, now a real type in a real catalog.
+
+Back in the app, press **Check my work** at the foot of this walkthrough. It
+checks the diagram rather than the database — both custom types, thirteen
+indexes, `internal_notes` present, the two CRM tables still absent from the
+generated script, and **Problems** clean — which between them cover
+everything the database just confirmed from the other side.
 
 ## Gotchas
 
@@ -443,11 +439,7 @@ here has its own index, which is exactly what keeps this diagram out of the
 
 ## Where to go next
 
-- [Export, share and save](14-export-share-and-save.md) — turn this same
-  diagram into a shareable link, a checkpoint, or a file, instead of a live
-  database.
-- [Fix what Problems finds](10-fix-what-problems-finds.md) — the linter that
-  caught the missing foreign-key indexes before this diagram ever reached a
-  real database.
-- [Group tables](03-group-tables.md) — more on the external-group flag this
-  walkthrough's **Read schema** step turns on by default.
+- [Export, share and save](14-export-share-and-save.md) — the last walkthrough
+  in the series, and the one that answers "so what do I do with this file
+  now?" Everything the database could not give back in step 9 is what those
+  export formats are for.
