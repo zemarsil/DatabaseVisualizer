@@ -139,7 +139,7 @@ export function Canvas() {
   const renamingTableId = useUi((s) => s.renamingTableId);
   const setRenamingTableId = useUi((s) => s.setRenamingTableId);
 
-  const { fitView, screenToFlowPosition, setViewport, getViewport } = useReactFlow();
+  const { fitView, screenToFlowPosition, setViewport, setCenter, getViewport } = useReactFlow();
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [dropping, setDropping] = useState(false);
   const dragDepth = useRef(0);
@@ -783,13 +783,17 @@ export function Canvas() {
 
   useEffect(() => {
     if (!focusTableId) return;
-    // Frame the table plus its immediate neighbors, not just the table alone,
-    // so the surrounding connections stay visible instead of filling the screen.
-    const dist = reachableTables(diagram, focusTableId);
-    const ids = [...dist.entries()].filter(([, d]) => d <= 1).map(([id]) => ({ id }));
-    fitView({ nodes: ids, duration: 500, maxZoom: 2.5, padding: 0.05 });
+    // fitView's zoom is set by how much space the node set needs, so with a
+    // few neighbors in the mix it usually lands well under maxZoom and the
+    // cap never kicks in — raising it did nothing. Force the zoom instead of
+    // fitting to a bounding box, so a click always lands at the same close level.
+    const t = tableMap.get(focusTableId);
+    if (t) {
+      const center = rectCenter(tableRect(t, nodeSizes));
+      void setCenter(center.x, center.y, { zoom: 1.75, duration: 500 });
+    }
     focusTable(null);
-  }, [focusTableId, diagram, fitView, focusTable]);
+  }, [focusTableId, tableMap, nodeSizes, setCenter, focusTable]);
 
   // Starting a simulation frames every table that takes part.
   const simKey = simResult ? `${simResult.targetId}:${simResult.tableIds.join(',')}` : '';
