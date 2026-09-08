@@ -204,7 +204,7 @@
       "note": "Full rebuild, not incremental: one new order can change the average gap for every order this customer ever placed, so there is nothing sane to upsert.",
       "derivations": [
         { "id": "drv_cc_avg_gap_days", "targetColumnId": "col_cc_avg_gap_days", "expression": "CAST(placed_at AS DATE)", "aggregate": "AVG", "groupBy": ["customer_id"], "filter": "status <> 'cancelled'", "window": { "fn": "DIFF", "orderBy": ["placed_at"], "partitionBy": ["customer_id"] } },
-        { "id": "drv_cc_order_count", "targetColumnId": "col_cc_order_count", "expression": "id", "aggregate": "COUNT", "groupBy": ["customer_id"], "filter": "status <> 'cancelled'" }
+        { "id": "drv_cc_order_count", "targetColumnId": "col_cc_order_count", "expression": "*", "aggregate": "COUNT", "groupBy": ["customer_id"], "filter": "status <> 'cancelled'" }
       ]
     }
   ],
