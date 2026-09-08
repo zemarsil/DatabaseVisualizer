@@ -203,6 +203,12 @@ export function flushCurrentDiagram(): Promise<void> {
   return putDiagram(diagramRecord(useStore.getState().diagram, getCurrentDiagramId())).catch(() => undefined);
 }
 
+/** Every "replace the whole diagram" path calls this first, so the diagram it is leaving gets its own library entry instead of being overwritten by what replaces it. */
+export async function startFreshDiagramEntry(): Promise<void> {
+  await flushCurrentDiagram();
+  setCurrentDiagramId(newDiagramId());
+}
+
 export async function saveCheckpoint(name: string): Promise<CheckpointRecord> {
   const d = useStore.getState().diagram;
   const record = checkpointRecord(d, getCurrentDiagramId(), name);
