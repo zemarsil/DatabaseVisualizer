@@ -366,8 +366,12 @@ export function Canvas() {
       const sourceRow = r.sourceColumnIds.length ? srcShown.findIndex((c) => c.id === r.sourceColumnIds[0]) : -1;
       const targetRow = r.targetColumnIds.length ? tgtShown.findIndex((c) => c.id === r.targetColumnIds[0]) : -1;
       const srcCol = src.columns.find((c) => c.id === r.sourceColumnIds[0]);
-      // Relationships sharing identical anchor points would otherwise render as fully overlapping curves.
-      const anchorKey = `${r.sourceTableId}#${sourceRow}->${r.targetTableId}#${targetRow}`;
+      // Relationships sharing identical anchor points would otherwise render as fully overlapping
+      // curves — including a reverse pair (A->B and B->A over the same two columns), so the key
+      // is direction-independent.
+      const a = `${r.sourceTableId}#${sourceRow}`;
+      const b = `${r.targetTableId}#${targetRow}`;
+      const anchorKey = a < b ? `${a}->${b}` : `${b}->${a}`;
       return { r, src, sourceRow, targetRow, srcCol, anchorKey };
     });
     const anchorCounts = new Map<string, number>();
