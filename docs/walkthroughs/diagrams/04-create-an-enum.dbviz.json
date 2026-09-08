@@ -1,0 +1,88 @@
+{
+  "version": 1,
+  "name": "Create an enum and use it — customers and orders",
+  "dialect": "postgresql",
+  "customTypes": [
+    {
+      "id": "typ_order_status",
+      "name": "order_status",
+      "kind": "enum",
+      "values": ["pending", "paid", "shipped", "cancelled"],
+      "comment": "A closed, small set of states the application code already branches on. Read Gotchas before you reach for this on anything that grows."
+    },
+    {
+      "id": "typ_postal_address",
+      "name": "postal_address",
+      "kind": "composite",
+      "fields": [
+        { "id": "ctf_street", "name": "street", "type": "TEXT" },
+        { "id": "ctf_city", "name": "city", "type": "TEXT" },
+        { "id": "ctf_postal_code", "name": "postal_code", "type": "TEXT" },
+        { "id": "ctf_country", "name": "country", "type": "CHAR(2)" }
+      ],
+      "comment": "A struct-shaped value with no lifecycle of its own — unlike order_status, nothing here ever needs a value added or removed."
+    }
+  ],
+  "groups": [],
+  "tables": [
+    {
+      "id": "tbl_customers",
+      "name": "customers",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per person who has ordered. mailing_address is a postal_address, typed by writing the type's name into the column's type cell.",
+      "position": { "x": 0, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_customers_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_customers_mailing_address", "name": "mailing_address", "type": "postal_address", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Composite type. Nullable: we only have it once an order ships." },
+        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_orders",
+      "name": "orders",
+      "schema": "public",
+      "color": "blue",
+      "comment": "status is an order_status, not a raw string — the column's type cell names the enum by name, same mechanism as mailing_address above.",
+      "position": { "x": 320, "y": 0 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_orders_customer", "name": "orders_customer_id_idx", "columnIds": ["col_orders_customer_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_orders_status", "name": "status", "type": "order_status", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'", "comment": "Every order starts pending. The quotes around pending are part of the default text you type." },
+        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
+        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": ["col_orders_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "orders_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    }
+  ],
+  "notes": [
+    {
+      "id": "note_enum_lifecycle",
+      "text": "Two kinds of custom type, two different lifecycles.\n\norder_status is a closed set that PostgreSQL enforces for you. Adding a value later is ALTER TYPE order_status ADD VALUE 'returned' — cheap. Removing one is not: PostgreSQL has no DROP VALUE, so a value that turns out to be wrong means building a replacement type and migrating every column and default across. If a set of strings is going to grow or shrink over the table's life, a lookup table with a foreign key beats an enum every time.\n\npostal_address has no such lifecycle problem — its shape is just documentation for a group of columns, not a constraint on their values.",
+      "position": { "x": 660, "y": 0 },
+      "width": 340,
+      "height": 260,
+      "color": "yellow"
+    }
+  ]
+}

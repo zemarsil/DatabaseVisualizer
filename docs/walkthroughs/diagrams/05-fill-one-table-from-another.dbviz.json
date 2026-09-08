@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "name": "Fill one table from another — daily sales and customer cadence",
+  "dialect": "postgresql",
+  "customTypes": [
+    {
+      "id": "typ_order_status",
+      "name": "order_status",
+      "kind": "enum",
+      "values": ["pending", "paid", "shipped", "cancelled"],
+      "comment": "The running example's order lifecycle."
+    }
+  ],
+  "tables": [
+    {
+      "id": "tbl_customers",
+      "name": "customers",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per shopper.",
+      "position": { "x": 0, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_customers_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_books",
+      "name": "books",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per edition we stock.",
+      "position": { "x": 640, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_books_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_books_title", "name": "title", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_books_isbn", "name": "isbn", "type": "CHAR(13)", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_books_price_cents", "name": "price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "price_cents >= 0" }
+      ]
+    },
+    {
+      "id": "tbl_orders",
+      "name": "orders",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per checkout. status drives the paid-only filter that daily_sales relies on; placed_at is the sequence customer_cadence measures gaps over.",
+      "position": { "x": 0, "y": 260 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_orders_customer_id", "name": "orders_customer_id_idx", "columnIds": ["col_orders_customer_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_orders_status", "name": "status", "type": "order_status", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
+        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
+        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_order_items",
+      "name": "order_items",
+      "schema": "public",
+      "color": "blue",
+      "comment": "The grain daily_sales rolls up: one row per book per order.",
+      "position": { "x": 320, "y": 260 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_oi_order_id", "name": "order_items_order_id_idx", "columnIds": ["col_oi_order_id"], "unique": false },
+        { "id": "idx_oi_book_id", "name": "order_items_book_id_idx", "columnIds": ["col_oi_book_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_oi_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_oi_order_id", "name": "order_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_oi_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_oi_quantity", "name": "quantity", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "1", "check": "quantity > 0" },
+        { "id": "col_oi_unit_price_cents", "name": "unit_price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "unit_price_cents >= 0" }
+      ]
+    },
+    {
+      "id": "tbl_daily_sales",
+      "name": "daily_sales",
+      "schema": "public",
+      "color": "orange",
+      "comment": "One row per book per day it sold at least one copy. Rebuilt nightly from order_items — see the data-flow edge and its Tagged query for the upsert this diagram cannot draw directly.",
+      "position": { "x": 320, "y": 520 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_ds_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_ds_day", "name": "day", "type": "DATE", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_ds_units", "name": "units", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
+        { "id": "col_ds_revenue_cents", "name": "revenue_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+      ]
+    },
+    {
+      "id": "tbl_customer_cadence",
+      "name": "customer_cadence",
+      "schema": "public",
+      "color": "orange",
+      "comment": "One row per customer. Rebuilt nightly from orders — see the data-flow edge.",
+      "position": { "x": 0, "y": 520 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_cc_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_cc_avg_gap_days", "name": "avg_gap_days", "type": "NUMERIC(10,2)", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "NULL for a customer with fewer than two paid orders: there is no gap yet to average." },
+        { "id": "col_cc_order_count", "name": "order_count", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": ["col_orders_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "orders_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_items_order",
+      "kind": "fk",
+      "verb": "part-of",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_oi_order_id"],
+      "targetTableId": "tbl_orders",
+      "targetColumnIds": ["col_orders_id"],
+      "name": "order_items_order_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_items_book",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_oi_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "order_items_book_id_fkey",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_ds_book",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_daily_sales",
+      "sourceColumnIds": ["col_ds_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "daily_sales_book_id_fkey",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_cadence_customer",
+      "kind": "fk",
+      "verb": "extends",
+      "sourceTableId": "tbl_customer_cadence",
+      "sourceColumnIds": ["col_cc_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "customer_cadence_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_flow_daily_sales",
+      "kind": "flow",
+      "verb": "feeds",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_daily_sales",
+      "targetColumnIds": [],
+      "name": "nightly rollup",
+      "note": "Rebuilt nightly, not on write: a day's sales are not final until the day is over. The upsert below is what makes re-running it safe.",
+      "derivations": [
+        { "id": "drv_ds_day", "targetColumnId": "col_ds_day", "expression": "CAST(orders.placed_at AS DATE)", "groupBy": ["book_id", "CAST(orders.placed_at AS DATE)"], "filter": "orders.status = 'paid'" },
+        { "id": "drv_ds_units", "targetColumnId": "col_ds_units", "expression": "quantity", "aggregate": "SUM", "groupBy": ["book_id", "CAST(orders.placed_at AS DATE)"], "filter": "orders.status = 'paid'" },
+        { "id": "drv_ds_revenue_cents", "targetColumnId": "col_ds_revenue_cents", "expression": "quantity * unit_price_cents", "aggregate": "SUM", "groupBy": ["book_id", "CAST(orders.placed_at AS DATE)"], "filter": "orders.status = 'paid'" }
+      ],
+      "query": "INSERT INTO daily_sales (book_id, day, units, revenue_cents)\nSELECT oi.book_id, CAST(o.placed_at AS DATE), SUM(oi.quantity), SUM(oi.quantity * oi.unit_price_cents)\nFROM order_items oi\nJOIN orders o ON o.id = oi.order_id\nWHERE o.status = 'paid'\nGROUP BY oi.book_id, CAST(o.placed_at AS DATE)\nON CONFLICT (book_id, day) DO UPDATE\n  SET units = daily_sales.units + EXCLUDED.units,\n      revenue_cents = daily_sales.revenue_cents + EXCLUDED.revenue_cents;"
+    },
+    {
+      "id": "rel_flow_customer_cadence",
+      "kind": "flow",
+      "verb": "feeds",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_customer_cadence",
+      "targetColumnIds": [],
+      "name": "nightly rollup",
+      "note": "Full rebuild, not incremental: one new order can change the average gap for every order this customer ever placed, so there is nothing sane to upsert.",
+      "derivations": [
+        { "id": "drv_cc_avg_gap_days", "targetColumnId": "col_cc_avg_gap_days", "expression": "CAST(placed_at AS DATE)", "aggregate": "AVG", "groupBy": ["customer_id"], "filter": "status <> 'cancelled'", "window": { "fn": "DIFF", "orderBy": ["placed_at"], "partitionBy": ["customer_id"] } },
+        { "id": "drv_cc_order_count", "targetColumnId": "col_cc_order_count", "expression": "id", "aggregate": "COUNT", "groupBy": ["customer_id"], "filter": "status <> 'cancelled'" }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "id": "note_mechanism",
+      "text": "table.column in an expression, filter or group-by key is resolved through this diagram's own foreign keys, not restated by hand: orders.status on a flow that starts at order_items follows order_items.order_id → orders.id. Get the foreign keys right first — the lookup depends on them.",
+      "position": { "x": 640, "y": 520 },
+      "width": 300,
+      "height": 170,
+      "color": "yellow"
+    }
+  ],
+  "groups": []
+}

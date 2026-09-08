@@ -1,0 +1,222 @@
+{
+  "version": 1,
+  "name": "Trace a path between tables — two routes from books to customers",
+  "dialect": "postgresql",
+  "groups": [],
+  "tables": [
+    {
+      "id": "tbl_authors",
+      "name": "authors",
+      "schema": "public",
+      "color": "blue",
+      "comment": "One row per person who wrote something we sell. The dashed link down to reviews is not a foreign key — see the sticky note.",
+      "position": { "x": 0, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_authors_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_authors_name", "name": "name", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_authors_country", "name": "country", "type": "CHAR(2)", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_books",
+      "name": "books",
+      "schema": "public",
+      "color": "blue",
+      "comment": "The pivot for this walkthrough: it reaches customers two ways below, and Trace does not pick the one you would.",
+      "position": { "x": 0, "y": 260 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_books_author", "name": "books_author_id_idx", "columnIds": ["col_books_author_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_books_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_books_author_id", "name": "author_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_books_title", "name": "title", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_books_isbn", "name": "isbn", "type": "CHAR(13)", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_books_price_cents", "name": "price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "price_cents >= 0" },
+        { "id": "col_books_published_on", "name": "published_on", "type": "DATE", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_reviews",
+      "name": "reviews",
+      "schema": "public",
+      "color": "blue",
+      "comment": "books -> reviews -> customers is two foreign-key hops — one shorter than books -> order_items -> orders -> customers, so it is the path Trace returns.",
+      "position": { "x": 320, "y": 520 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_reviews_book", "name": "reviews_book_id_idx", "columnIds": ["col_reviews_book_id"], "unique": false },
+        { "id": "idx_reviews_customer", "name": "reviews_customer_id_idx", "columnIds": ["col_reviews_customer_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_reviews_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_reviews_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_reviews_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_reviews_rating", "name": "rating", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "rating BETWEEN 1 AND 5" },
+        { "id": "col_reviews_posted_at", "name": "posted_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_customers",
+      "name": "customers",
+      "schema": "public",
+      "color": "blue",
+      "comment": "The trace target throughout this walkthrough. Reachable from books through reviews, and from books through order_items and orders.",
+      "position": { "x": 640, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_customers_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_orders",
+      "name": "orders",
+      "schema": "public",
+      "color": "blue",
+      "comment": "Part of the longer, three-hop route from books to customers — the one that answers 'who bought this book' rather than 'who reviewed it'.",
+      "position": { "x": 640, "y": 260 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_orders_customer", "name": "orders_customer_id_idx", "columnIds": ["col_orders_customer_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_orders_status", "name": "status", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'", "check": "status IN ('pending', 'paid', 'shipped', 'cancelled')" },
+        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
+        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_order_items",
+      "name": "order_items",
+      "schema": "public",
+      "color": "blue",
+      "comment": "The grain a rollup would aggregate, and the last leg of the longer books -> customers route.",
+      "position": { "x": 640, "y": 520 },
+      "checks": [],
+      "indexes": [
+        { "id": "idx_order_items_order", "name": "order_items_order_id_idx", "columnIds": ["col_order_items_order_id"], "unique": false },
+        { "id": "idx_order_items_book", "name": "order_items_book_id_idx", "columnIds": ["col_order_items_book_id"], "unique": false }
+      ],
+      "columns": [
+        { "id": "col_order_items_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_order_items_order_id", "name": "order_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_order_items_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_order_items_quantity", "name": "quantity", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "1", "check": "quantity > 0" },
+        { "id": "col_order_items_unit_price_cents", "name": "unit_price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "unit_price_cents >= 0" }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_books_author",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_books",
+      "sourceColumnIds": ["col_books_author_id"],
+      "targetTableId": "tbl_authors",
+      "targetColumnIds": ["col_authors_id"],
+      "name": "books_author_id_fkey",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_reviews_book",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_reviews",
+      "sourceColumnIds": ["col_reviews_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "reviews_book_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_reviews_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_reviews",
+      "sourceColumnIds": ["col_reviews_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "reviews_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": ["col_orders_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "orders_customer_id_fkey",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_order_items_order",
+      "kind": "fk",
+      "verb": "part-of",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_order_items_order_id"],
+      "targetTableId": "tbl_orders",
+      "targetColumnIds": ["col_orders_id"],
+      "name": "order_items_order_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_order_items_book",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_order_items_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "order_items_book_id_fkey",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_authors_reviews_carousel",
+      "kind": "dependency",
+      "verb": "uses",
+      "sourceTableId": "tbl_authors",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_reviews",
+      "targetColumnIds": [],
+      "name": "featured-authors carousel",
+      "note": "The storefront's featured-authors carousel ranks authors by recent review activity — application code reads reviews when it builds that list, but nothing in the schema enforces it. There is no shared column, so it cannot carry a foreign key.",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
+    }
+  ],
+  "notes": [
+    {
+      "id": "note_shortest",
+      "text": "Trace finds the SHORTEST chain of connections, not the most meaningful one.\n\nbooks -> customers has two routes: through reviews (2 hops) and through order_items -> orders (3 hops). Trace always returns the 2-hop one — 'who reviewed this book' — even when 'who bought this book' (one hop longer) is the question you actually meant.\n\nHop count is not a cost model. Read the hop list before you trust the JOIN.",
+      "position": { "x": 960, "y": 0 },
+      "width": 300,
+      "height": 210,
+      "color": "yellow"
+    },
+    {
+      "id": "note_dependency",
+      "text": "authors -> reviews is a dependency, not a foreign key (see its note in the inspector). Trace still walks it: a path that needs it comes out as CROSS JOIN plus a comment, because there is no shared column to write an ON clause from.\n\nTry tracing authors -> customers. It is shorter through this dependency and reviews than through books and reviews, so the generated query mixes a real JOIN with a CROSS JOIN.",
+      "position": { "x": 960, "y": 520 },
+      "width": 300,
+      "height": 220,
+      "color": "yellow"
+    }
+  ]
+}

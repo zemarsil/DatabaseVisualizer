@@ -1,0 +1,412 @@
+{
+  "version": 1,
+  "name": "Read a big diagram — the bookshop, fully grown",
+  "dialect": "postgresql",
+  "customTypes": [
+    {
+      "id": "typ_order_status",
+      "name": "order_status",
+      "kind": "enum",
+      "values": ["pending", "paid", "shipped", "cancelled"],
+      "comment": "Closed set, read by the app and by the two rollups below."
+    }
+  ],
+  "groups": [
+    {
+      "id": "grp_crm",
+      "name": "CRM (read-only)",
+      "color": "purple",
+      "external": true,
+      "note": "Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, so nothing here is created by the generated script.",
+      "position": { "x": 640, "y": -260 }
+    },
+    {
+      "id": "grp_catalog",
+      "name": "catalog",
+      "color": "indigo",
+      "external": false,
+      "note": "Everything schema-tagged \"catalog\" — created in one click by right-click the canvas → Group tables by schema.",
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "grp_shop",
+      "name": "shop",
+      "color": "slate",
+      "external": false,
+      "note": "Everything schema-tagged \"shop\" — the transactional tables, grouped the same way as catalog.",
+      "position": { "x": 640, "y": 260 }
+    }
+  ],
+  "tables": [
+    {
+      "id": "tbl_authors",
+      "name": "authors",
+      "schema": "catalog",
+      "color": "blue",
+      "groupId": "grp_catalog",
+      "comment": "One row per person who wrote something we sell.",
+      "position": { "x": 0, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_authors_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_authors_name", "name": "name", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_authors_country", "name": "country", "type": "CHAR(2)", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_publishers",
+      "name": "publishers",
+      "schema": "catalog",
+      "color": "blue",
+      "groupId": "grp_catalog",
+      "comment": "One row per publishing house.",
+      "position": { "x": 320, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_publishers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_publishers_name", "name": "name", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_publishers_country", "name": "country", "type": "CHAR(2)", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_books",
+      "name": "books",
+      "schema": "catalog",
+      "color": "blue",
+      "groupId": "grp_catalog",
+      "comment": "One row per edition we stock.",
+      "position": { "x": 0, "y": 260 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_books_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_books_author_id", "name": "author_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_books_publisher_id", "name": "publisher_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_books_title", "name": "title", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_books_isbn", "name": "isbn", "type": "CHAR(13)", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_books_price_cents", "name": "price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "price_cents >= 0" },
+        { "id": "col_books_published_on", "name": "published_on", "type": "DATE", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_customers",
+      "name": "customers",
+      "schema": "shop",
+      "color": "blue",
+      "groupId": "grp_shop",
+      "comment": "People who can place orders.",
+      "position": { "x": 640, "y": 260 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_customers_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
+        { "id": "col_customers_crm_contact_id", "name": "crm_contact_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Points at the CRM group across the database boundary." },
+        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_orders",
+      "name": "orders",
+      "schema": "shop",
+      "color": "blue",
+      "groupId": "grp_shop",
+      "comment": "One row per checkout.",
+      "position": { "x": 640, "y": 520 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_orders_status", "name": "status", "type": "order_status", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
+        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
+        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_order_items",
+      "name": "order_items",
+      "schema": "shop",
+      "color": "blue",
+      "groupId": "grp_shop",
+      "comment": "The grain the two rollups aggregate. One row per book per order — the primary key is the pair, not a surrogate id, which is what makes this a join table.",
+      "position": { "x": 960, "y": 780 },
+      "collapsed": "keys",
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_items_order_id", "name": "order_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_items_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_items_quantity", "name": "quantity", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "1", "check": "quantity > 0" },
+        { "id": "col_items_unit_price_cents", "name": "unit_price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_reviews",
+      "name": "reviews",
+      "schema": "shop",
+      "color": "blue",
+      "groupId": "grp_shop",
+      "comment": "A second path between customers and books, independent of orders — handy for tracing, not just for reading.",
+      "position": { "x": 960, "y": 520 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_reviews_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_reviews_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_reviews_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_reviews_rating", "name": "rating", "type": "SMALLINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "check": "rating BETWEEN 1 AND 5" },
+        { "id": "col_reviews_posted_at", "name": "posted_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+      ]
+    },
+    {
+      "id": "tbl_daily_sales",
+      "name": "daily_sales",
+      "color": "orange",
+      "comment": "Nightly rollup built from order_items. Nothing writes here by hand — read the flow into it, not the column grid, to see where the numbers come from.",
+      "position": { "x": 1280, "y": 1040 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_daily_day", "name": "day", "type": "DATE", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_daily_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_daily_units", "name": "units", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
+        { "id": "col_daily_revenue_cents", "name": "revenue_cents", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+      ]
+    },
+    {
+      "id": "tbl_customer_cadence",
+      "name": "customer_cadence",
+      "color": "orange",
+      "comment": "One row per customer: how many paid orders they have placed and the average gap between them. Fed by a sequence derivation, not a plain aggregate.",
+      "position": { "x": 640, "y": 780 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_cadence_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_cadence_avg_gap_days", "name": "avg_gap_days", "type": "NUMERIC(6,2)", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "NULL for a customer with only one paid order — there is no gap yet." },
+        { "id": "col_cadence_order_count", "name": "order_count", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+      ]
+    },
+    {
+      "id": "tbl_crm_contacts",
+      "name": "crm_contacts",
+      "color": "purple",
+      "groupId": "grp_crm",
+      "comment": "Their table, shown so the join is visible. Not ours to change.",
+      "position": { "x": 640, "y": -260 },
+      "collapsed": "header",
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_crm_contact_id", "name": "contact_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        { "id": "col_crm_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_v_book_sales",
+      "name": "v_book_sales",
+      "kind": "view",
+      "color": "teal",
+      "comment": "What a bookseller dashboard actually reads. Never touches order_items or orders directly — everything here comes through the rollup.",
+      "viewSql": "SELECT b.id AS book_id,\n       b.title,\n       SUM(d.units) AS total_units,\n       SUM(d.revenue_cents) AS total_revenue_cents\nFROM books b\nJOIN daily_sales d ON d.book_id = b.id\nGROUP BY b.id, b.title",
+      "position": { "x": 1280, "y": 1300 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_vbs_book_id", "name": "book_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vbs_title", "name": "title", "type": "TEXT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vbs_total_units", "name": "total_units", "type": "INTEGER", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_vbs_total_revenue_cents", "name": "total_revenue_cents", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_books_author",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_books",
+      "sourceColumnIds": ["col_books_author_id"],
+      "targetTableId": "tbl_authors",
+      "targetColumnIds": ["col_authors_id"],
+      "name": "books_author_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_books_publisher",
+      "kind": "fk",
+      "verb": "uses",
+      "sourceTableId": "tbl_books",
+      "sourceColumnIds": ["col_books_publisher_id"],
+      "targetTableId": "tbl_publishers",
+      "targetColumnIds": ["col_publishers_id"],
+      "name": "books_publisher_id_fkey",
+      "onDelete": "SET NULL",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_customers_crm",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_customers",
+      "sourceColumnIds": ["col_customers_crm_contact_id"],
+      "targetTableId": "tbl_crm_contacts",
+      "targetColumnIds": ["col_crm_contact_id"],
+      "name": "customers_crm_contact_id_fkey",
+      "note": "crm_contacts lives in the CRM group, so the script documents this link instead of emitting a constraint.",
+      "onDelete": "SET NULL",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": ["col_orders_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "orders_customer_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_items_order",
+      "kind": "fk",
+      "verb": "part-of",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_items_order_id"],
+      "targetTableId": "tbl_orders",
+      "targetColumnIds": ["col_orders_id"],
+      "name": "order_items_order_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_items_book",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": ["col_items_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "order_items_book_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_reviews_book",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_reviews",
+      "sourceColumnIds": ["col_reviews_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "reviews_book_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_reviews_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_reviews",
+      "sourceColumnIds": ["col_reviews_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "reviews_customer_id_fkey",
+      "onDelete": "CASCADE",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_daily_book",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_daily_sales",
+      "sourceColumnIds": ["col_daily_book_id"],
+      "targetTableId": "tbl_books",
+      "targetColumnIds": ["col_books_id"],
+      "name": "daily_sales_book_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_cadence_customer",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_customer_cadence",
+      "sourceColumnIds": ["col_cadence_customer_id"],
+      "targetTableId": "tbl_customers",
+      "targetColumnIds": ["col_customers_id"],
+      "name": "customer_cadence_customer_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "id": "rel_flow_daily_sales",
+      "kind": "flow",
+      "verb": "feeds",
+      "sourceTableId": "tbl_order_items",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_daily_sales",
+      "targetColumnIds": [],
+      "name": "nightly rollup",
+      "note": "Runs at 02:00 via cron. The composite primary key (day, book_id) makes it safe to rerun.",
+      "derivations": [
+        { "id": "drv_daily_day", "targetColumnId": "col_daily_day", "expression": "CAST(orders.placed_at AS DATE)", "groupBy": ["book_id", "CAST(orders.placed_at AS DATE)"], "filter": "orders.status = 'paid'" },
+        { "id": "drv_daily_units", "targetColumnId": "col_daily_units", "expression": "quantity", "aggregate": "SUM", "groupBy": ["book_id", "CAST(orders.placed_at AS DATE)"], "filter": "orders.status = 'paid'" },
+        { "id": "drv_daily_revenue", "targetColumnId": "col_daily_revenue_cents", "expression": "quantity * unit_price_cents", "aggregate": "SUM", "groupBy": ["book_id", "CAST(orders.placed_at AS DATE)"], "filter": "orders.status = 'paid'" }
+      ],
+      "query": "INSERT INTO daily_sales (day, book_id, units, revenue_cents)\nSELECT o.placed_at::date, oi.book_id,\n       SUM(oi.quantity), SUM(oi.quantity * oi.unit_price_cents)\nFROM order_items oi\nJOIN orders o ON o.id = oi.order_id\nWHERE o.status = 'paid'\nGROUP BY 1, 2;"
+    },
+    {
+      "id": "rel_flow_cadence",
+      "kind": "flow",
+      "verb": "feeds",
+      "sourceTableId": "tbl_orders",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_customer_cadence",
+      "targetColumnIds": [],
+      "name": "cadence rollup",
+      "note": "The first paid order of a customer has no previous one, so its gap is NULL and AVG ignores it.",
+      "derivations": [
+        { "id": "drv_cadence_avg_gap", "targetColumnId": "col_cadence_avg_gap_days", "expression": "CAST(placed_at AS DATE)", "aggregate": "AVG", "groupBy": ["customer_id"], "filter": "status = 'paid'", "window": { "fn": "DIFF", "orderBy": ["placed_at"], "partitionBy": ["customer_id"] } },
+        { "id": "drv_cadence_order_count", "targetColumnId": "col_cadence_order_count", "expression": "*", "aggregate": "COUNT", "groupBy": ["customer_id"], "filter": "status = 'paid'" }
+      ],
+      "query": "WITH paid AS (\n  SELECT customer_id, placed_at::date AS d,\n         placed_at::date - LAG(placed_at::date) OVER (PARTITION BY customer_id ORDER BY placed_at) AS gap_days\n  FROM orders WHERE status = 'paid'\n)\nINSERT INTO customer_cadence (customer_id, avg_gap_days, order_count)\nSELECT customer_id, AVG(gap_days), COUNT(*)\nFROM paid\nGROUP BY customer_id;"
+    },
+    {
+      "id": "rel_view_books",
+      "kind": "flow",
+      "sourceTableId": "tbl_books",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_v_book_sales",
+      "targetColumnIds": [],
+      "name": "view source",
+      "note": "books is named in the view's FROM clause."
+    },
+    {
+      "id": "rel_view_daily",
+      "kind": "flow",
+      "sourceTableId": "tbl_daily_sales",
+      "sourceColumnIds": [],
+      "targetTableId": "tbl_v_book_sales",
+      "targetColumnIds": [],
+      "name": "view source",
+      "note": "daily_sales is the table the view's SELECT actually aggregates."
+    }
+  ],
+  "notes": [
+    {
+      "id": "note_scale",
+      "text": "This is the bookshop schema at a size where it stops fitting on one screen — 11 tables across two schemas, plus an external CRM and a rollup-fed view.\n\norder_items and crm_contacts are saved collapsed (Keys only / Header only): the display mode travels with the file, not just this session.\n\nPress L to Detangle, select a table and press . to see its neighbourhood, Ctrl+K to jump anywhere by name.",
+      "position": { "x": 1600, "y": 0 },
+      "width": 320,
+      "height": 230,
+      "color": "yellow"
+    }
+  ]
+}

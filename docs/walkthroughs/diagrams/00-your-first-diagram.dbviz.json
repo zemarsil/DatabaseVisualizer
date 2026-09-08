@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "name": "Your first diagram — authors and books",
+  "dialect": "postgresql",
+  "tables": [
+    {
+      "id": "tbl_authors",
+      "name": "authors",
+      "schema": "public",
+      "color": "blue",
+      "position": { "x": 0, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_authors_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_authors_name", "name": "name", "type": "TEXT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    },
+    {
+      "id": "tbl_books",
+      "name": "books",
+      "schema": "public",
+      "color": "blue",
+      "position": { "x": 320, "y": 0 },
+      "checks": [],
+      "indexes": [],
+      "columns": [
+        { "id": "col_books_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        { "id": "col_books_author_id", "name": "author_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
+        { "id": "col_books_title", "name": "title", "type": "TEXT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+      ]
+    }
+  ],
+  "relationships": [
+    {
+      "id": "rel_books_author",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_books",
+      "sourceColumnIds": ["col_books_author_id"],
+      "targetTableId": "tbl_authors",
+      "targetColumnIds": ["col_authors_id"]
+    }
+  ],
+  "notes": [
+    {
+      "id": "note_deeper",
+      "text": "This diagram is deliberately bare — two tables, three columns each. Set up a table (01) rebuilds the same authors and books with every column, key, default and check filled in.",
+      "position": { "x": 660, "y": 0 },
+      "width": 300,
+      "height": 150,
+      "color": "yellow"
+    }
+  ]
+}

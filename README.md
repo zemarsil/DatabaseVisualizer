@@ -68,13 +68,13 @@ docker compose up --build
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express |
 | See / copy DDL | Bottom drawer → **SQL** (whole schema or the selected table). The table inspector also has a preview |
-| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. Dropping a `.sql`, `.dbml` or `.dbviz.json` file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
+| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. Dropping a `.sql`, `.dbviz.json` or SQLite database file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
 | Check the schema | Bottom drawer → **Problems**: lint findings with one-click fixes, and suggested foreign keys from column names |
 | Copy / paste tables | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` on the selection; pasting between browser tabs or diagrams works too |
 | Switch dialect | Top bar selector (PostgreSQL, MariaDB, SQLite); known column types are translated (`SERIAL` ↔ `INT AUTO_INCREMENT`, `TIMESTAMPTZ` ↔ `TIMESTAMP`, `JSONB` ↔ `JSON`, …). Undo reverts |
 | Collapse tables | The chevron in a table header cycles all columns → keys only → header only; **View → All tables** does it for everything; zooming far out collapses automatically |
 | Focus on a table | Select it and press `.` (or right-click → Focus); `[` / `]` change how many hops stay visible, `Esc` clears |
-| Align and tidy | Box-select, then right-click → Align / Distribute; **View → Snap tables to the grid**; arrow keys nudge the selection (`Shift` for bigger steps); right-click the canvas → **Group by schema** |
+| Align and tidy | Box-select, then right-click → Align / Distribute; **View → Snap to grid**, a toggle that makes tables land on the grid as you drag them; arrow keys nudge the selection (`Shift` for bigger steps); right-click the canvas → **Group tables by schema** |
 | Detangle | **Detangle** button (`L`), direction menu next to it |
 | Trace | **Trace** button: with two tables selected it traces immediately, otherwise it enters pick mode; or use the **Trace** drawer tab |
 | Save / open | File menu, `Ctrl+S` / `Ctrl+O` (`.dbviz.json`). **File → Open recent…** lists every diagram this browser has worked on, with thumbnails |
@@ -86,6 +86,25 @@ docker compose up --build
 | SQLite in the browser | Pick the SQLite dialect and the Database tab runs the schema in an in-browser database (persisted in this browser) that Query, Migrate and Seed all talk to |
 
 Press `?` in the app for the full shortcut list.
+
+## Walkthroughs
+
+[`docs/walkthroughs/`](docs/walkthroughs/) is a series of hands-on guides — one
+task each, worked end to end, every one shipping the finished diagram so you can
+open it instead of typing along. Start with
+[Your first diagram](docs/walkthroughs/00-your-first-diagram.md), or jump to the
+one you are stuck on: [connecting tables](docs/walkthroughs/02-connect-two-tables.md),
+[external groups](docs/walkthroughs/03-group-tables.md),
+[filling one table from another](docs/walkthroughs/05-fill-one-table-from-another.md),
+[Simulate](docs/walkthroughs/06-simulate-a-data-flow.md),
+[indexes](docs/walkthroughs/07-add-indexes.md),
+[views](docs/walkthroughs/08-build-a-view.md).
+
+Each walkthrough's front matter carries assertions about its companion diagram —
+the SQL it generates, whether it lints clean, whether it simulates — which
+`npm test` runs against the app's own code, so the pages cannot quietly go out of
+date. [`docs/walkthroughs/WALKTHROUGH_FORMAT.md`](docs/walkthroughs/WALKTHROUGH_FORMAT.md)
+is the format and the procedure for adding one.
 
 ## Connection types
 
@@ -183,9 +202,9 @@ src/store/useStore.ts    zustand store with undo/redo and autosave
 src/store/useSimulation.ts  simulation mode: target, sample options, playback, recompute on edit
 src/components/          React UI (canvas, inspector, drawer panels, command palette)
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
-scripts/                 validate-dbviz.mjs: structural check for a hand-written diagram file
-docs/                    ADVISOR_OUTPUT_FORMAT.md + an example diagram
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format and the simulation
+scripts/                 validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
+docs/                    ADVISOR_OUTPUT_FORMAT.md, an example diagram, and walkthroughs/
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format, the simulation and the walkthroughs
 ```
 
 ```bash
