@@ -38,14 +38,26 @@ const table = [
   ...rows.map((r) => `| ${r.number} | [${r.title}](${r.name}) | ${r.level} | ${r.minutes} min | ${r.summary} |`),
 ].join('\n');
 
-const withDiagrams = rows.filter((r) => r.diagram);
-const diagrams = withDiagrams.length
+// One diagram per stage of the build, not one per walkthrough: a walkthrough
+// that reads the canvas without changing it (Simulate, Export) points at the
+// previous one's file, so list each file once, under the walkthrough that
+// produced it.
+const seen = new Set();
+const stages = [];
+for (const r of rows) {
+  if (!r.diagram || seen.has(r.diagram)) continue;
+  seen.add(r.diagram);
+  stages.push(`- [\`${r.diagram}\`](${r.diagram}) — the canvas at the end of ${r.number} ${r.title}`);
+}
+const diagrams = stages.length
   ? [
       '',
-      'Each one ships a finished diagram you can open with **File → Open** (`Ctrl+O`),',
-      'or by dropping the file on the canvas:',
+      'The series builds one schema, so its diagrams are the stages of that build.',
+      'Open any of them with **File → Open** (`Ctrl+O`), or by dropping the file on',
+      'the canvas — or press **Set up the canvas** inside a walkthrough, which loads',
+      'the stage it starts from for you:',
       '',
-      ...withDiagrams.map((r) => `- [\`${r.diagram}\`](${r.diagram}) — ${r.title}`),
+      ...stages,
     ].join('\n')
   : '';
 

@@ -1,7 +1,7 @@
 ---
 title: Read a big diagram
 slug: 12-read-a-big-diagram
-summary: Collapsing, focus mode, Detangle, hand alignment, the command palette and colour conventions — how to read an eleven-table schema without getting lost in it.
+summary: Collapsing, focus mode, Detangle, hand alignment, the command palette and regions — how to read the eighteen-table schema you have built without getting lost in it.
 level: intermediate
 minutes: 12
 dialect: postgresql
@@ -25,17 +25,17 @@ shortcuts:
   - Arrow keys
   - Shift+Arrow keys
   - Shift+drag
+start: diagrams/11-trace-a-path-between-tables.dbviz.json
 diagram: diagrams/12-read-a-big-diagram.dbviz.json
 checks:
-  - tables | authors, publishers, books, customers, orders, order_items, reviews, daily_sales, customer_cadence, crm_contacts, v_book_sales
-  - groups | CRM (read-only), catalog, shop
-  - views | v_book_sales
-  - kinds | fk:10, flow:4
-  - derivations | 5
+  - groups | shop, CRM (read-only), catalog, warehouse
+  - views | v_customer_orders
+  - kinds | fk:17, flow:6, embed:1, dependency:1
+  - derivations | 7
   - simulate | daily_sales
   - lint clean
 prerequisites:
-  - 02-connect-two-tables
+  - 11-trace-a-path-between-tables
 next:
   - 13-run-the-schema-on-a-real-database
 ---
@@ -44,16 +44,22 @@ next:
 
 ## What you'll build
 
-Nothing new gets typed in this one. You'll open a bookshop schema that has
-outgrown a single glance — eleven tables across two schemas, an external CRM,
-two rollups and a view — and use the tools that make a diagram like that
-readable: collapsing, focus, Detangle, hand alignment, the command palette and
-the colour conventions this series has been using all along.
+Two more regions, and a way of looking at what you already have. Twelve
+walkthroughs in, this canvas holds eighteen tables, seventeen foreign keys,
+six data flows, an embed, a dependency, a view, two custom types and four
+groups by the time you are done — a schema that has comfortably outgrown a
+single glance.
+
+Nothing new gets typed. This walkthrough is the tools that make a diagram this
+size readable: collapsing, focus, Detangle, hand alignment, the command
+palette, and boxing the two clusters that are still loose — `catalog` and
+`warehouse` — into regions of their own.
 
 ```mermaid
 erDiagram
     AUTHORS ||--o{ BOOKS : "wrote"
-    PUBLISHERS ||--o{ BOOKS : "published"
+    BOOKS ||--o| CONTRIBUTORS : "serializes (embed)"
+    CATALOG_EXPORT }o--o{ BOOKS : "uses (dependency)"
     CRM_CONTACTS ||--o{ CUSTOMERS : "syncs into"
     CUSTOMERS ||--o{ ORDERS : "placed"
     CUSTOMERS ||--o{ REVIEWS : "wrote"
@@ -61,9 +67,12 @@ erDiagram
     ORDERS ||--o{ ORDER_ITEMS : "contains"
     BOOKS ||--o{ ORDER_ITEMS : "sold as"
     ORDER_ITEMS }o..o{ DAILY_SALES : "feeds (flow)"
+    DAILY_SALES }o..o{ BOOK_TOTALS : "feeds (flow)"
     ORDERS }o..o{ CUSTOMER_CADENCE : "feeds (flow)"
-    BOOKS }o..o{ V_BOOK_SALES : "feeds (flow)"
-    DAILY_SALES }o..o{ V_BOOK_SALES : "feeds (flow)"
+    ORDER_ITEMS }o..o{ V_CUSTOMER_ORDERS : "feeds (view source)"
+    BOOKS ||--o{ STOCK_LEVELS : "stocked as"
+    ORDERS ||--o{ SHIPMENTS : "shipped as"
+    SHIPMENTS ||--o{ SHIPMENT_ITEMS : "contains"
 
     AUTHORS {
         bigserial id PK
@@ -71,26 +80,34 @@ erDiagram
     BOOKS {
         bigserial id PK
         bigint author_id FK
-        bigint publisher_id FK
+        jsonb contributors_json "embed target"
     }
     ORDER_ITEMS {
-        bigint order_id PK "FK, composite key"
-        bigint book_id PK "FK, composite key"
+        bigserial id PK
+        bigint order_id FK
+        bigint book_id FK
     }
     DAILY_SALES {
-        date day PK
         bigint book_id PK "FK"
+        date day PK
     }
 ```
 
 ## Before you start
 
-Read [Connect two tables](02-connect-two-tables.md) first if you haven't —
-this walkthrough assumes you already know what a foreign key handle and a
-data-flow link look like on the canvas, because it spends no time re-teaching
-either. Have **PostgreSQL** selected in the dialect selector; the companion
-diagram uses a Postgres enum and `NUMERIC`, which the other two dialects spell
-differently.
+You need what [Trace a path between tables](11-trace-a-path-between-tables.md)
+leaves behind: the whole eighteen-table schema, two regions, no errors or
+warnings in **Problems**. Press **Set up the canvas** at the top of this walkthrough in the
+drawer's **Walkthrough** tab if it is not already in front of you.
+
+This is the first walkthrough where **Set up the canvas** is worth pressing
+even if you have followed every one before it — the diagram it loads has the
+tables laid out on a grid, which makes the layout tools below easier to see
+working than a canvas you have already tidied by hand.
+
+Have **PostgreSQL** selected in the dialect selector; the diagram uses a
+Postgres enum, a composite type and `NUMERIC`, which the other two dialects
+spell differently.
 
 If you would rather read the finished thing than click through it yourself,
 open [`diagrams/12-read-a-big-diagram.dbviz.json`](diagrams/12-read-a-big-diagram.dbviz.json)
@@ -120,16 +137,16 @@ the one you're looking at.
 
 ### 1. Cycle one table's collapse state by hand
 
-Find `order_items` on the canvas — it opens collapsed to **Keys only**, so
-you'll see just `order_id` and `book_id` with a `+2 more columns` line
-underneath. Click the chevron (`⌄`) at the right of its header. It cycles
+Find `order_items` on the canvas — `Ctrl+K`, type its name, `Enter` is the
+quickest way. Click the chevron (`⌄`) at the right of its header. It cycles
 **All columns → Keys only → Header only → All columns**, one click per state.
-Click it twice more to land back on **Keys only**.
+Click it three times to land back where you started.
 
-**You should see:** the row list under `order_items` grow to all four columns,
-then collapse to a single "4 columns" line, then come back to the two key
-rows — and the chevron's own shape change each time (a caret, then a
-right-facing arrow, then a down-facing one) to hint at which state you're in.
+**You should see:** the row list under `order_items` shrink to just `id`,
+`order_id` and `book_id` with a `+2 more columns` line underneath, then
+collapse to a single "5 columns" line, then come back to every column — and
+the chevron's own shape change each time (a caret, then a right-facing arrow,
+then a down-facing one) to hint at which state you're in.
 
 ### 2. Collapse — or expand — every table at once
 
@@ -160,9 +177,11 @@ was actually saved.
 ### 4. Focus on one table's neighbourhood
 
 Click `books` to select it, then press `.`. Everything more than one hop away
-— `authors`, `publishers`, `order_items`, `reviews`, `daily_sales` and
-`v_book_sales` are all one hop, so they stay bright; `orders`, `customers`,
-`customer_cadence` and `crm_contacts` fade. Press `]` twice to widen the
+dims: `authors`, `contributors`, `catalog_export`, `order_items`, `reviews`,
+`daily_sales` and `stock_levels` are all one hop from `books`, so they stay
+bright, while `orders`, `customers`, `customer_cadence`, `shipments` and the
+CRM tables fade. That is the tool this diagram most needs — eighteen tables is
+too many to hold at once, and seven is not. Press `]` twice to widen the
 neighbourhood to three hops, then `[` once to narrow it back to two. Press
 `Esc` to clear the focus entirely.
 
@@ -185,24 +204,25 @@ sitting inside another group's rectangle. Open the small `▾` beside
 **Detangle** and try **Top to bottom** instead of the default **Left to
 right**, then press `F` to fit the result to the window.
 
-**You should see:** the diagram resolve into layers — `authors`, `publishers`
-and the external `crm_contacts` at one end, `daily_sales`, `customer_cadence`
-and `v_book_sales` at the other — with the two group rectangles intact around
-their tables the whole time, and the canvas reframing when you press `F`.
+**You should see:** the diagram resolve into layers — `authors`,
+`contributors` and the external CRM tables at one end, `daily_sales`,
+`book_totals`, `customer_cadence` and `v_customer_orders` at the other — with
+the `shop` and CRM rectangles intact around their tables the whole time, and
+the canvas reframing when you press `F`.
 
 ### 6. Tidy a cluster by hand
 
-`Shift+drag` a box around `daily_sales` and `customer_cadence` so both are
+`Shift+drag` a box around `daily_sales` and `book_totals` so both are
 selected (a plain drag on empty canvas does the same thing; `Shift` just adds
 to whatever was already selected). Right-click either one and choose **Align
-top edges**. With three or more tables selected, the same menu also offers
+left edges**. With three or more tables selected, the same menu also offers
 **Distribute horizontally** and **Distribute vertically**, spacing the middle
-ones evenly between the two outer ones — select `books`, `daily_sales` and
-`v_book_sales` and try **Distribute vertically** next. Turn on **View → Snap
+ones evenly between the two outer ones — select `order_items`, `daily_sales`
+and `book_totals` and try **Distribute vertically** next. Turn on **View → Snap
 to grid**, then nudge the selected table with the `Arrow keys` (10 px a
 press) and `Shift+Arrow keys` (50 px).
 
-**You should see:** the two tables snap to a shared top edge in one step (one
+**You should see:** the two tables snap to a shared left edge in one step (one
 `Ctrl+Z` undoes it), the three-table selection space itself evenly top to
 bottom, and — once snap is on — nudged tables land on round coordinates
 instead of wherever the arrow key math puts them.
@@ -223,30 +243,45 @@ mixed together and grouped under headings like "Go to" and "Layout"; picking
 a table pans and zooms the canvas to it without dimming anything else — that
 camera move is not the same thing as the focus mode from step 4.
 
-### 8. Read the connections, then rebuild a schema group
+### 8. Read the connections by colour and cardinality
 
-Open **View → Cardinality labels** — it's already checked; this diagram
-ships with it on. Look at the foreign key from `order_items` into `orders`:
-a small `N` sits at the `order_items` end and `1` at the `orders` end,
-reading "many order_items rows per order." Notice `order_items`'s header
-also carries an **N:M** badge — the app noticed both of its primary-key
-columns are foreign keys into two different tables, which is exactly what a
-join table is. Then check the colours: `authors` through `reviews` are
-**blue** (source tables), `daily_sales` and `customer_cadence` are **orange**
-(derived — nothing writes to them directly, a flow does), `v_book_sales` is
-**teal** (a view), and `crm_contacts` plus its region are **purple**
-(external — read, never created).
+Open **View → Cardinality labels** and tick it. Look at the foreign key from
+`order_items` into `orders`: a small `N` sits at the `order_items` end and `1`
+at the `orders` end, reading "many order_items rows per order." Notice
+`stock_levels`'s header carries an **N:M** badge — the app noticed both of its
+primary-key columns are foreign keys into two different tables, which is
+exactly what a join table is, and it is the only table on this canvas shaped
+that way.
 
-Now right-click the `shop` region's title bar, choose **Remove region, keep
-tables**, and watch the four tables stay exactly where they are with no
-rectangle around them. Right-click empty canvas and choose **Group tables by
-schema**.
+Then read the colours, which this series has been applying consistently since
+walkthrough 01: **blue** for source tables you write to directly, **orange**
+for derived tables that only a flow ever fills (`daily_sales`, `book_totals`,
+`customer_cadence`, `catalog_export`), **teal** for the view, **purple** for
+the external CRM tables and their region, **green** for the imported warehouse
+tables, and **yellow** for sticky notes. None of it reaches the database. All
+of it is how you find the derived tables in one glance instead of reading
+eighteen names.
 
-**You should see:** the `shop` region reappear around the same four tables in
-one action. **Group tables by schema** scans every table that isn't already
-in a group, buckets the ones that share a `schema` value, and creates one
-region per bucket — which is exactly how both `catalog` and `shop` got here
-in the first place.
+**You should see:** `N` / `1` labels on every foreign key, no labels at all on
+the dashed flow edges (there is no cardinality to compute when nothing
+constrains uniqueness), and one **N:M** badge on `stock_levels`.
+
+### 9. Box the last two clusters into regions
+
+Two clusters are still loose. Select `authors`, `books`, `contributors` and
+`catalog_export` (`Shift+click` each) and press `G`. Name the region
+`catalog`, colour it `indigo`.
+
+Then select the four warehouse tables — `warehouses`, `stock_levels`,
+`shipments`, `shipment_items` — press `G` again, name that one `warehouse`,
+colour it `green`, and leave *These tables live in another database*
+**unticked**: the warehouse team's script came from another database, but you
+imported it into this one, and walkthrough 10 fixed it up as your own.
+
+**You should see:** four regions on the canvas — `shop`, `CRM (read-only)`,
+`catalog` and `warehouse` — and no change whatsoever in the **SQL** tab except
+the two extra tables that were already there. Regions are for reading; only
+*external* changes what gets generated.
 
 ## Other ways to do it
 
@@ -272,47 +307,38 @@ in the first place.
 
 ## Check your work
 
-Open the bottom drawer → **SQL**. The whole script runs past 140 lines for a
-schema this size, so here's an excerpt — the composite-key join table, the
-composite-key rollup it feeds, and the top of the external-sources appendix —
-copied straight out of the tab rather than retyped:
+Nothing you did in this walkthrough changes the generated script except the
+two new regions, and regions do not reach the script at all. That is the
+check: open the bottom drawer → **SQL** and confirm the `CREATE TABLE`
+statements are the same ones walkthrough 11 produced. Searching it for
+`catalog` or `warehouse` finds nothing but the table named `catalog_export`.
+
+What did change is the header comment, which is the fastest read on a diagram
+this size:
 
 ```sql
-CREATE TABLE shop.order_items (
-  order_id BIGINT NOT NULL,
-  book_id BIGINT NOT NULL,
-  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
-  unit_price_cents INTEGER NOT NULL,
-  PRIMARY KEY (order_id, book_id),
-  CONSTRAINT order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES shop.orders (id) ON DELETE CASCADE,
-  CONSTRAINT order_items_book_id_fkey FOREIGN KEY (book_id) REFERENCES catalog.books (id)
-);
-
-CREATE TABLE daily_sales (
-  day DATE NOT NULL,
-  book_id BIGINT NOT NULL,
-  units INTEGER NOT NULL DEFAULT 0,
-  revenue_cents BIGINT NOT NULL DEFAULT 0,
-  PRIMARY KEY (day, book_id),
-  CONSTRAINT daily_sales_book_id_fkey FOREIGN KEY (book_id) REFERENCES catalog.books (id)
-);
-
--- ----------------------------------------------------------------
--- External sources: other databases this schema reads from.
--- Nothing below is executed; it is here so the script documents where the data comes from.
---
--- CRM (read-only) (1 table)
---   Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, so nothing here is created by the generated script.
---   crm_contacts (contact_id, email)
+-- Bookshop — after 12 Read a big diagram (PostgreSQL)
+-- Generated by Database Visualizer
+-- Tables: 15, views: 1, foreign keys: 15, documented connections: 8
+-- 2 table(s) live in another database and are not created here; see "External sources" at the end.
 ```
 
-Then open **Problems**. It reports zero errors — that's what `lint clean`
-means — but a schema this size still has warnings: eight "no index" notices
-on foreign-key columns, and one info line naming `order_items` as a
-many-to-many join. None of those are what this walkthrough is about; reading
-a big diagram is a different job from tidying every finding in it, and
-[Fix what Problems finds](10-fix-what-problems-finds.md) is where that job
-lives.
+Fifteen created tables out of eighteen on the canvas, fifteen enforced foreign
+keys out of seventeen drawn, and eight connections that document rather than
+enforce. Every one of those gaps is something you chose deliberately in an
+earlier walkthrough — the external CRM pair, the foreign key that would cross
+a database boundary, the embed, the dependency and the six flows.
+
+Then press **Check my work** at the foot of this walkthrough. Its first check
+is the one that matters here:
+
+```
+groups | shop, CRM (read-only), catalog, warehouse
+```
+
+Four regions, in the order they were created. And **Problems** should still
+report no errors and no warnings — only the two notes it has carried since
+walkthrough 10.
 
 ## Try it yourself
 
@@ -324,8 +350,12 @@ lives.
 - Select `authors`, focus it with `.`, and press `]` eight times. Watch the
   hop counter — and the `+` button — stop responding at 6.
 - Turn off **Cardinality labels**. The `N` / `1` badges disappear from every
-  foreign key, but the **N:M** badge on `order_items`'s header stays put —
+  foreign key, but the **N:M** badge on `stock_levels`'s header stays put —
   it isn't a cardinality label, it's a property of the table itself.
+- Right-click the `warehouse` region's title bar and choose **Remove region,
+  keep tables**. The four tables stay exactly where they are, with no
+  rectangle around them, and nothing else on the canvas moves — a region owns
+  no geometry of its own. `Ctrl+Z` brings it back.
 
 ## Gotchas
 
@@ -337,7 +367,7 @@ lives.
   not just locked to "Header only." There is nothing to click until you zoom
   back in, which is easy to miss the first time you're staring at a
   zoomed-out diagram wondering why a table won't expand.
-- **The focus neighbourhood tops out at 6 hops.** On an eleven-table diagram
+- **The focus neighbourhood tops out at 6 hops.** On an eighteen-table diagram
   that's often "the whole graph anyway," but on a larger one, `]` will simply
   stop responding rather than widening further.
 - **Snap to grid only affects drags from the moment you turn it on.** Turning
@@ -357,8 +387,6 @@ lives.
 ## Where to go next
 
 - [Run the schema on a real database](13-run-the-schema-on-a-real-database.md)
-  — the next thing to do with a schema this size once you can read it.
-- [Group tables](03-group-tables.md) — regions from the ground up, including
-  what makes one "external."
-- [Import an existing schema](09-import-an-existing-schema.md) — the moment a
-  real import usually needs everything in this walkthrough at once.
+  — next in the series, and the point of all of it. Everything you have drawn
+  over twelve walkthroughs becomes a PostgreSQL database running in a Docker
+  container, seeded with rows, migrated after a change, and read back.

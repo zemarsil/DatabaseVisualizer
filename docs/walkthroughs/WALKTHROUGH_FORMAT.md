@@ -23,6 +23,45 @@ npx vitest run tests/walkthroughs.test.ts -t NN-slug                 # the check
 
 ---
 
+## The series is one build
+
+The fifteen walkthroughs are not fifteen exercises. They build **one database,
+once**: walkthrough N starts from exactly what N-1 left on the canvas, and the
+schema grows the whole way down. That shapes everything below, so it comes
+first.
+
+The mechanism is one front-matter key. A walkthrough's `start:` is the previous
+walkthrough's `diagram:` — *the same file*, not a copy, so the two can never
+drift apart — and the first walkthrough in the series has `start: empty`.
+`validateSeries()` in `scripts/walkthrough-lib.mjs` enforces three things:
+
+- `start` is the previous walkthrough's `diagram` (or `empty` for the first);
+- `prerequisites` is exactly the previous slug and `next` exactly the following
+  one — the chain says the same thing in prose;
+- the cast only grows: a table that exists at the end of N is still there at the
+  end of N+1, because the reader still has it.
+
+Two consequences worth internalising before you write a step:
+
+**Never rebuild what the reader already has.** "Press `T` three times and type
+these columns" is only ever right for tables the series does not have yet. A
+step that recreates `customers` because this walkthrough needs one is a bug in
+the series, not a convenience.
+
+**A walkthrough that changes nothing sets `diagram:` to its own `start:`.**
+Simulate and Export read the canvas without editing it; both point at the
+previous stage's file rather than shipping a copy of it. The validator allows
+exactly this and nothing else borrowed.
+
+In the app, the two buttons around a walkthrough's text are the reader's side of
+the same idea: **Set up the canvas** loads `start`, and **Check my work** runs
+`checks` against the live canvas (`src/lib/walkthroughChecks.ts`, the same
+module CI uses). Between them, a reader can begin at any walkthrough in the
+series without having typed the ones before it — which is the whole reason the
+chain can be strict.
+
+---
+
 ## The procedure
 
 ### 1. Pick the scope, then write the ending first
@@ -32,8 +71,11 @@ two tables", "fill one table from another"), not one feature of the UI. Decide
 what the reader has on their canvas when they finish, and build *that diagram
 first*, in the app or by hand. Everything else is written backwards from it.
 
-Keep it small. Three to six tables is almost always enough; a reader who has to
-type twelve tables before the interesting part starts will not finish.
+Because the series is one continuous build, "the ending" means *the previous
+stage plus your delta*. Start from `diagrams/` for the walkthrough before yours,
+add what this one teaches, and save that as your own stage. Keep the delta
+small: one to four new tables is almost always enough, and a walkthrough that
+changes nothing but the reader's understanding (Simulate) is legitimate.
 
 ### 2. Build the companion diagram
 
@@ -43,8 +85,13 @@ every field of the file. The rules that matter most:
 
 - Ids are readable and unique across the whole file: `tbl_orders`,
   `col_orders_customer_id`, `rel_orders_customer`, `drv_total`.
-- Lay the tables out on a grid — `x = 320 * column`, `y = 260 * row` — parents
+- Lay the tables out on a grid — `x = 340 * column`, `y = 300 * row` — parents
   above children, derived tables at the bottom. Never leave everything at `0,0`.
+  A table keeps the position it was given when it arrived, in every later
+  stage: the reader's canvas does not rearrange itself between walkthroughs.
+- Cluster a region's members: a group's rectangle is the bounding box of its
+  tables, so members scattered across the grid draw a box over everything
+  between them.
 - Match `dialect` to the front matter, and spell the types that dialect's way.
 - Put the *why* in `comment` fields and sticky `notes`. They survive into the
   generated script and into the Markdown export, so the diagram teaches on its
@@ -104,19 +151,25 @@ The series shares one small domain so a reader moving between walkthroughs is
 never learning a new cast of tables at the same time as a new feature. Use the
 subset you need; do not invent a different world unless the topic demands it.
 
-**A bookshop.**
+**A bookshop**, built one walkthrough at a time. The "from" column is the
+walkthrough that puts each table on the canvas; every later stage still has it.
 
-| Table | Columns you can rely on | Used for |
+| Table | From | Used for |
 | --- | --- | --- |
-| `authors` | `id`, `name`, `country` | the parent side of the first foreign key |
-| `books` | `id`, `author_id`, `title`, `isbn`, `price_cents`, `published_on` | the child side; a natural unique key in `isbn` |
-| `customers` | `id`, `email`, `crm_contact_id`, `created_at` | the join into the external group |
-| `orders` | `id`, `customer_id`, `status`, `total_cents`, `placed_at` | statuses, filters, and the time series for sequence derivations |
-| `order_items` | `id`, `order_id`, `book_id`, `quantity`, `unit_price_cents` | the grain that rollups aggregate |
-| `reviews` | `id`, `book_id`, `customer_id`, `rating`, `posted_at` | a second path between tables, for tracing |
-| `daily_sales` | `day`, `book_id`, `units`, `revenue_cents` | a derived table fed by a data flow |
-| `customer_cadence` | `customer_id`, `avg_gap_days`, `order_count` | a derived table fed by a *sequence* derivation |
-| `crm_contacts` | `contact_id`, `email` | lives in the external group; never created by the script |
+| `authors` | 00 | the parent side of the first foreign key |
+| `books` | 00 | the child side; a natural unique key in `isbn`; the embed container |
+| `customers` | 01 | the one table typed from nothing, end to end |
+| `orders` | 02 | the foreign key taught properly; `status` becomes the enum in 04 |
+| `contributors` | 02 | the target of the serialized (embed) connection |
+| `customer_cadence` | 02 | a flow drawn empty in 02 and given derivations in 05 |
+| `catalog_export` | 02 | the dependency: read by a job, enforced by nothing |
+| `crm_contacts`, `crm_accounts` | 03 | the external group; never created by the script |
+| `order_items` | 05 | the grain that rollups aggregate |
+| `daily_sales` | 05 | a derived table fed by a data flow |
+| `book_totals` | 06 | the second stage of a two-stage flow |
+| `v_customer_orders` | 08 | the view, with its sources detected from SQL |
+| `warehouses`, `stock_levels`, `shipments`, `shipment_items` | 09 | imported from someone else's script, mistakes included; cleaned up in 10 |
+| `reviews` | 11 | a second path between `books` and `customers`, for tracing |
 
 Conventions that keep the examples consistent with each other and with
 `docs/examples/orders-rollup.dbviz.json`:
@@ -152,6 +205,7 @@ covers:
 shortcuts:
   - T
   - Ctrl+K
+start: diagrams/01-set-up-a-table.dbviz.json
 diagram: diagrams/02-connect-two-tables.dbviz.json
 checks:
   - tables | authors, books
@@ -175,10 +229,11 @@ next:
 | `dialect` | yes | `postgresql`, `mariadb` or `sqlite`; must match the companion diagram. |
 | `covers` | yes | ≥ 3 short noun phrases naming the features touched. |
 | `shortcuts` | no | Keystrokes the walkthrough teaches. Every entry must be one the app binds. |
-| `diagram` | no | `diagrams/NN-slug.dbviz.json`. Omit only if the topic genuinely has no end state (rare). |
-| `checks` | with `diagram` | ≥ 2 assertions about that diagram — see below. |
-| `prerequisites` | yes | Slugs to read first, or a single `none`. |
-| `next` | yes | Slugs to read after, or a single `none`. |
+| `start` | yes | The canvas this walkthrough begins from: `empty`, or the previous walkthrough's `diagram` path. Powers **Set up the canvas**. |
+| `diagram` | no | `diagrams/NN-slug.dbviz.json`, or the same path as `start` when the walkthrough changes nothing. Omit only if the topic genuinely has no end state (rare). |
+| `checks` | with `diagram` | ≥ 2 assertions about that diagram — see below. Also what **Check my work** runs against the reader's canvas. |
+| `prerequisites` | yes | Exactly the previous walkthrough's slug, or `none` for the first. |
+| `next` | yes | Exactly the following walkthrough's slug, or `none` for the last. |
 
 ### `checks:`
 
@@ -197,13 +252,25 @@ diagram by `tests/walkthroughs.test.ts`, using the same code the app uses.
 | `indexes \| 2` | total indexes across every table |
 | `derivations \| 4` | total derivations across every flow |
 | `lint clean` | the **Problems** tab reports no errors |
+| `lint errors \| 2` | it reports *exactly* that many errors — for a walkthrough that deliberately ends broken, like the import that the next one cleans up |
 | `simulate \| daily_sales` | **Simulate** into that table runs, produces rows, and warns about nothing |
 | `trace \| authors -> reviews` | **Trace** finds a path between those two tables |
 
 Pick checks that would **break if the walkthrough's claims stopped being true**.
-A walkthrough about external groups wants `omits | CREATE TABLE crm_contacts`.
+A walkthrough about external groups wants `omits | CREATE TABLE public.crm_contacts`.
 One about derivations wants `simulate | …` and `derivations | N`. Do not pad the
 list with checks that only restate that the file parsed.
+
+Remember that these run twice: against the companion diagram in CI, and against
+the reader's own canvas when they press **Check my work**. So write them as
+things a *reader* would want to be told — "connections: fk:8, flow:2" is a
+useful failure, "tables | (seventeen names)" is not. On a big stage, prefer a
+few targeted checks over one exhaustive list.
+
+The two runs differ in one deliberate way: CI compares `tables`, `views`,
+`groups` and `types` **in order**, the button compares them as sets, because a
+reader who added the same tables in a different order has still done the
+walkthrough.
 
 Values are split on commas, so no check argument may contain one.
 
@@ -295,9 +362,22 @@ inspector switch to the connection with **Kind** set to *Foreign key*.
 
 ## Adding one to the series
 
-1. Take the next free `NN`. Renumbering existing files breaks links — append
-   rather than insert unless the reordering is worth the churn.
-2. Write `docs/walkthroughs/NN-slug.md` and `docs/walkthroughs/diagrams/NN-slug.dbviz.json`.
-3. Add the new slug to the `next:` of whatever should lead into it.
-4. `node scripts/build-walkthrough-index.mjs`
-5. `node scripts/validate-walkthrough.mjs && npm test`
+The chain makes this more than dropping a file in. To **append** one at the end:
+
+1. Take the next free `NN`.
+2. Write `docs/walkthroughs/NN-slug.md`, and build
+   `docs/walkthroughs/diagrams/NN-slug.dbviz.json` by starting from the previous
+   walkthrough's diagram and adding your delta.
+3. Set `start:` to the previous walkthrough's `diagram:`, and
+   `prerequisites:` to its slug.
+4. Change the previous walkthrough's `next:` from `none` to your slug, and set
+   yours to `none`.
+5. `node scripts/build-walkthrough-index.mjs`
+6. `node scripts/validate-walkthrough.mjs && npm test`
+
+To **insert** one in the middle, you are splicing a chain: renumber everything
+after it (which breaks inbound links, so grep for the old slugs), rebuild every
+later stage's diagram on top of your new one, and re-point the `start:`,
+`prerequisites:` and `next:` on both sides of the join. The validator will list
+every break it finds, so work until `validate-walkthrough.mjs` reports "chained
+end to end" — but weigh the churn first. Appending is usually the better trade.

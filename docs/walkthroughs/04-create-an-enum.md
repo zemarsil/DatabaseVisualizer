@@ -1,7 +1,7 @@
 ---
 title: Create an enum and use it
 slug: 04-create-an-enum
-summary: An order_status enum and a postal_address composite type, both put to work by typing their name into a column's type cell.
+summary: An order_status enum and a postal_address composite, put to work by retyping two columns of the tables you already have.
 level: beginner
 minutes: 10
 dialect: postgresql
@@ -13,17 +13,18 @@ covers:
 shortcuts:
   - T
   - Ctrl+K
+start: diagrams/03-group-tables.dbviz.json
 diagram: diagrams/04-create-an-enum.dbviz.json
 checks:
-  - tables | customers, orders
   - types | order_status, postal_address
   - contains | CREATE TYPE order_status AS ENUM (
   - contains | CREATE TYPE postal_address AS (street TEXT
   - contains | status order_status NOT NULL DEFAULT 'pending'
-  - kinds | fk:1
+  - contains | mailing_address postal_address
+  - kinds | fk:4, flow:1, embed:1, dependency:1
   - lint clean
 prerequisites:
-  - 01-set-up-a-table
+  - 03-group-tables
 next:
   - 05-fill-one-table-from-another
 ---
@@ -31,16 +32,21 @@ next:
 
 ## What you'll build
 
-A small orders schema — `customers` and `orders` — where two columns are typed
-as custom types instead of raw SQL: `orders.status` is an `order_status` enum
-with a default of `'pending'`, and `customers.mailing_address` is a
+Two columns of the schema you have been building stop being raw SQL and start
+being named types: `orders.status` — the plain `TEXT` you deliberately left
+loose in walkthrough 02 — becomes an `order_status` enum with a default of
+`'pending'`, and `customers` gains a `mailing_address` typed as a
 `postal_address` composite (a struct of `street`, `city`, `postal_code` and
 `country`). Both types are defined once in the **Types** drawer tab and reused
 just by name.
 
+No new tables here. This is the first walkthrough that only changes what is
+already on the canvas, which is worth noticing on its own: most work on a real
+schema looks like this.
+
 ```mermaid
 erDiagram
-    CUSTOMERS ||--o{ ORDERS : places
+    CUSTOMERS ||--o{ ORDERS : placed
     CUSTOMERS {
         bigserial id PK
         text email UK
@@ -58,12 +64,15 @@ erDiagram
 
 ## Before you start
 
-Do [Set up a table](01-set-up-a-table.md) first if you have not — this
-walkthrough assumes you can already add a table and type a column without
-looking. Have **PostgreSQL** selected in the dialect selector at the top: it
-is the only one of the three that has a real named type system, so it is the
-dialect where the feature does the most. The last section shows what happens
-on the other two.
+You need what [Group tables, and read another database](03-group-tables.md)
+leaves behind: nine tables in two regions, with `orders.status` still typed
+`TEXT`. Press **Set up the canvas** at the top of this walkthrough in the
+drawer's **Walkthrough** tab if it is not already in front of you.
+
+Have **PostgreSQL** selected in the dialect selector at the top: it is the only
+one of the three that has a real named type system, so it is the dialect where
+the feature does the most. The last section shows what happens on the other
+two.
 
 If you would rather read the finished thing than type it, open
 [`diagrams/04-create-an-enum.dbviz.json`](diagrams/04-create-an-enum.dbviz.json) with
@@ -142,40 +151,39 @@ PostgreSQL — no dialect hint under the fields. Switch the dialect selector to
 type: generated SQL will store columns of this type as JSON.* Switch back to
 PostgreSQL before continuing.
 
-### 4. Build customers and orders, and use both types by name
+### 4. Use both types by name
 
-Press `T` twice for two tables, named `customers` and `orders`. Type their
-columns:
+Select `orders` and click the type cell on its `status` row. It reads `TEXT`.
+Replace it with `order_status`. Leave the `'pending'` default and the **NN**
+flag exactly as they are.
 
-| Table | Column | Type | Flags | Default |
-| --- | --- | --- | --- | --- |
-| `customers` | `id` | `BIGSERIAL` | **PK NN AI** | |
-| `customers` | `email` | `TEXT` | **NN UQ** | |
-| `customers` | `mailing_address` | `postal_address` | | |
-| `customers` | `created_at` | `TIMESTAMPTZ` | **NN** | `now()` |
-| `orders` | `id` | `BIGSERIAL` | **PK NN AI** | |
-| `orders` | `customer_id` | `BIGINT` | **NN** | |
-| `orders` | `status` | `order_status` | **NN** | `'pending'` |
-| `orders` | `total_cents` | `INTEGER` | **NN** | `0` |
-| `orders` | `placed_at` | `TIMESTAMPTZ` | **NN** | `now()` |
+Then select `customers`, add one column between `crm_contact_id` and
+`created_at`, and give it the composite:
 
-For `mailing_address` and `status`, just type the type's name — `postal_address`,
-`order_status` — into the type cell the same way you would type `TEXT` or
-`BIGINT`. There is no dropdown, no "insert custom type" button: the box you
-already know how to type into is the whole mechanism, and both names are
-offered in the autocomplete as you type. Add the table check on `total_cents`
-(`total_cents >= 0`) as you did in [Set up a table](01-set-up-a-table.md).
-Finally, hover `orders` and drag the small handle beside `customer_id` onto
-the `id` row of `customers` to connect them.
+| Column | Type | Flags |
+| --- | --- | --- |
+| `mailing_address` | `postal_address` | — |
+
+For both, you just type the type's name — `order_status`, `postal_address` —
+into the type cell the same way you would type `TEXT` or `BIGINT`. There is no
+dropdown, no "insert custom type" button: the box you already know how to type
+into is the whole mechanism, and both names are offered in the autocomplete as
+you type.
+
+The `status` change is the interesting one, because nothing about the column
+moved. Same name, same default, same **NN** flag, same position in the table —
+and yet `'Pending'`, `'paid '` and `'shpped'` went from legal values to values
+PostgreSQL will refuse. That is the whole trade you are making: the set of
+allowed values moves out of your application's validation and into the
+database's type system, where nothing can route around it.
 
 **You should see:** the `status` and `mailing_address` type cells grow a
 highlighted border, and hovering either shows the tooltip *Custom enum
 type — edit it in the Types drawer tab* or *Custom struct type — edit it in
 the Types drawer tab*. Open **Types** again and both cards now carry a
 `used by 1` badge. The **SQL** tab shows two `CREATE TYPE` statements ahead of
-both `CREATE TABLE` statements — types are always emitted first, because a
-table cannot be created with a column typed as something that does not exist
-yet.
+every `CREATE TABLE` — types are always emitted first, because a table cannot
+be created with a column typed as something that does not exist yet.
 
 ## Other ways to do it
 
@@ -198,27 +206,30 @@ yet.
 
 ## Check your work
 
-Open the bottom drawer → **SQL**, leave it on *Whole schema*. This is the
-entire PostgreSQL output for the diagram above — notice both `CREATE TYPE`
-statements ahead of either table:
+Open the bottom drawer → **SQL**, leave it on *Whole schema*, and look at the
+top of the script — both `CREATE TYPE` statements come before every table:
 
 ```sql
--- Create an enum and use it — customers and orders (PostgreSQL)
+-- Bookshop — after 04 Create an enum (PostgreSQL)
 -- Generated by Database Visualizer
--- Tables: 2, foreign keys: 1
+-- Tables: 7, foreign keys: 2, documented connections: 3
+-- 2 table(s) live in another database and are not created here; see "External sources" at the end.
 
 -- Custom types
 CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
 CREATE TYPE postal_address AS (street TEXT, city TEXT, postal_code TEXT, country CHAR(2));
+```
 
+The two tables you retyped now read:
+
+```sql
 CREATE TABLE public.customers (
   id BIGSERIAL PRIMARY KEY,
   email TEXT NOT NULL UNIQUE,
+  crm_contact_id BIGINT,
   mailing_address postal_address,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-COMMENT ON TABLE public.customers IS 'One row per person who has ordered. mailing_address is a postal_address, typed by writing the type''s name into the column''s type cell.';
-COMMENT ON COLUMN public.customers.mailing_address IS 'Composite type. Nullable: we only have it once an order ships.';
 
 CREATE TABLE public.orders (
   id BIGSERIAL PRIMARY KEY,
@@ -226,16 +237,16 @@ CREATE TABLE public.orders (
   status order_status NOT NULL DEFAULT 'pending',
   total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
   placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id) ON DELETE CASCADE
+  CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id) ON DELETE RESTRICT
 );
-CREATE INDEX orders_customer_id_idx ON public.orders (customer_id);
-COMMENT ON TABLE public.orders IS 'status is an order_status, not a raw string — the column''s type cell names the enum by name, same mechanism as mailing_address above.';
-COMMENT ON COLUMN public.orders.status IS 'Every order starts pending. The quotes around pending are part of the default text you type.';
 ```
 
-Then open **Problems**. It should be empty — the index on `orders.customer_id`
-is already there so PostgreSQL's foreign key does not force a table scan on
-every delete from `customers`.
+Every other statement in the script is byte for byte what walkthrough 03
+generated. Two type names, two columns, and the rest of a nine-table diagram
+untouched.
+
+**Check my work** at the foot of this walkthrough confirms both types exist and
+both columns really resolve to them; **Problems** should report no errors.
 
 ## Reference
 
@@ -331,8 +342,11 @@ constraints and composite types TEXT.*
 
 ## Where to go next
 
-- [Fill one table from another](05-fill-one-table-from-another.md) — the
-  next walkthrough in the series, on data flows instead of custom types.
-- [Import an existing schema](09-import-an-existing-schema.md) — paste a real
-  PostgreSQL dump and watch its `CREATE TYPE` statements turn into the same
-  **Types** tab cards you just built by hand.
+- [Fill one table from another](05-fill-one-table-from-another.md) — next in
+  the series, and the walkthrough that finally keeps the promise made by the
+  empty data flow into `customer_cadence`. It also brings in `order_items`, the
+  grain everything downstream aggregates from.
+
+`order_status` matters more there than it does here: the derivations you write
+next filter on `status = 'paid'`, and that comparison is only trustworthy
+because the column can no longer hold anything else.

@@ -1,7 +1,7 @@
 ---
 title: Add indexes that get used
 slug: 07-add-indexes
-summary: Composite and unique indexes on the order path, why a composite index's column order decides what it can serve, and what Problems catches when one is missing.
+summary: Answer the five index warnings Problems has been showing since walkthrough 02, and learn why a composite index's column order decides what it can serve.
 level: intermediate
 minutes: 12
 dialect: postgresql
@@ -14,16 +14,17 @@ covers:
 shortcuts:
   - Ctrl+O
   - Ctrl+Z
+start: diagrams/06-simulate-a-data-flow.dbviz.json
 diagram: diagrams/07-add-indexes.dbviz.json
 checks:
-  - tables | authors, books, customers, orders, order_items
-  - indexes | 4
-  - kinds | fk:4
+  - indexes | 5
+  - kinds | fk:9, flow:3, embed:1, dependency:1
+  - contains | CREATE INDEX books_author_id_idx ON public.books (author_id);
   - contains | CREATE INDEX orders_customer_id_placed_at_idx ON public.orders (customer_id, placed_at);
   - contains | CREATE UNIQUE INDEX order_items_order_id_book_id_key ON public.order_items (order_id, book_id);
   - lint clean
 prerequisites:
-  - 02-connect-two-tables
+  - 06-simulate-a-data-flow
 next:
   - 08-build-a-view
 ---
@@ -32,18 +33,22 @@ next:
 
 ## What you'll build
 
-The bookshop's order path — `authors`, `books`, `customers`, `orders` and
-`order_items` — with every foreign key backed by an index that actually serves
-the queries the app runs, and nothing more than that. Four indexes in total: one
-plain single-column index, one composite index whose column order is the entire
-point, one two-column unique index, and one more plain index that only exists
-because the unique one cannot cover it. A sticky note on the canvas records the
-two kinds of index this diagram cannot express at all.
+Five indexes, and a **Problems** tab that finally has nothing to say. The
+schema has had unindexed foreign keys since walkthrough 02, and the tab has
+been quietly listing them the whole time; here you answer all five. One is a
+plain single-column index, one is a composite whose column order is the entire
+point, one is a two-column unique index doing a job a **UQ** toggle cannot do,
+one exists only because the unique one cannot cover it, and the last is
+applied for you by a one-click fix.
+
+Nothing new is added to the canvas. This is a walkthrough about making the
+twelve tables you already have fast to query rather than about having more of
+them.
 
 ```mermaid
 erDiagram
     AUTHORS ||--o{ BOOKS : has
-    CUSTOMERS ||--o{ ORDERS : places
+    CUSTOMERS ||--o{ ORDERS : placed
     ORDERS ||--o{ ORDER_ITEMS : contains
     BOOKS ||--o{ ORDER_ITEMS : sold-as
     AUTHORS {
@@ -56,7 +61,7 @@ erDiagram
     }
     CUSTOMERS {
         bigint id PK
-        text email
+        bigint crm_contact_id "indexed by Fix all safe"
     }
     ORDERS {
         bigint id PK
@@ -72,14 +77,16 @@ erDiagram
 
 ## Before you start
 
-Read [Connect two tables](02-connect-two-tables.md) first — this walkthrough
-assumes `books.author_id` is already a real foreign key to `authors.id`, and
-spends its time on the four other tables and their indexes instead of
-retyping that one. Have **PostgreSQL** selected in the dialect selector at
-the top: the rule this walkthrough leans on hardest — an unindexed foreign
-key gets flagged — applies to PostgreSQL and SQLite, but not MariaDB, which
-creates the index for you. That difference is worth seeing directly, and
-**Try it yourself** below points at it.
+You need what [Simulate a data flow](06-simulate-a-data-flow.md) leaves
+behind: twelve tables, nine foreign keys, no indexes at all. Press **Set up
+the canvas** at the top of this walkthrough in the drawer's **Walkthrough**
+tab if it is not already in front of you.
+
+Have **PostgreSQL** selected in the dialect selector at the top: the rule this
+walkthrough leans on hardest — an unindexed foreign key gets flagged — applies
+to PostgreSQL and SQLite, but not MariaDB, which creates the index for you.
+That difference is worth seeing directly, and **Try it yourself** below points
+at it.
 
 If you would rather read the finished thing than type it, open
 [`diagrams/07-add-indexes.dbviz.json`](diagrams/07-add-indexes.dbviz.json) with
@@ -113,40 +120,30 @@ and it is exactly what **Problems** is built to notice.
 
 ## Steps
 
-### 1. Bring the rest of the order path onto the canvas
+### 1. Read the five warnings you have been ignoring
 
-Open the bottom drawer → **Import SQL** and paste this in, then click
-*Add to the current diagram* (it should already be selected — there's a
-diagram here to add to) and **Import**:
+Open the bottom drawer → **Problems** and read the list. Five warnings, all
+the same rule, none of them new:
 
-```sql
-CREATE TABLE customers (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE orders (
-  id BIGSERIAL PRIMARY KEY,
-  customer_id BIGINT NOT NULL REFERENCES customers (id) ON DELETE RESTRICT,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'shipped', 'cancelled')),
-  total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
-CREATE TABLE order_items (
-  id BIGSERIAL PRIMARY KEY,
-  order_id BIGINT NOT NULL REFERENCES orders (id) ON DELETE CASCADE,
-  book_id BIGINT NOT NULL REFERENCES books (id) ON DELETE RESTRICT,
-  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
-  unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0)
-);
+```
+books(author_id) references authors but has no index
+customers(crm_contact_id) references crm_contacts but has no index
+order_items(book_id) references books but has no index
+order_items(order_id) references orders but has no index
+orders(customer_id) references customers but has no index
 ```
 
-**You should see:** three new tables land on the canvas, already connected —
-`orders → customers`, `order_items → orders` and `order_items → books` — because
-the parser reads the inline `REFERENCES` and matches `books` against the table
-you already have. No indexes yet: this DDL doesn't have any.
+Every one of them has been there since you drew the foreign key it names.
+They are warnings rather than errors because the schema is *correct* without
+them — PostgreSQL will happily create every table and every constraint. What
+it will not do is make them fast: PostgreSQL indexes the *referenced* side of a
+foreign key (it has to, that side is a key) and leaves the referencing side
+bare, so `DELETE FROM authors WHERE id = 7` has to scan the whole of `books` to
+find out whether the delete is allowed.
+
+**You should see:** five warnings, no errors, and a **Problems** tab whose
+badge is not lit — the badge counts errors only, which is exactly why five
+warnings can sit there unread for five walkthroughs.
 
 ### 2. Give the plain foreign key a plain index
 
@@ -234,11 +231,25 @@ column* a second time. You now have two indexes on `books(author_id)`. Open
 **Problems**: a new warning reads *`Table "books" indexes (author_id) twice.`*
 Click its fix, **Remove the duplicate index**.
 
-**You should see:** the count back to four indexes total across the diagram,
-and **Problems** empty again. The tab's badge next to its name in the drawer
-never lit up red for either of these two warnings — the badge only counts
-errors, so an unindexed foreign key or a duplicate index sit there quietly
-until you open the tab and look.
+**You should see:** the duplicate gone, and one warning left in the list — the
+one about `customers(crm_contact_id)`, which nothing in this walkthrough has
+touched.
+
+### 8. Clear the last one with Fix all safe
+
+Press **Fix all safe (1)** at the top of the **Problems** tab.
+
+*Safe* is a real distinction, not a reassurance: a fix is safe when it only
+*adds* something — an index, a key, a widened type — and unsafe when it
+renames or removes, because those change what existing queries mean. **Fix all
+safe** applies every safe fix in the list at once and leaves the rest for you,
+which is why it can be trusted on a schema you have not read carefully. It is
+also why it will not be enough in walkthrough 10.
+
+**You should see:** five indexes total across the diagram, and **Problems**
+with no errors and no warnings for the first time in the series — only the
+note about the foreign key into the CRM, which has been there since
+walkthrough 03 and is not a defect.
 
 ## Other ways to do it
 
@@ -260,67 +271,35 @@ until you open the tab and look.
 
 ## Check your work
 
-Open the bottom drawer → **SQL**, leave it on *Whole schema*. This is the
-entire generated script for the diagram above:
+Open the bottom drawer → **SQL**, leave it on *Whole schema*, and search it for
+`CREATE INDEX`. Five lines, and no others:
 
 ```sql
--- Add indexes that get used — the bookshop order path (PostgreSQL)
--- Generated by Database Visualizer
--- Tables: 5, foreign keys: 4
-
-CREATE TABLE public.authors (
-  id BIGSERIAL PRIMARY KEY,
-  name TEXT NOT NULL
-);
-COMMENT ON TABLE public.authors IS 'One row per person who wrote something we sell.';
-
-CREATE TABLE public.books (
-  id BIGSERIAL PRIMARY KEY,
-  author_id BIGINT NOT NULL,
-  title TEXT NOT NULL,
-  isbn CHAR(13) NOT NULL UNIQUE,
-  price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0),
-  CONSTRAINT books_author_id_fkey FOREIGN KEY (author_id) REFERENCES public.authors (id) ON DELETE RESTRICT
-);
 CREATE INDEX books_author_id_idx ON public.books (author_id);
-COMMENT ON TABLE public.books IS 'author_id is referenced constantly (every catalogue page joins back to its author), so it earns the plainest kind of index there is: one column, leading, done.';
-
-CREATE TABLE public.customers (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-COMMENT ON TABLE public.customers IS 'Unchanged source table; nothing about it needs an extra index.';
-
-CREATE TABLE public.orders (
-  id BIGSERIAL PRIMARY KEY,
-  customer_id BIGINT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'paid', 'shipped', 'cancelled')),
-  total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id) ON DELETE RESTRICT
-);
+CREATE INDEX idx_customers_crm_contact_id ON public.customers (crm_contact_id);
 CREATE INDEX orders_customer_id_placed_at_idx ON public.orders (customer_id, placed_at);
-COMMENT ON TABLE public.orders IS 'The dashboard''s hot query is ''this customer''s orders, most recent first'', so customer_id leads the index and placed_at rides along — a query that filters on placed_at alone gets nothing from it.';
-
-CREATE TABLE public.order_items (
-  id BIGSERIAL PRIMARY KEY,
-  order_id BIGINT NOT NULL,
-  book_id BIGINT NOT NULL,
-  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
-  unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0),
-  CONSTRAINT order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders (id) ON DELETE CASCADE,
-  CONSTRAINT order_items_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books (id) ON DELETE RESTRICT
-);
 CREATE UNIQUE INDEX order_items_order_id_book_id_key ON public.order_items (order_id, book_id);
 CREATE INDEX idx_order_items_book_id ON public.order_items (book_id);
-COMMENT ON TABLE public.order_items IS 'One book can only appear once per order, so (order_id, book_id) is UNIQUE as well as indexed. That unique index serves lookups by order_id (its leading column) and by the pair, but does nothing for a lookup on book_id alone — book_id gets its own plain index below for that.';
 ```
 
-Every `CREATE INDEX` sits right after the `CREATE TABLE` (and its inline
-foreign key) for the table it belongs to — indexes are never grouped
-separately the way foreign keys that close a reference cycle are. Then open
-**Problems**: it should be empty.
+Three of those names you typed and two the generator invented, and you can
+tell which is which at a glance: `idx_<table>_<columns>` is the fallback. Both
+kinds work identically; a name you chose is one you will recognise in a
+slow-query log later.
+
+In the script itself, each `CREATE INDEX` sits right after the `CREATE TABLE`
+(and its inline foreign key) for the table it belongs to — indexes are never
+grouped separately the way foreign keys that close a reference cycle are.
+
+Notice which foreign keys are *not* in that list. `daily_sales.book_id`,
+`book_totals.book_id` and `customer_cadence.customer_id` all reference other
+tables and none of them got an index, because each one already leads its own
+table's primary key — and a primary key is an index. **Problems** knows that,
+which is why it never asked.
+
+Then open **Problems**: no errors, no warnings, one note. Press **Check my
+work** at the foot of this walkthrough and the `indexes | 5` check says the
+same thing from the other direction.
 
 If you have a database running (see
 [Run the schema on a real database](13-run-the-schema-on-a-real-database.md)),
@@ -373,10 +352,6 @@ inspector is not a change Migrate wants to apply.
 
 ## Where to go next
 
-- [Build a view](08-build-a-view.md) — the dashboard query this walkthrough's
-  indexes were written to serve, as a saved `SELECT`.
-- [Fix what Problems finds](10-fix-what-problems-finds.md) — every other
-  finding **Problems** reports, beyond the two this walkthrough covered.
-- [Run the schema on a real database](13-run-the-schema-on-a-real-database.md)
-  — where **Migrate**'s index diff, mentioned above, actually runs against a
-  live PostgreSQL container.
+- [Build a view](08-build-a-view.md) — next in the series. `v_customer_orders`
+  joins the three tables you just indexed, and the indexes are the reason it is
+  cheap enough to read on every page load.

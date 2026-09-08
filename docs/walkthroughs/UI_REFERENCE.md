@@ -17,12 +17,12 @@ below carries where it came from so you can re-check it after the app changes.
 │ table     │              Canvas                       │ (selection-driven)  │
 │ list      │              (pan / zoom)                 │                     │
 ├───────────┴───────────────────────────────────────────┴─────────────────────┤
-│ Drawer: SQL · Types · Import SQL · Trace · Simulate · Problems · Query · DB  │
+│ Drawer: Walkthrough · SQL · Types · Import SQL · Trace · Simulate · … · DB   │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 The **inspector** on the right always shows whatever is selected: a table, a
-connection, a note, or a group region. The **bottom drawer** holds the eight
+connection, a note, or a group region. The **bottom drawer** holds the nine
 tabs. The **sidebar** on the left is the table list. All three toggle from the
 **View** menu or the icon buttons at the far right of the top bar.
 
@@ -59,6 +59,7 @@ Source: `src/components/drawer/Drawer.tsx` and the panels beside it
 
 | Tab | What it does |
 | --- | --- |
+| **Walkthrough** | The walkthrough you are following, so its text stays beside the canvas. Empty until you pick one from the **?** help modal's *Browse the fifteen walkthroughs*. Carries **Set up the canvas** above the text (loads the diagram that walkthrough starts from), **Check my work** below it (runs the walkthrough's `checks:` against the live canvas and lists what does not match), **Open the finished diagram**, and a *Next:* link. |
 | **SQL** | The generated script. Format selector (SQL, Markdown, Mermaid, DBML), *Whole schema* / *Selected table*, a *Prefix DROP TABLE statements* checkbox, statement count, **Copy** and **Download**. Generator warnings appear above the code. |
 | **Types** | Enum and composite types. Its own add buttons read **+ Enum** and **+ Struct type** — *Composite type* is only the top-bar `▾` menu's and the command palette's spelling. *Values (N)* for an enum, *Fields (N)* for a composite, plus a *Comment*. Neither values nor fields can be reordered: append and delete only. Badge shows how many types exist. |
 | **Import SQL** | Paste or load a `.sql` file; *Add to the current diagram* or replace; optionally drop everything into a new group. |
@@ -79,9 +80,13 @@ Source: `src/components/inspector/*.tsx`
 toggles (expand a row for *Default*, *Check*, *Comment*), *Indexes (N)*,
 *Table checks (N)*, *Connections (N)* and *Quick actions*.
 
-**View** (`ViewEditor.tsx`) — *View definition (SELECT …)* and *Source tables
+**View** (`ViewEditor.tsx`) — *View definition (SELECT …)*, the checkbox
+*Materialized (store the rows, refresh on demand)* (PostgreSQL emits
+`CREATE MATERIALIZED VIEW`; MariaDB and SQLite fall back to a plain view with a
+generator warning, and the flag is kept for switching back), and *Source tables
 (N)* with a **Detect from SQL** button that links the diagram tables named in
-the `SELECT`.
+the `SELECT`. A materialized view's canvas badge reads **MAT VIEW** rather than
+**VIEW**.
 
 **Connection** (`RelationshipEditor.tsx`) — *Kind* (the four **Connection
 types**), *Reads as* (the verb, previewed in both directions), the direction
@@ -257,9 +262,11 @@ source. Worth a `## Gotchas` entry wherever it is relevant:
   Nothing stops you switching its **Kind** to *Foreign key* afterwards, at which
   point the generator drops it with a warning — views cannot take part in
   foreign keys.
-- **`CREATE MATERIALIZED VIEW` parses without a warning but is demoted.**
-  Materialized-ness and `WITH CHECK OPTION` are not in the model, so a round trip
-  gives you back a plain view.
+- **`CREATE MATERIALIZED VIEW` survives a round trip; `WITH CHECK OPTION` does
+  not.** `materialized` is a real field on the table, carried through the
+  parser, the `.dbviz.json`, share links and PostgreSQL introspection
+  (`relkind` `'m'`). `WITH CHECK OPTION` and `ALGORITHM=`/`DEFINER=` parse
+  without a warning and are then forgotten, so a round trip drops them.
 - **DBML is export-only.** There is no DBML importer anywhere in the codebase,
   so a `.dbml` file cannot be dropped or pasted. Drop accepts `.sql`, `.txt`,
   `.dbviz.json` and SQLite database files (`.sqlite`, `.sqlite3`, `.db`).

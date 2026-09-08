@@ -1,7 +1,7 @@
 ---
 title: Group tables, and read another database
 slug: 03-group-tables
-summary: Box related tables into a named region, then mark one as living in another database so the script only ever documents it.
+summary: Box the sales tables into a named region, then add two tables that live in another database so the script only ever documents them.
 level: intermediate
 minutes: 15
 dialect: postgresql
@@ -14,13 +14,13 @@ covers:
 shortcuts:
   - G
   - Shift+click
+start: diagrams/02-connect-two-tables.dbviz.json
 diagram: diagrams/03-group-tables.dbviz.json
 checks:
-  - tables | customers, orders, crm_contacts, crm_accounts
-  - groups | CRM (read-only)
-  - kinds | fk:3
-  - omits | CREATE TABLE crm_contacts
-  - omits | CREATE TABLE crm_accounts
+  - groups | shop, CRM (read-only)
+  - kinds | fk:4, flow:1, embed:1, dependency:1
+  - omits | CREATE TABLE public.crm_contacts
+  - omits | CREATE TABLE public.crm_accounts
   - omits | crm_contacts_account_id_fkey
   - contains | External sources: other databases this schema reads from.
   - lint clean
@@ -33,16 +33,21 @@ next:
 
 ## What you'll build
 
-Two tables you own, `customers` and `orders`, sitting beside a purple region
-named **CRM (read-only)**. Inside it are two tables you do not own —
-`crm_contacts` and `crm_accounts` — pulled in from the sales team's CRM over a
-read-only connection. A foreign key runs from `customers.crm_contact_id` into
-the group; the generated script will still show you that link, but it will
+The sales tables you already have — `customers`, `orders` and
+`customer_cadence` — boxed into a region named **shop**, sitting beside a
+purple region named **CRM (read-only)**. Inside that one are two tables you do
+not own, `crm_contacts` and `crm_accounts`, pulled in from the sales team's CRM
+over a read-only connection. A foreign key runs from `customers.crm_contact_id`
+into the group; the generated script will still show you that link, but it will
 never try to create the tables on the other side of it.
+
+Two regions, because the interesting thing about *external* is what it does
+differently from an ordinary region — and you cannot see that with only one
+region on the canvas.
 
 ```mermaid
 erDiagram
-    CUSTOMERS ||--o{ ORDERS : places
+    CUSTOMERS ||--o{ ORDERS : placed
     CUSTOMERS }o--|| CRM_CONTACTS : "references (external)"
     CRM_CONTACTS }o--|| CRM_ACCOUNTS : "belongs to (external)"
     CUSTOMERS {
@@ -67,13 +72,17 @@ erDiagram
 
 ## Before you start
 
-Read [Set up a table](01-set-up-a-table.md) and
-[Connect two tables](02-connect-two-tables.md) first — this walkthrough moves
-quickly through typing columns and dragging a foreign key handle, and spends
-its time on what is new: regions and the *external* flag. Have **PostgreSQL**
-selected in the dialect selector; nothing here is dialect-specific, but the
-generated script below was copied on PostgreSQL and a different dialect will
-spell the types differently.
+You need what [Connect two tables](02-connect-two-tables.md) leaves behind:
+seven tables, with `customers`, `orders` and `customer_cadence` among them.
+Press **Set up the canvas** at the top of this walkthrough in the drawer's
+**Walkthrough** tab if it is not already in front of you — that button loads
+walkthrough 02's finished diagram, which is exactly this one's starting point.
+
+This walkthrough moves quickly through typing columns and dragging a foreign
+key handle, and spends its time on what is new: regions and the *external*
+flag. Have **PostgreSQL** selected in the dialect selector; nothing here is
+dialect-specific, but the generated script below was copied on PostgreSQL and a
+different dialect will spell the types differently.
 
 If you would rather read the finished thing than type it, open
 [`diagrams/03-group-tables.dbviz.json`](diagrams/03-group-tables.dbviz.json)
@@ -114,43 +123,38 @@ else owns.
 
 ## Steps
 
-### 1. Build `customers` and `orders`, connected
+### 1. Box the shop tables into a region
 
-Press `T` twice for two tables, named `customers` and `orders`, and give them
-these columns the way you did in [Set up a table](01-set-up-a-table.md) —
-`Enter` for the next row, `Tab` across to the type:
+Click `customers`, then `Shift+click` `orders` and `customer_cadence`. Press
+`G`.
 
-| Table | Column | Type | Flags | Default |
-| --- | --- | --- | --- | --- |
-| `customers` | `id` | `BIGSERIAL` | **PK NN AI** | |
-| `customers` | `email` | `TEXT` | **NN UQ** | |
-| `customers` | `crm_contact_id` | `BIGINT` | | |
-| `customers` | `created_at` | `TIMESTAMPTZ` | **NN** | `now()` |
-| `orders` | `id` | `BIGSERIAL` | **PK NN AI** | |
-| `orders` | `customer_id` | `BIGINT` | **NN** | |
-| `orders` | `status` | `TEXT` | **NN** | `'pending'` |
-| `orders` | `total_cents` | `INTEGER` | **NN** | `0` |
-| `orders` | `placed_at` | `TIMESTAMPTZ` | **NN** | `now()` |
+`G` groups whatever is selected. The region appears behind the three tables,
+already sized to them, with an editable name in its header — type `shop`. Set
+its *Colour* to `slate` in the inspector.
 
-Then, as in [Connect two tables](02-connect-two-tables.md), drag the handle
-beside `orders.customer_id` onto `customers.id` to turn it into a real foreign
-key.
+Nothing about the generated script changes, and that is the point: a region is
+a label for the canvas, not a namespace for the database. Check the **SQL** tab
+if you want to prove it to yourself — the three tables are spelled exactly as
+they were a moment ago.
 
-**You should see:** two tables with a solid, crow's-foot line between them,
-and `customers.crm_contact_id` still a plain, unconnected `BIGINT` — that
-connection is what the rest of this walkthrough is for.
+**You should see:** a slate rectangle labelled *shop* behind the three tables,
+and the inspector switch to the region, showing *Name*, *Colour*, *Note*,
+*These tables live in another database* and a member list of three.
 
 ### 2. Add the two CRM tables
 
-Add two more tables, `crm_contacts` (`contact_id BIGINT` **PK**, `email
-TEXT` **NN**, `account_id BIGINT`) and `crm_accounts` (`account_id BIGINT`
-**PK**, `name TEXT` **NN**, `tier TEXT`). Drag the handle beside
-`crm_contacts.account_id` onto `crm_accounts.account_id` — an ordinary foreign
-key, for now, between two tables that happen to sit off to the side.
+Add two more tables outside the region, `crm_contacts` (`contact_id BIGINT`
+**PK**, `email TEXT` **NN**, `account_id BIGINT`) and `crm_accounts`
+(`account_id BIGINT` **PK**, `name TEXT` **NN**, `tier TEXT`). Drag the handle
+beside `crm_contacts.account_id` onto `crm_accounts.account_id` — an ordinary
+foreign key, for now, between two tables that happen to sit off to the side.
 
-**You should see:** four tables on the canvas: two connected pairs,
-`customers`↔`orders` and `crm_contacts`↔`crm_accounts`, with nothing yet
-joining the two pairs to each other.
+Note what these two do *not* have: no `BIGSERIAL`, no `now()` defaults, no
+comments. You are not designing them, you are writing down what someone else
+already built, and only the parts of it you touch.
+
+**You should see:** nine tables on the canvas, with the new pair joined to each
+other and to nothing else, sitting outside the *shop* region.
 
 ### 3. Select the CRM pair and group them
 
@@ -190,11 +194,12 @@ what the generator does with it once it crosses the boundary.
 
 Open the bottom drawer → **Problems**.
 
-**You should see:** exactly one finding, at *info* severity: *"customers
+**You should see:** one *new* finding, at *info* severity: *"customers
 references crm_contacts, which lives in another database; the script
-documents the link instead of creating a constraint."* Nothing here is an
-error or a warning — Problems is telling you the shape of the schema, not
-flagging a mistake.
+documents the link instead of creating a constraint."* It is neither an error
+nor a warning — Problems is telling you the shape of the schema, not flagging
+a mistake. (The three warnings above it are the unindexed foreign keys the
+diagram has carried since walkthrough 02; walkthrough 07 clears them.)
 
 ### 7. Read the generated script
 
@@ -236,71 +241,50 @@ Every route above has a sibling:
 
 ## Check your work
 
-Open the bottom drawer → **SQL** and compare. This is the entire generated
-script for the diagram above:
+Open the bottom drawer → **SQL**. The header comment is the first thing that
+changed:
 
 ```sql
--- Group tables, and read another database (PostgreSQL)
+-- Bookshop — after 03 Group tables (PostgreSQL)
 -- Generated by Database Visualizer
--- Tables: 2, foreign keys: 1
+-- Tables: 7, foreign keys: 2, documented connections: 3
 -- 2 table(s) live in another database and are not created here; see "External sources" at the end.
+```
 
-CREATE TABLE public.customers (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  crm_contact_id BIGINT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX customers_crm_contact_id_idx ON public.customers (crm_contact_id);
-COMMENT ON TABLE public.customers IS 'One row per shopper. crm_contact_id links out to the CRM group below when the sales team has one on file.';
-COMMENT ON COLUMN public.customers.crm_contact_id IS 'Points into the external CRM group. Nullable: not every customer has been synced yet.';
+Seven `CREATE TABLE` statements for nine tables on the canvas. Scroll the whole
+script and you will not find `CREATE TABLE public.crm_contacts` anywhere.
+Instead, at the end:
 
-CREATE TABLE public.orders (
-  id BIGSERIAL PRIMARY KEY,
-  customer_id BIGINT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'pending',
-  total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id) ON DELETE CASCADE
-);
-CREATE INDEX orders_customer_id_idx ON public.orders (customer_id);
-COMMENT ON TABLE public.orders IS 'One row per order placed by a customer.';
-
+```sql
 -- ----------------------------------------------------------------
 -- External sources: other databases this schema reads from.
 -- Nothing below is executed; it is here so the script documents where the data comes from.
 --
 -- CRM (read-only) (2 tables)
---   Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, and only two of its tables matter to us.
+--   Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, so nothing here is created by the generated script.
 --   crm_contacts (contact_id, email, account_id)
 --   crm_accounts (account_id, name, tier)
 --
 -- References into CRM (read-only), as foreign keys would look if the tables were local:
--- ALTER TABLE public.customers ADD CONSTRAINT customers_crm_contact_id_fkey FOREIGN KEY (crm_contact_id) REFERENCES crm_contacts (contact_id) ON DELETE SET NULL;
-
--- ----------------------------------------------------------------
--- Connections the schema does not enforce, and tagged queries
--- (documentation only, not executed)
--- [FK] customers references crm_contacts (customers_crm_contact_id_fkey)
---   Sales wants this join for the customer 360 report. The CRM is the vendor's database, not ours, so nothing here is enforced by our schema.
---   SELECT c.id, c.email, k.email AS crm_email
---   FROM public.customers c
---   JOIN crm_contacts k ON k.contact_id = c.crm_contact_id
---   -- crm_contacts is read over the FDW, not a table in this database
+-- ALTER TABLE public.customers ADD CONSTRAINT customers_crm_contact_id_fkey FOREIGN KEY (crm_contact_id) REFERENCES public.crm_contacts (contact_id) ON DELETE SET NULL;
 ```
 
-Notice two things the appendix does *not* do. It lists `crm_contacts` and
+Notice what the appendix does *not* do. It lists `crm_contacts` and
 `crm_accounts` themselves, but it never mentions the foreign key *between*
 them (`crm_contacts.account_id → crm_accounts.account_id`) anywhere — a
 foreign key with both ends inside the external group is entirely the other
 database's business, so the generator skips it, not just from the `CREATE
-TABLE` output but from the appendix too. And the tagged query you set in step
-5's inspector (not shown above until you add it) rides along in the second
-appendix exactly like any other tagged query — crossing the group boundary
-does not disqualify it.
+TABLE` output but from the appendix too. Only the one that crosses the
+boundary is written down, and it is written as the `ALTER TABLE` you would run
+*if* the tables were local.
+
+The `shop` region, meanwhile, changes nothing at all. Search the script for the
+word `shop` and there is nothing to find. That is the difference the second
+region exists to show: *external* is the only thing about a region that the
+generator has an opinion about.
 
 Toggle **Prefix DROP TABLE statements** in the same tab and check the top: the
-`DROP TABLE` list names `orders` and `customers` only, in that order —
+`DROP TABLE` list names the seven tables you own and no others —
 `crm_contacts` and `crm_accounts` were never created, so there is nothing to
 drop.
 
@@ -318,6 +302,10 @@ JOIN crm_contacts AS t1 ON t0.crm_contact_id = t1.contact_id;
 The `JOIN` is still written — a trace does not refuse to cross a group
 boundary — but the comment above it tells you why running it as one statement
 against your own database will not work.
+
+Press **Check my work** at the foot of this walkthrough to have the two
+regions, the four foreign keys and the missing `CREATE TABLE`s checked for
+you.
 
 ## Try it yourself
 
@@ -363,11 +351,8 @@ against your own database will not work.
 
 ## Where to go next
 
-- [Create an enum and use it](04-create-an-enum.md) — replace `orders.status`'s
-  free-text `'pending'` with a real constrained type.
-- [Trace a path between two tables](11-trace-a-path-between-tables.md) — more
-  on what happens when the shortest path between two tables leaves the schema
-  you are designing.
-- [Import an existing schema](09-import-an-existing-schema.md) — the *Put them
-  in a group* checkbox this walkthrough's "Other ways to do it" mentioned, in
-  full.
+- [Create an enum and use it](04-create-an-enum.md) — next in the series.
+  `orders.status` is still free-text `'pending'`; a custom type is what stops
+  `'Pending'`, `'paid '` and `'shpped'` from being legal values too.
+
+Nine tables now, in two regions. Everything after this keeps both.

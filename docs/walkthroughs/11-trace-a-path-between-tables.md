@@ -1,7 +1,7 @@
 ---
 title: Trace a path between tables
 slug: 11-trace-a-path-between-tables
-summary: Ask Trace for the shortest chain of connections between two tables, read what it found, and generate the JOIN it implies.
+summary: Add reviews to give books and customers a second route, then ask Trace for the shortest chain between tables and read the JOIN it implies.
 level: beginner
 minutes: 10
 dialect: postgresql
@@ -14,15 +14,17 @@ covers:
 shortcuts:
   - Shift+click
   - Esc
+start: diagrams/10-fix-what-problems-finds.dbviz.json
 diagram: diagrams/11-trace-a-path-between-tables.dbviz.json
 checks:
-  - tables | authors, books, reviews, customers, orders, order_items
-  - kinds | fk:6, dependency:1
+  - kinds | fk:17, flow:6, embed:1, dependency:1
+  - indexes | 13
   - trace | books -> customers
-  - trace | authors -> customers
+  - trace | catalog_export -> authors
+  - trace | shipments -> books
   - lint clean
 prerequisites:
-  - 02-connect-two-tables
+  - 10-fix-what-problems-finds
 next:
   - 12-read-a-big-diagram
 ---
@@ -31,22 +33,27 @@ next:
 
 ## What you'll build
 
-Six bookshop tables, already connected: `authors`, `books`, `reviews`,
-`customers`, `orders` and `order_items`. Nothing to draw here — the point of
-this walkthrough is what you do with a diagram once it exists. One extra
-connection is worth noticing before you start: `authors` **uses** `reviews`,
-a dependency with no shared column, added so *Trace* has something to walk
-that a foreign key cannot explain.
+One new table — `reviews` — and then no drawing at all. `reviews` matters
+because of what it does to the *shape* of the diagram: `books` and `customers`
+were already connected through `order_items` and `orders`, three hops apart,
+and a review gives them a second, shorter route. Two routes between the same
+pair of tables is what makes **Trace** interesting rather than obvious.
+
+The rest of the walkthrough is what you do with a diagram once it exists:
+trace three different pairs of tables, read the hop list and generated `JOIN`
+for each, send one to the **Query** tab, and watch what happens when a path
+runs through the `catalog_export uses books` dependency you drew back in
+walkthrough 02 — the one hop on this canvas that no foreign key backs.
 
 ```mermaid
 erDiagram
     AUTHORS ||--o{ BOOKS : "has"
     BOOKS ||--o{ REVIEWS : "has"
-    CUSTOMERS ||--o{ REVIEWS : "has"
-    CUSTOMERS ||--o{ ORDERS : "has"
+    CUSTOMERS ||--o{ REVIEWS : "wrote"
+    CUSTOMERS ||--o{ ORDERS : "placed"
     ORDERS ||--o{ ORDER_ITEMS : "contains"
     BOOKS ||--o{ ORDER_ITEMS : "referenced by"
-    AUTHORS }o--o{ REVIEWS : "uses (dependency)"
+    CATALOG_EXPORT }o--o{ BOOKS : "uses (dependency)"
     AUTHORS {
         bigserial id PK
     }
@@ -58,6 +65,7 @@ erDiagram
         bigserial id PK
         bigint book_id FK
         bigint customer_id FK
+        smallint rating
     }
     CUSTOMERS {
         bigserial id PK
@@ -73,21 +81,23 @@ erDiagram
     }
 ```
 
-By the end you will have traced two different pairs of tables, read the hop
-list and generated `JOIN` for each, sent one straight to the **Query** tab,
-and seen the one line a non-foreign-key hop is allowed to produce.
-
 ## Before you start
 
-Read [Connect two tables](02-connect-two-tables.md) first if you have not —
-this walkthrough assumes you already know what a foreign key, a data flow, a
-serialized link and a dependency are, and only that a dependency is one of
-the three kinds a database does not enforce. Have **PostgreSQL** selected in
-the dialect selector; nothing here is dialect-specific, but the companion
-diagram is written in that dialect and switching would translate its types
-for no reason.
+You need what [Fix what Problems finds](10-fix-what-problems-finds.md) leaves
+behind: seventeen tables, and a **Problems** tab with no errors or warnings in
+it. Press **Set up the canvas** at the top of this walkthrough in the drawer's
+**Walkthrough** tab if it is not already in front of you.
 
-If you would rather read the finished thing than type it, open
+That matters here in a way it has not before. Trace walks the
+connections you drew, so a path is only ever as trustworthy as the foreign
+keys under it — an unpaired or backwards key does not make Trace fail, it
+makes Trace confidently wrong.
+
+Have **PostgreSQL** selected in the dialect selector; nothing here is
+dialect-specific, but the diagram is written in that dialect and switching
+would translate its types for no reason.
+
+If you would rather read the finished thing than build it, open
 [`diagrams/11-trace-a-path-between-tables.dbviz.json`](diagrams/11-trace-a-path-between-tables.dbviz.json)
 with **File → Open** (`Ctrl+O`), or drop the file on the canvas.
 
@@ -109,15 +119,45 @@ Turning a path into SQL is direct exactly where a foreign key sits: an `fk`
 connection carries a pair of columns that the database guarantees line up on
 every row, so the generator can write `JOIN … ON left = right` without
 inventing anything. A data flow, a serialized link and a dependency carry no
-such pair — nothing forces `authors.id` to relate to any particular row of
-`reviews` — so the generator cannot write an `ON` clause for them at all. It
+such pair — nothing forces `catalog_export.book_id` to relate to any
+particular row of `books` — so the generator cannot write an `ON` clause for
+them at all. It
 still has to include the table, because the path passed through it, so it
 writes `CROSS JOIN` and leaves a comment explaining why there is nothing to
 join on. The path is real; only the join condition is missing.
 
 ## Steps
 
-### 1. Select two tables and trace them
+### 1. Add reviews
+
+Press `T`, name the new table `reviews`, drop it inside the `shop` region, and
+give it:
+
+| Name | Type | Flags | Default | Check |
+| --- | --- | --- | --- | --- |
+| `id` | `BIGSERIAL` | **PK NN AI** | | |
+| `book_id` | `BIGINT` | **NN** | | |
+| `customer_id` | `BIGINT` | **NN** | | |
+| `rating` | `SMALLINT` | **NN** | | `rating BETWEEN 1 AND 5` |
+| `posted_at` | `TIMESTAMPTZ` | **NN** | `now()` | |
+
+Connect `book_id` to `books.id` and `customer_id` to `customers.id`, both
+**On delete** *CASCADE* — a review of a deleted book is not worth keeping.
+Set the second connection's **Reverse label** to `wrote`. Then clear the two
+`fk-without-index` warnings the new keys raise with **Fix all safe**, exactly
+as in the last walkthrough.
+
+The shape this creates is the point. `books` and `customers` were already
+connected — through `order_items` and `orders`, three hops — and now they are
+also connected through `reviews`, two hops. Both routes are real, and they
+answer different questions: one is "who bought this", the other is "who
+reviewed this".
+
+**You should see:** eighteen tables, thirteen indexes, **Problems** back to no
+errors and no warnings, and two lines running out of `reviews` towards `books`
+and `customers`.
+
+### 2. Select two tables and trace them
 
 Click the `books` table, then hold `Shift` and click `customers` to add it
 to the selection (`Shift+click`). In the top bar, click **Trace**. With two
@@ -126,9 +166,10 @@ tables already selected it traces immediately — no pick mode, no dialog.
 **You should see:** the bottom drawer opens on its **Trace** tab with a
 **2 hops** badge next to the tab label, and on the canvas `books`, `reviews`
 and `customers` — plus the two connections between them — light up while
-every other table and connection dims.
+every other table and connection dims. Out of eighteen tables, three stay
+bright; on a diagram this size that dimming is most of the value.
 
-### 2. Read the hop list
+### 3. Read the hop list
 
 In the **Trace** tab, look under the table chain `books → reviews →
 customers` at the two rows below it.
@@ -138,7 +179,16 @@ customers` at the two rows below it.
 the exact `ON` conditions the generated query below is about to use. Click
 either chip and the inspector jumps to that connection.
 
-### 3. Run the join in the Query tab
+Under **Join along the path**, the query itself:
+
+```sql
+SELECT t0.*, t1.*, t2.*
+FROM books AS t0
+JOIN reviews AS t1 ON t0.id = t1.book_id
+JOIN customers AS t2 ON t1.customer_id = t2.id;
+```
+
+### 4. Run the join in the Query tab
 
 On the right-hand side of the **Trace** tab, under **Join along the path**,
 click **Run**.
@@ -148,7 +198,7 @@ two-table `JOIN` already sitting in the editor, ready to run against a
 connected database with `Ctrl+Enter`. **Copy**, next to **Run**, puts the
 same text on the clipboard without leaving the **Trace** tab.
 
-### 4. Compare it with the route Trace did not take
+### 5. Compare it with the route Trace did not take
 
 `books` reaches `customers` a second way: `books → order_items → orders →
 customers`, three hops instead of two. Trace cannot prefer one meaning over
@@ -164,22 +214,22 @@ missing (`orders → customers`) and you get the three-hop path a person asking
 "who bought this book" would actually mean. Trace never offers it, because
 two is smaller than three.
 
-### 5. Trace across a connection that is not a foreign key
+### 6. Trace across a connection that is not a foreign key
 
-Right-click the `authors` table and choose **Trace from here…**. The
-**Trace** tab opens with `authors` already set as **From table…**, and a
-banner on the canvas reads "From authors: now click the destination table."
-Click `customers`.
+Right-click the `catalog_export` table and choose **Trace from here…**. The
+**Trace** tab opens with `catalog_export` already set as **From table…**, and
+a banner on the canvas reads "From catalog_export: now click the destination
+table." Click `authors`.
 
-**You should see:** a **2 hops** badge and the table chain `authors →
-reviews → customers` — shorter than the three-hop route through `books` that
-also connects them, because the dependency you noticed at the start cuts a
-corner. Look at the first row of the hop list: its chip reads **uses**, not
-**FK**, and the text is a sentence — `authors uses reviews (featured-authors
-carousel)` — instead of a column pair, because there is no column pair to
-show.
+**You should see:** a **2 hops** badge and the table chain `catalog_export →
+books → authors`. Look at the first row of the hop list: its chip reads
+**uses**, not **FK**, and the text is a sentence — `catalog_export uses books
+(nightly feed)` — instead of a column pair, because there is no column pair to
+show. That edge has been on the canvas since walkthrough 02, documenting a
+nightly job; Trace is happy to walk it even though the database knows nothing
+about it.
 
-### 6. Read the mixed join it produces
+### 7. Read the mixed join it produces
 
 With that same trace still showing, look at **Join along the path** again.
 
@@ -187,29 +237,30 @@ With that same trace still showing, look at **Join along the path** again.
 
 ```sql
 SELECT t0.*, t1.*, t2.*
-FROM authors AS t0
--- authors uses reviews (featured-authors carousel): dependency link, no join condition
-CROSS JOIN reviews AS t1
-JOIN customers AS t2 ON t1.customer_id = t2.id;
+FROM catalog_export AS t0
+-- catalog_export uses books (nightly feed): dependency link, no join condition
+CROSS JOIN books AS t1
+JOIN authors AS t2 ON t1.author_id = t2.id;
 ```
 
 One `JOIN … ON` and one `CROSS JOIN` with a comment, in the same query — the
 generator switches per hop, not per query, based only on whether that one
 connection happens to be a foreign key.
 
-### 7. Trace from the drawer tab itself, without touching the canvas
+### 8. Trace from the drawer tab itself, without touching the canvas
 
 Everything so far started on the canvas or its right-click menu. The
-**Trace** tab has its own way in: set **From table…** to `orders` and
-**To table…** to `reviews` using the two dropdowns at its top, then click
+**Trace** tab has its own way in: set **From table…** to `shipments` and
+**To table…** to `books` using the two dropdowns at its top, then click
 **Trace**.
 
-**You should see:** a **2 hops** badge and the chain `orders → customers →
-reviews` — a third pair, reached without selecting or right-clicking
-anything, useful when the tables you want are off-screen or you would rather
-type than scroll.
+**You should see:** a **2 hops** badge and the chain `shipments →
+shipment_items → books`, reached without selecting or right-clicking
+anything. On a diagram this size that is usually the fastest route in — and it
+is the only one that works when the table you want is scrolled off-screen,
+which the warehouse block generally is.
 
-### 8. Leave trace mode
+### 9. Leave trace mode
 
 Press `Esc`. If you are still mid-pick rather than looking at a result,
 `Esc` cancels the pick instead; press it again to clear whatever trace is
@@ -248,14 +299,14 @@ JOIN reviews AS t1 ON t0.id = t1.book_id
 JOIN customers AS t2 ON t1.customer_id = t2.id;
 ```
 
-Trace `authors` to `customers` and it should read:
+Trace `catalog_export` to `authors` and it should read:
 
 ```sql
 SELECT t0.*, t1.*, t2.*
-FROM authors AS t0
--- authors uses reviews (featured-authors carousel): dependency link, no join condition
-CROSS JOIN reviews AS t1
-JOIN customers AS t2 ON t1.customer_id = t2.id;
+FROM catalog_export AS t0
+-- catalog_export uses books (nightly feed): dependency link, no join condition
+CROSS JOIN books AS t1
+JOIN authors AS t2 ON t1.author_id = t2.id;
 ```
 
 Both are copied straight from the app (bottom drawer → **Trace** → **Join
@@ -264,22 +315,29 @@ every hop on it is a foreign key. The second mixes the two kinds in one
 statement, in the order the hops occur — the direct, observable proof that
 the generator decides per hop, not per trace.
 
+Press **Check my work** at the foot of this walkthrough for the same thing as
+a pass/fail: three of its checks are `trace` checks, and each one fails if the
+path it names has stopped existing. A `trace` check is the only kind in the
+series that tests the *shape* of the schema rather than its contents — which
+is exactly what a walkthrough about connectivity should be checking.
+
 ## Try it yourself
 
-- Trace `order_items` to `authors`. It is three hops (`order_items → books →
-  authors`), all foreign keys — predict the chain before you press **Trace**
-  and see whether the tie-free shortest route matches what you expected.
-- Delete the `authors → reviews` dependency (select it, `Delete`) and trace
-  `authors` to `customers` again. The badge changes from **2 hops** to
-  **3 hops** and the route now goes through `books` — the dependency was not
-  decoration, it was genuinely the shorter path. `Ctrl+Z` brings it back.
-- Trace two tables that are not connected at all — there are none in this
-  diagram, so add a disconnected seventh table first, or open a fresh
-  diagram with just two unlinked tables. Read the message the **Trace** tab
-  shows instead of a result.
-- Rename `reviews` to something else in the inspector and watch the hop list
-  and the generated `JOIN` update their table names on the next trace,
-  without re-tracing anything by hand.
+- Trace `order_items` to `authors`. It is two hops (`order_items → books →
+  authors`), both foreign keys — predict the chain before you press **Trace**
+  and see whether the shortest route matches what you expected.
+- Delete the `reviews → books` foreign key (select it, `Delete`) and trace
+  `books` to `customers` again. The badge changes from **2 hops** to
+  **3 hops** and the route moves to `books → order_items → orders →
+  customers` — the same two tables, a completely different question answered.
+  `Ctrl+Z` brings it back.
+- Trace `customers` to `crm_contacts`. The path crosses into the external
+  region from walkthrough 03, and the generated query carries a warning
+  comment saying it will not run as one statement — a trace never refuses to
+  cross a database boundary, it just tells you.
+- Trace two tables that are not connected at all. Every table on this canvas
+  is reachable from every other, so add a disconnected table first, then read
+  the message the **Trace** tab shows instead of a result.
 
 ## Gotchas
 
@@ -309,10 +367,8 @@ the generator decides per hop, not per trace.
 
 ## Where to go next
 
-- [Read a big diagram](12-read-a-big-diagram.md) — focus, collapse and
-  neighborhood tools for when a schema has too many tables to trace by eye.
-- [Group tables](03-group-tables.md) — what happens to a traced path when it
-  has to cross into a database you do not own.
-- [Fix what Problems finds](10-fix-what-problems-finds.md) — the six
-  `fk-without-index` warnings this diagram would have shown before its
-  indexes were added.
+- [Read a big diagram](12-read-a-big-diagram.md) — next in the series, and
+  overdue. There are eighteen tables on this canvas now, and the last few
+  walkthroughs have been quietly relying on `Ctrl+K` to find anything. Focus,
+  collapse, Detangle and regions are how you read a diagram this size on
+  purpose instead of by search.

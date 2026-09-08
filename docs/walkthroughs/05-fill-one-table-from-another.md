@@ -1,7 +1,7 @@
 ---
 title: Fill one table from another
 slug: 05-fill-one-table-from-another
-summary: Two rollup tables wired to data-flow edges whose derivations aggregate through a foreign key and average the gaps between a customer's orders.
+summary: Add order_items and daily_sales, then write the derivations that finally make both rollup tables compute — including the flow left empty in walkthrough 02.
 level: advanced
 minutes: 25
 dialect: postgresql
@@ -17,17 +17,16 @@ shortcuts:
   - S
   - Esc
   - Ctrl+K
+start: diagrams/04-create-an-enum.dbviz.json
 diagram: diagrams/05-fill-one-table-from-another.dbviz.json
 checks:
-  - tables | customers, books, orders, order_items, daily_sales, customer_cadence
-  - kinds | fk:5, flow:2
+  - kinds | fk:8, flow:2, embed:1, dependency:1
   - derivations | 5
   - contains | JOIN public.orders ON orders.id = order_items.order_id
   - simulate | daily_sales
   - simulate | customer_cadence
   - lint clean
 prerequisites:
-  - 02-connect-two-tables
   - 04-create-an-enum
 next:
   - 06-simulate-a-data-flow
@@ -37,13 +36,16 @@ next:
 
 ## What you'll build
 
-A bookshop schema with two rollup tables at the bottom: `daily_sales`, filled by
-grouping and summing `order_items` through the `orders` it joins to via foreign
-key, and `customer_cadence`, filled by measuring the gap between each
-customer's orders in sequence and then averaging it. Neither table is ever
-`INSERT`ed into by hand — a dashed **data flow** edge into each one carries the
-structured *derivations* that say exactly how, and the app turns those into a
-real `INSERT ... SELECT` you can read in the SQL tab.
+Two rollup tables that actually compute. `order_items` joins the canvas — the
+grain everything downstream aggregates from — and under it `daily_sales`, filled
+by grouping and summing `order_items` through the `orders` it joins to via
+foreign key. Then the data flow you drew into `customer_cadence` back in
+walkthrough 02, and left deliberately empty, finally gets its derivations:
+the gap between each customer's orders in sequence, averaged.
+
+Neither rollup is ever `INSERT`ed into by hand. The dashed **data flow** edge
+into each one carries structured *derivations* that say exactly how, and the
+app turns those into a real `INSERT ... SELECT` you can read in the SQL tab.
 
 ```mermaid
 erDiagram
@@ -69,12 +71,15 @@ erDiagram
 
 ## Before you start
 
-Read [Connect two tables](02-connect-two-tables.md) first — everything here
-leans on foreign keys already being right, and on knowing the difference
-between a **Foreign key** connection and the other three kinds. [Create an
-enum and use it](04-create-an-enum.md) is the other prerequisite: `orders`
-carries an `order_status` enum (`pending`, `paid`, `shipped`, `cancelled`),
-and one of the two flows below filters on it.
+You need what [Create an enum and use it](04-create-an-enum.md) leaves behind:
+nine tables, an `order_status` enum on `orders.status`, and the empty data flow
+from `orders` into `customer_cadence` that walkthrough 02 drew. Press **Set up
+the canvas** at the top of this walkthrough in the drawer's **Walkthrough** tab
+if it is not already in front of you.
+
+Both matter here. Everything below leans on the foreign keys already being
+right, and one of the two flows filters on `status = 'paid'` — a comparison
+worth trusting only because the enum stops the column holding anything else.
 
 Select **PostgreSQL** in the dialect selector at the top. It matters twice
 over: the sequence derivation below leans on PostgreSQL's own rule that
@@ -125,55 +130,44 @@ divided by a count.
 
 ## Steps
 
-### 1. Bring in the source tables
+### 1. Add order_items
 
-Open the bottom drawer's **Import SQL** tab and paste this — it is exactly
-what [Connect two tables](02-connect-two-tables.md) and [Create an
-enum](04-create-an-enum.md) would leave you with:
+Press `T`, rename the new table `order_items`, and give it these columns:
 
-```sql
-CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
+| Name | Type | Flags | Default | Check |
+| --- | --- | --- | --- | --- |
+| `id` | `BIGSERIAL` | **PK NN AI** | | |
+| `order_id` | `BIGINT` | **NN** | | |
+| `book_id` | `BIGINT` | **NN** | | |
+| `quantity` | `INTEGER` | **NN** | `1` | `quantity > 0` |
+| `unit_price_cents` | `INTEGER` | **NN** | | `unit_price_cents >= 0` |
 
-CREATE TABLE customers (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+`unit_price_cents` is not a mistake or a duplicate of `books.price_cents`. It
+is the price *at the moment of sale*, copied at checkout, so that repricing a
+book tomorrow does not silently rewrite what somebody paid last week. Rollups
+downstream read this column, never `books.price_cents`, for the same reason.
 
-CREATE TABLE books (
-  id BIGSERIAL PRIMARY KEY,
-  title TEXT NOT NULL,
-  isbn CHAR(13) NOT NULL UNIQUE,
-  price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0)
-);
+**You should see:** a tenth table on the canvas with five columns, and
+`order_items` in the `shop` region if you dropped it inside the slate
+rectangle (drag it in if not).
 
-CREATE TABLE orders (
-  id BIGSERIAL PRIMARY KEY,
-  customer_id BIGINT NOT NULL REFERENCES customers (id) ON DELETE CASCADE,
-  status order_status NOT NULL DEFAULT 'pending',
-  total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX orders_customer_id_idx ON orders (customer_id);
+### 2. Connect order_items to its two parents
 
-CREATE TABLE order_items (
-  id BIGSERIAL PRIMARY KEY,
-  order_id BIGINT NOT NULL REFERENCES orders (id) ON DELETE CASCADE,
-  book_id BIGINT NOT NULL REFERENCES books (id) ON DELETE RESTRICT,
-  quantity INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
-  unit_price_cents INTEGER NOT NULL CHECK (unit_price_cents >= 0)
-);
-CREATE INDEX order_items_order_id_idx ON order_items (order_id);
-CREATE INDEX order_items_book_id_idx ON order_items (book_id);
-```
+Drag the handle beside `order_items.order_id` onto `orders.id`, and the handle
+beside `order_items.book_id` onto `books.id`. In the inspector, set the first
+connection's **Reads as** to *is part of* and its **On delete** to *CASCADE*;
+set the second's **On delete** to *RESTRICT*.
 
-Click **Add to the current diagram**.
+The two `ON DELETE` choices are opposites on purpose. An order line is part of
+its order and means nothing without it, so deleting the order should take its
+lines with it. A book is referenced *by* order lines and outlives them, so
+deleting a book that has ever been sold should be refused outright.
 
-**You should see:** four tables — `customers`, `books`, `orders`,
-`order_items` — laid out on the canvas, an `order_status` badge in the
-**Types** tab, and **Problems** empty.
+**You should see:** two more solid, crow's-foot connections, and — importantly
+for the next steps — a path from `order_items` to `orders`, which is what lets
+a derivation say `orders.status` without you restating the join.
 
-### 2. Add daily_sales
+### 3. Add daily_sales
 
 Press `T`, rename the new table `daily_sales`, and colour it *orange* — the
 convention for a derived table across these walkthroughs. Give it four
@@ -193,34 +187,19 @@ Two columns flagged **PK** makes a composite primary key, exactly like
 `PRIMARY KEY (book_id, day)` as a standalone line in the generated
 `CREATE TABLE public.daily_sales` once you open the SQL tab.
 
-### 3. Add customer_cadence
-
-Press `T` again, rename it `customer_cadence`, colour it orange, and add:
-
-| Name | Type | Flags | Default |
-| --- | --- | --- | --- |
-| `customer_id` | `BIGINT` | **PK** **NN** | |
-| `avg_gap_days` | `NUMERIC(10,2)` | — | |
-| `order_count` | `INTEGER` | **NN** | `0` |
-
-Leave `avg_gap_days` nullable: a customer with only one real order has no gap
-to average yet, and `AVG` of zero numbers is `NULL`, not `0`.
-
-**You should see:** a single-column primary key on `customer_id`, and
-`avg_gap_days NUMERIC(10,2)` with no `NOT NULL` in the SQL tab.
-
 ### 4. Connect the dimension keys
 
-Drag from `daily_sales.book_id`'s left-side handle onto `books.id`, and from
-`customer_cadence.customer_id`'s handle onto `customers.id`. Both land as
-**Foreign key** connections automatically, because you dragged column to
-column rather than from a header. Open the second one in the inspector and
-set **Reads as** to *extends* — `customer_cadence` shares its primary key
-with the row of `customers` it summarises, which is exactly what *extends*
-means.
+Drag from `daily_sales.book_id`'s handle onto `books.id`, and from
+`customer_cadence.customer_id`'s handle onto `customers.id` — that second
+table has been sitting there since walkthrough 02 with its key pointing at
+nothing. Both land as **Foreign key** connections automatically, because you
+dragged column to column rather than from a header. Open the second one in the
+inspector and set **Reads as** to *extends*: `customer_cadence` shares its
+primary key with the row of `customers` it summarises, which is exactly what
+*extends* means.
 
-**You should see:** two solid, crow's-foot connections, and **Problems**
-still empty — `book_id` already leads `daily_sales`'s composite primary key
+**You should see:** two solid, crow's-foot connections, and no new
+**Problems** — `book_id` already leads `daily_sales`'s composite primary key
 and `customer_id` *is* `customer_cadence`'s whole primary key, so both
 foreign keys already have the index PostgreSQL needs without you adding one.
 
@@ -301,10 +280,11 @@ landing in `daily_sales` on the right — at the defaults (*Rows per input*
 10, *Seed* 1) that is 7 rows. Double-click a cell in `order_items` on the
 left to edit it and watch the right side recompute.
 
-### 9. Derive avg_gap_days and order_count
+### 9. Keep the promise: derive avg_gap_days and order_count
 
-Drag from `orders`'s header handle onto `customer_cadence` to start the
-second flow. Add two derivations.
+Select the dashed edge from `orders` to `customer_cadence` — the one you drew
+in walkthrough 02 and left with **Derived columns (0)**. Nothing about it needs
+redrawing; it has been waiting for exactly this. Add two derivations.
 
 **Entry 1 — `avg_gap_days`:** target column `avg_gap_days`, aggregate `AVG`.
 *Expression on orders*: `CAST(placed_at AS DATE)`. Set **Sequence (window)**
@@ -355,63 +335,10 @@ measure a gap against. Click **Reshuffle** for a different sample, or raise
 ## Check your work
 
 Open the bottom drawer → **SQL**, leave it on *Whole schema* — **Selected
-table** only shows a table's own `CREATE TABLE`, not the flows that feed it —
-and scroll past the five tables to the appendix at the end. This is the
-whole generated script for the diagram above:
+table** only shows a table's own `CREATE TABLE`, not the flows that feed it.
+The two new tables are ordinary:
 
 ```sql
--- Fill one table from another — daily sales and customer cadence (PostgreSQL)
--- Generated by Database Visualizer
--- Tables: 6, foreign keys: 5, documented connections: 2
-
--- Custom types
-CREATE TYPE order_status AS ENUM ('pending', 'paid', 'shipped', 'cancelled');
-
-CREATE TABLE public.books (
-  id BIGSERIAL PRIMARY KEY,
-  title TEXT NOT NULL,
-  isbn CHAR(13) NOT NULL UNIQUE,
-  price_cents INTEGER NOT NULL DEFAULT 0 CHECK (price_cents >= 0)
-);
-COMMENT ON TABLE public.books IS 'One row per edition we stock.';
-
-CREATE TABLE public.customers (
-  id BIGSERIAL PRIMARY KEY,
-  email TEXT NOT NULL UNIQUE,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-COMMENT ON TABLE public.customers IS 'One row per shopper.';
-
-CREATE TABLE public.customer_cadence (
-  customer_id BIGINT PRIMARY KEY,
-  avg_gap_days NUMERIC(10,2),
-  order_count INTEGER NOT NULL DEFAULT 0,
-  CONSTRAINT customer_cadence_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id) ON DELETE CASCADE
-);
-COMMENT ON TABLE public.customer_cadence IS 'One row per customer. Rebuilt nightly from orders — see the data-flow edge.';
-COMMENT ON COLUMN public.customer_cadence.avg_gap_days IS 'NULL for a customer with fewer than two paid orders: there is no gap yet to average.';
-
-CREATE TABLE public.daily_sales (
-  book_id BIGINT NOT NULL,
-  day DATE NOT NULL,
-  units INTEGER NOT NULL DEFAULT 0,
-  revenue_cents INTEGER NOT NULL DEFAULT 0,
-  PRIMARY KEY (book_id, day),
-  CONSTRAINT daily_sales_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books (id) ON DELETE RESTRICT
-);
-COMMENT ON TABLE public.daily_sales IS 'One row per book per day it sold at least one copy. Rebuilt nightly from order_items — see the data-flow edge and its Tagged query for the upsert this diagram cannot draw directly.';
-
-CREATE TABLE public.orders (
-  id BIGSERIAL PRIMARY KEY,
-  customer_id BIGINT NOT NULL,
-  status order_status NOT NULL DEFAULT 'pending',
-  total_cents INTEGER NOT NULL DEFAULT 0 CHECK (total_cents >= 0),
-  placed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT orders_customer_id_fkey FOREIGN KEY (customer_id) REFERENCES public.customers (id) ON DELETE CASCADE
-);
-CREATE INDEX orders_customer_id_idx ON public.orders (customer_id);
-COMMENT ON TABLE public.orders IS 'One row per checkout. status drives the paid-only filter that daily_sales relies on; placed_at is the sequence customer_cadence measures gaps over.';
-
 CREATE TABLE public.order_items (
   id BIGSERIAL PRIMARY KEY,
   order_id BIGINT NOT NULL,
@@ -421,15 +348,24 @@ CREATE TABLE public.order_items (
   CONSTRAINT order_items_order_id_fkey FOREIGN KEY (order_id) REFERENCES public.orders (id) ON DELETE CASCADE,
   CONSTRAINT order_items_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books (id) ON DELETE RESTRICT
 );
-CREATE INDEX order_items_order_id_idx ON public.order_items (order_id);
-CREATE INDEX order_items_book_id_idx ON public.order_items (book_id);
-COMMENT ON TABLE public.order_items IS 'The grain daily_sales rolls up: one row per book per order.';
 
--- ----------------------------------------------------------------
--- Connections the schema does not enforce, and tagged queries
--- (documentation only, not executed)
+CREATE TABLE public.daily_sales (
+  book_id BIGINT NOT NULL,
+  day DATE NOT NULL,
+  units INTEGER NOT NULL DEFAULT 0,
+  revenue_cents INTEGER NOT NULL DEFAULT 0,
+  PRIMARY KEY (book_id, day),
+  CONSTRAINT daily_sales_book_id_fkey FOREIGN KEY (book_id) REFERENCES public.books (id) ON DELETE RESTRICT
+);
+```
+
+The interesting part is the appendix at the very end, which is where the two
+flows now write themselves out in full. Nothing here executes — it is the
+`INSERT ... SELECT` the app builds from your derivation metadata, so you can
+read what the diagram claims and check it against what your job really does:
+
+```sql
 -- [flow] order_items feeds daily_sales (nightly rollup)
---   Rebuilt nightly, not on write: a day's sales are not final until the day is over. The upsert below is what makes re-running it safe.
 --   Derived columns:
 --     day = CAST(orders.placed_at AS DATE) GROUP BY book_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'
 --     units = SUM(quantity) GROUP BY book_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'
@@ -441,18 +377,7 @@ COMMENT ON TABLE public.order_items IS 'The grain daily_sales rolls up: one row 
 --   JOIN public.orders ON orders.id = order_items.order_id
 --   WHERE orders.status = 'paid'
 --   GROUP BY order_items.book_id, CAST(orders.placed_at AS DATE);
---   Tagged query:
---   INSERT INTO daily_sales (book_id, day, units, revenue_cents)
---   SELECT oi.book_id, CAST(o.placed_at AS DATE), SUM(oi.quantity), SUM(oi.quantity * oi.unit_price_cents)
---   FROM order_items oi
---   JOIN orders o ON o.id = oi.order_id
---   WHERE o.status = 'paid'
---   GROUP BY oi.book_id, CAST(o.placed_at AS DATE)
---   ON CONFLICT (book_id, day) DO UPDATE
---     SET units = daily_sales.units + EXCLUDED.units,
---         revenue_cents = daily_sales.revenue_cents + EXCLUDED.revenue_cents;
 -- [flow] orders feeds customer_cadence (nightly rollup)
---   Full rebuild, not incremental: one new order can change the average gap for every order this customer ever placed, so there is nothing sane to upsert.
 --   Derived columns:
 --     avg_gap_days = AVG(DIFF(CAST(placed_at AS DATE)) OVER (PARTITION BY customer_id ORDER BY placed_at)) GROUP BY customer_id WHERE status <> 'cancelled'
 --     order_count = COUNT(*) GROUP BY customer_id WHERE status <> 'cancelled'
@@ -466,6 +391,22 @@ COMMENT ON TABLE public.order_items IS 'The grain daily_sales rolls up: one row 
 --   ) AS w
 --   GROUP BY customer_id;
 ```
+
+Read the first `JOIN` line twice. You never typed it. The derivation said
+`orders.status`, and the generator walked `order_items.order_id →
+orders.id` — a foreign key you drew in step 2 — to work out how those two
+tables meet. Get that foreign key wrong and this join is wrong with it, which
+is why the flows come after the keys and not before.
+
+Under the `daily_sales` flow, the tagged query you pasted in step 7 rides
+along after the generated one: the `ON CONFLICT` upsert, printed as you typed
+it, because the derivation metadata has no way to express "and if the row is
+already there, add to it."
+
+Press **Check my work** at the foot of this walkthrough. Alongside the tables
+and connections it checks `derivations | 5` and runs both simulations — so a
+derivation you left half-finished shows up as a failed line rather than as a
+surprise three walkthroughs later.
 
 ## Try it yourself
 
@@ -517,12 +458,8 @@ COMMENT ON TABLE public.order_items IS 'The grain daily_sales rolls up: one row 
 
 ## Where to go next
 
-- [Simulate a data flow](06-simulate-a-data-flow.md) — the **Simulate** tab
-  used in steps 8 and 10 gets its own walkthrough: stage-by-stage playback,
-  row lineage, and editing a raw input cell to see a value ripple through.
-- [Fix what Problems finds](10-fix-what-problems-finds.md) — for the lint
-  findings this diagram deliberately avoids, like the missing index step 4's
-  key placement sidesteps.
-- [Trace a path between tables](11-trace-a-path-between-tables.md) — the same
-  foreign-key walk that resolves a `table.column` reference inside a
-  derivation is what **Trace** does explicitly, hop by hop, on demand.
+- [Simulate a data flow](06-simulate-a-data-flow.md) — next in the series. The
+  **Simulate** tab you glanced at in steps 8 and 10 gets a walkthrough of its
+  own: stage-by-stage playback, row lineage, and editing a raw input cell to
+  watch a value ripple all the way through. It is the only walkthrough in the
+  series that changes nothing on the canvas, because Simulate never does.

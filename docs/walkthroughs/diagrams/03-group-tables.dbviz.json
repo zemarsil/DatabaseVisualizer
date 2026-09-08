@@ -1,133 +1,651 @@
 {
   "version": 1,
-  "name": "Group tables, and read another database",
+  "name": "Bookshop — after 03 Group tables",
   "dialect": "postgresql",
-  "groups": [
-    {
-      "id": "grp_crm",
-      "name": "CRM (read-only)",
-      "color": "purple",
-      "external": true,
-      "note": "Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, and only two of its tables matter to us.",
-      "position": { "x": 660, "y": -40 }
-    }
-  ],
   "tables": [
     {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_authors",
+      "name": "authors",
+      "comment": "One row per person who wrote something we sell.",
+      "position": {
+        "x": 0,
+        "y": 0
+      },
+      "columns": [
+        {
+          "id": "col_authors_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true,
+          "comment": "Surrogate key. Nothing outside the database ever sees it."
+        },
+        {
+          "id": "col_authors_name",
+          "name": "name",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_authors_country",
+          "name": "country",
+          "type": "CHAR(2)",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "check": "country = upper(country)",
+          "comment": "ISO 3166-1 alpha-2. Nullable: we often do not know."
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "blue",
+      "checks": [
+        "published_on IS NULL OR published_on >= DATE '1450-01-01'"
+      ],
+      "indexes": [],
+      "id": "tbl_books",
+      "name": "books",
+      "comment": "One row per edition we stock.",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_books_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_books_author_id",
+          "name": "author_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_title",
+          "name": "title",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_isbn",
+          "name": "isbn",
+          "type": "CHAR(13)",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": true,
+          "autoIncrement": false,
+          "comment": "The natural key. UNIQUE, but not the primary key: ISBNs get reassigned and mistyped."
+        },
+        {
+          "id": "col_books_price_cents",
+          "name": "price_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0",
+          "check": "price_cents >= 0",
+          "comment": "Integer cents, never a float: 0.1 + 0.2 is not 0.3 in binary floating point."
+        },
+        {
+          "id": "col_books_published_on",
+          "name": "published_on",
+          "type": "DATE",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_in_print",
+          "name": "in_print",
+          "type": "BOOLEAN",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "true"
+        },
+        {
+          "id": "col_books_added_at",
+          "name": "added_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        },
+        {
+          "id": "col_books_contributors_json",
+          "name": "contributors_json",
+          "type": "JSONB",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "Holds the serialized contributors rows. The embed connection is what says so."
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
       "id": "tbl_customers",
       "name": "customers",
-      "schema": "public",
-      "color": "blue",
-      "comment": "One row per shopper. crm_contact_id links out to the CRM group below when the sales team has one on file.",
-      "position": { "x": 0, "y": 0 },
-      "checks": [],
-      "indexes": [
-        { "id": "idx_customers_crm_contact", "name": "customers_crm_contact_id_idx", "columnIds": ["col_customers_crm_contact_id"], "unique": false }
-      ],
+      "comment": "One row per person who buys from us. Typed from scratch in walkthrough 01.",
+      "position": {
+        "x": 680,
+        "y": 0
+      },
       "columns": [
-        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_customers_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false },
-        { "id": "col_customers_crm_contact_id", "name": "crm_contact_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Points into the external CRM group. Nullable: not every customer has been synced yet." },
-        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
-      ]
+        {
+          "id": "col_customers_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_customers_email",
+          "name": "email",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": true,
+          "autoIncrement": false,
+          "comment": "The natural key: one account per address."
+        },
+        {
+          "id": "col_customers_crm_contact_id",
+          "name": "crm_contact_id",
+          "type": "BIGINT",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "Their id in the vendor CRM. Nullable: not every customer is in it."
+        },
+        {
+          "id": "col_customers_created_at",
+          "name": "created_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
+      ],
+      "groupId": "grp_shop"
     },
     {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
       "id": "tbl_orders",
       "name": "orders",
+      "comment": "One row per order placed. status is plain TEXT for now — walkthrough 04 turns it into an enum.",
+      "position": {
+        "x": 680,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_orders_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_orders_customer_id",
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_orders_status",
+          "name": "status",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "'pending'"
+        },
+        {
+          "id": "col_orders_total_cents",
+          "name": "total_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0",
+          "check": "total_cents >= 0"
+        },
+        {
+          "id": "col_orders_placed_at",
+          "name": "placed_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
+      ],
+      "groupId": "grp_shop"
+    },
+    {
       "schema": "public",
       "color": "blue",
-      "comment": "One row per order placed by a customer.",
-      "position": { "x": 0, "y": 300 },
       "checks": [],
-      "indexes": [
-        { "id": "idx_orders_customer", "name": "orders_customer_id_idx", "columnIds": ["col_orders_customer_id"], "unique": false }
-      ],
+      "indexes": [],
+      "id": "tbl_contributors",
+      "name": "contributors",
+      "comment": "Translators, illustrators, editors. Few enough per book that they ride along inside books.contributors_json.",
+      "position": {
+        "x": 340,
+        "y": 0
+      },
       "columns": [
-        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_orders_status", "name": "status", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
-        { "id": "col_orders_total_cents", "name": "total_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "total_cents >= 0" },
-        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+        {
+          "id": "col_contributors_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_contributors_name",
+          "name": "name",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_contributors_role",
+          "name": "role",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
       ]
     },
     {
+      "schema": "public",
+      "color": "orange",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_customer_cadence",
+      "name": "customer_cadence",
+      "comment": "How often a customer orders. Fed by a data flow that is still an empty promise — walkthrough 05 writes the derivations.",
+      "position": {
+        "x": 1020,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_cc_customer_id",
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_cc_avg_gap_days",
+          "name": "avg_gap_days",
+          "type": "NUMERIC(10,2)",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "NULL until a customer has placed two orders: there is no gap to average yet."
+        },
+        {
+          "id": "col_cc_order_count",
+          "name": "order_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        }
+      ],
+      "groupId": "grp_shop"
+    },
+    {
+      "schema": "public",
+      "color": "orange",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_catalog_export",
+      "name": "catalog_export",
+      "comment": "What the nightly feed to the price-comparison sites writes. Reads books, but nothing stops books rows disappearing under it.",
+      "position": {
+        "x": 340,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_ce_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_ce_book_id",
+          "name": "book_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "Deliberately not a foreign key: the export keeps rows for books we have stopped selling."
+        },
+        {
+          "id": "col_ce_title",
+          "name": "title",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_ce_price_cents",
+          "name": "price_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_ce_exported_at",
+          "name": "exported_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "purple",
+      "checks": [],
+      "indexes": [],
       "id": "tbl_crm_contacts",
       "name": "crm_contacts",
-      "color": "purple",
       "groupId": "grp_crm",
-      "comment": "The vendor's contact record. We read it; we never create or migrate it.",
-      "position": { "x": 700, "y": 0 },
-      "checks": [],
-      "indexes": [],
+      "comment": "Lives in the vendor CRM, not in our database. Documented here, never created by our script.",
+      "position": {
+        "x": 1360,
+        "y": 300
+      },
       "columns": [
-        { "id": "col_crm_contacts_contact_id", "name": "contact_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
-        { "id": "col_crm_contacts_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_crm_contacts_account_id", "name": "account_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+        {
+          "id": "col_crm_contacts_contact_id",
+          "name": "contact_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_crm_contacts_email",
+          "name": "email",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_crm_contacts_account_id",
+          "name": "account_id",
+          "type": "BIGINT",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
       ]
     },
     {
-      "id": "tbl_crm_accounts",
-      "name": "crm_accounts",
+      "schema": "public",
       "color": "purple",
-      "groupId": "grp_crm",
-      "comment": "The vendor's company record. A contact belongs to one of these; we never link to it directly.",
-      "position": { "x": 700, "y": 300 },
       "checks": [],
       "indexes": [],
+      "id": "tbl_crm_accounts",
+      "name": "crm_accounts",
+      "groupId": "grp_crm",
+      "comment": "The CRM company a contact belongs to.",
+      "position": {
+        "x": 1360,
+        "y": 0
+      },
       "columns": [
-        { "id": "col_crm_accounts_account_id", "name": "account_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
-        { "id": "col_crm_accounts_name", "name": "name", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_crm_accounts_tier", "name": "tier", "type": "TEXT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false }
+        {
+          "id": "col_crm_accounts_account_id",
+          "name": "account_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_crm_accounts_name",
+          "name": "name",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_crm_accounts_tier",
+          "name": "tier",
+          "type": "TEXT",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
       ]
     }
   ],
   "relationships": [
     {
+      "sourceColumnIds": [
+        "col_books_author_id"
+      ],
+      "targetColumnIds": [
+        "col_authors_id"
+      ],
+      "id": "rel_books_author",
+      "kind": "fk",
+      "verb": "references",
+      "sourceTableId": "tbl_books",
+      "targetTableId": "tbl_authors",
+      "name": "books_author_id_fkey",
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [
+        "col_orders_customer_id"
+      ],
+      "targetColumnIds": [
+        "col_customers_id"
+      ],
       "id": "rel_orders_customer",
       "kind": "fk",
       "verb": "belongs-to",
       "sourceTableId": "tbl_orders",
-      "sourceColumnIds": ["col_orders_customer_id"],
       "targetTableId": "tbl_customers",
-      "targetColumnIds": ["col_customers_id"],
       "name": "orders_customer_id_fkey",
-      "onDelete": "CASCADE",
+      "inverseName": "placed",
+      "onDelete": "RESTRICT",
       "onUpdate": "NO ACTION"
     },
     {
-      "id": "rel_customers_crm_contact",
+      "sourceColumnIds": [
+        "col_books_contributors_json"
+      ],
+      "targetColumnIds": [],
+      "id": "rel_books_contributors",
+      "kind": "embed",
+      "verb": "serializes",
+      "sourceTableId": "tbl_books",
+      "targetTableId": "tbl_contributors",
+      "name": "contributors_json",
+      "note": "A shape, not a constraint: the JSONB column holds copies of contributors rows, and no database rule keeps the two in step."
+    },
+    {
+      "sourceColumnIds": [],
+      "targetColumnIds": [],
+      "id": "rel_flow_customer_cadence",
+      "kind": "flow",
+      "verb": "feeds",
+      "sourceTableId": "tbl_orders",
+      "targetTableId": "tbl_customer_cadence",
+      "name": "nightly rollup",
+      "note": "Drawn in walkthrough 02 as a promise, filled in with real derivations in walkthrough 05."
+    },
+    {
+      "sourceColumnIds": [],
+      "targetColumnIds": [],
+      "id": "rel_catalog_export_books",
+      "kind": "dependency",
+      "verb": "uses",
+      "sourceTableId": "tbl_catalog_export",
+      "targetTableId": "tbl_books",
+      "name": "nightly feed",
+      "note": "Documentation only. Nothing in the database knows this job exists, which is exactly why the diagram should."
+    },
+    {
+      "sourceColumnIds": [
+        "col_customers_crm_contact_id"
+      ],
+      "targetColumnIds": [
+        "col_crm_contacts_contact_id"
+      ],
+      "id": "rel_customers_crm",
       "kind": "fk",
       "verb": "references",
       "sourceTableId": "tbl_customers",
-      "sourceColumnIds": ["col_customers_crm_contact_id"],
       "targetTableId": "tbl_crm_contacts",
-      "targetColumnIds": ["col_crm_contacts_contact_id"],
       "name": "customers_crm_contact_id_fkey",
       "onDelete": "SET NULL",
-      "onUpdate": "NO ACTION",
-      "note": "Sales wants this join for the customer 360 report. The CRM is the vendor's database, not ours, so nothing here is enforced by our schema.",
-      "query": "SELECT c.id, c.email, k.email AS crm_email\nFROM public.customers c\nJOIN crm_contacts k ON k.contact_id = c.crm_contact_id\n-- crm_contacts is read over the FDW, not a table in this database"
+      "onUpdate": "NO ACTION"
     },
     {
-      "id": "rel_crm_contact_account",
+      "sourceColumnIds": [
+        "col_crm_contacts_account_id"
+      ],
+      "targetColumnIds": [
+        "col_crm_accounts_account_id"
+      ],
+      "id": "rel_crm_contacts_account",
       "kind": "fk",
       "verb": "belongs-to",
       "sourceTableId": "tbl_crm_contacts",
-      "sourceColumnIds": ["col_crm_contacts_account_id"],
       "targetTableId": "tbl_crm_accounts",
-      "targetColumnIds": ["col_crm_accounts_account_id"],
       "name": "crm_contacts_account_id_fkey",
       "onDelete": "NO ACTION",
       "onUpdate": "NO ACTION"
     }
   ],
+  "groups": [
+    {
+      "id": "grp_shop",
+      "name": "shop",
+      "color": "slate",
+      "external": false,
+      "note": "The tables we own on the sales side. A region is a label, not a namespace: nothing about the generated script changes.",
+      "position": {
+        "x": 680,
+        "y": 0
+      }
+    },
+    {
+      "id": "grp_crm",
+      "name": "CRM (read-only)",
+      "color": "purple",
+      "external": true,
+      "note": "Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, so nothing here is created by the generated script.",
+      "position": {
+        "x": 1360,
+        "y": 0
+      }
+    }
+  ],
+  "customTypes": [],
   "notes": [
     {
-      "id": "note_group",
-      "text": "CRM (read-only) is an external group: its rectangle is derived from crm_contacts and crm_accounts, not stored. Neither table is created by this schema's script.",
-      "position": { "x": 660, "y": 560 },
-      "width": 320,
-      "height": 130,
+      "id": "note_external",
+      "text": "Marking a region external is the only switch on this canvas that removes tables from the generated script.\n\nThe CRM tables become an \"External sources\" comment at the end of it, and the foreign key into them is documented rather than created — you cannot enforce a constraint across two databases.",
+      "position": {
+        "x": 1780,
+        "y": 0
+      },
+      "width": 330,
+      "height": 230,
       "color": "yellow"
     }
   ]

@@ -112,8 +112,10 @@ function HelpContent() {
         <button className="link-btn" onClick={() => setHelpView('list')}>
           <BookOpen size={13} /> Browse the fifteen walkthroughs
         </button>{' '}
-        for the long one: a worked guide per task — building a table, connecting two, external groups, filling one table from another, Simulate, indexes,
-        views — each ending in a diagram you can open right from the walkthrough, or with <K k="Ctrl" /> <K k="O" /> yourself.
+        for the long one: one bookshop database built across all fifteen, each picking up where the last left off — tables, connections, external groups,
+        enums, data flows, Simulate, indexes, views, importing someone else's schema, and running the result on a real database. Start anywhere: every
+        walkthrough has a <strong>Set up the canvas</strong> button that puts the diagram it starts from in front of you, and a{' '}
+        <strong>Check my work</strong> button that tells you whether you built what it describes.
       </p>
       <h4>Find anything</h4>
       <p>

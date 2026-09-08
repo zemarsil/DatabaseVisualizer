@@ -1,150 +1,498 @@
 {
   "version": 1,
-  "name": "Connect two tables — the four kinds",
+  "name": "Bookshop — after 02 Connect two tables",
   "dialect": "postgresql",
   "tables": [
     {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
       "id": "tbl_authors",
       "name": "authors",
-      "schema": "public",
-      "color": "blue",
       "comment": "One row per person who wrote something we sell.",
-      "position": { "x": 0, "y": 0 },
-      "checks": [],
-      "indexes": [],
+      "position": {
+        "x": 0,
+        "y": 0
+      },
       "columns": [
-        { "id": "col_authors_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_authors_name", "name": "name", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_authors_country", "name": "country", "type": "CHAR(2)", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "ISO 3166-1 alpha-2. Nullable: we often do not know." }
+        {
+          "id": "col_authors_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true,
+          "comment": "Surrogate key. Nothing outside the database ever sees it."
+        },
+        {
+          "id": "col_authors_name",
+          "name": "name",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_authors_country",
+          "name": "country",
+          "type": "CHAR(2)",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "check": "country = upper(country)",
+          "comment": "ISO 3166-1 alpha-2. Nullable: we often do not know."
+        }
       ]
     },
     {
+      "schema": "public",
+      "color": "blue",
+      "checks": [
+        "published_on IS NULL OR published_on >= DATE '1450-01-01'"
+      ],
+      "indexes": [],
       "id": "tbl_books",
       "name": "books",
-      "schema": "public",
-      "color": "blue",
-      "comment": "One row per edition we stock. author_id is now a real foreign key into authors.",
-      "position": { "x": 320, "y": 0 },
-      "checks": [],
-      "indexes": [],
+      "comment": "One row per edition we stock.",
+      "position": {
+        "x": 0,
+        "y": 300
+      },
       "columns": [
-        { "id": "col_books_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_books_author_id", "name": "author_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "The referencing (child) side of the foreign key into authors.id." },
-        { "id": "col_books_title", "name": "title", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_books_isbn", "name": "isbn", "type": "CHAR(13)", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false, "comment": "The natural key. UNIQUE, but not the primary key." },
-        { "id": "col_books_price_cents", "name": "price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0", "check": "price_cents >= 0" },
-        { "id": "col_books_published_on", "name": "published_on", "type": "DATE", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_books_contributors_json", "name": "contributors_json", "type": "JSONB", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Denormalized snapshot of this edition's contributors, embedded so a page render needs no join. contributors stays the source of truth; see the Kind: Serialized connection below." }
+        {
+          "id": "col_books_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_books_author_id",
+          "name": "author_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_title",
+          "name": "title",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_isbn",
+          "name": "isbn",
+          "type": "CHAR(13)",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": true,
+          "autoIncrement": false,
+          "comment": "The natural key. UNIQUE, but not the primary key: ISBNs get reassigned and mistyped."
+        },
+        {
+          "id": "col_books_price_cents",
+          "name": "price_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0",
+          "check": "price_cents >= 0",
+          "comment": "Integer cents, never a float: 0.1 + 0.2 is not 0.3 in binary floating point."
+        },
+        {
+          "id": "col_books_published_on",
+          "name": "published_on",
+          "type": "DATE",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_books_in_print",
+          "name": "in_print",
+          "type": "BOOLEAN",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "true"
+        },
+        {
+          "id": "col_books_added_at",
+          "name": "added_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        },
+        {
+          "id": "col_books_contributors_json",
+          "name": "contributors_json",
+          "type": "JSONB",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "Holds the serialized contributors rows. The embed connection is what says so."
+        }
       ]
     },
     {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_customers",
+      "name": "customers",
+      "comment": "One row per person who buys from us. Typed from scratch in walkthrough 01.",
+      "position": {
+        "x": 680,
+        "y": 0
+      },
+      "columns": [
+        {
+          "id": "col_customers_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_customers_email",
+          "name": "email",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": true,
+          "autoIncrement": false,
+          "comment": "The natural key: one account per address."
+        },
+        {
+          "id": "col_customers_created_at",
+          "name": "created_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
+      "id": "tbl_orders",
+      "name": "orders",
+      "comment": "One row per order placed. status is plain TEXT for now — walkthrough 04 turns it into an enum.",
+      "position": {
+        "x": 680,
+        "y": 300
+      },
+      "columns": [
+        {
+          "id": "col_orders_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_orders_customer_id",
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_orders_status",
+          "name": "status",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "'pending'"
+        },
+        {
+          "id": "col_orders_total_cents",
+          "name": "total_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0",
+          "check": "total_cents >= 0"
+        },
+        {
+          "id": "col_orders_placed_at",
+          "name": "placed_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
+      ]
+    },
+    {
+      "schema": "public",
+      "color": "blue",
+      "checks": [],
+      "indexes": [],
       "id": "tbl_contributors",
       "name": "contributors",
-      "schema": "public",
-      "color": "blue",
-      "comment": "Illustrators, translators and editors credited besides the author of record.",
-      "position": { "x": 640, "y": 0 },
-      "checks": [],
-      "indexes": [],
+      "comment": "Translators, illustrators, editors. Few enough per book that they ride along inside books.contributors_json.",
+      "position": {
+        "x": 340,
+        "y": 0
+      },
       "columns": [
-        { "id": "col_contrib_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_contrib_name", "name": "name", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_contrib_role", "name": "role", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "e.g. illustrator, translator, editor." }
+        {
+          "id": "col_contributors_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_contributors_name",
+          "name": "name",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_contributors_role",
+          "name": "role",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
       ]
     },
     {
-      "id": "tbl_book_stats",
-      "name": "book_stats",
       "schema": "public",
       "color": "orange",
-      "comment": "Fed by a nightly rollup, not a constraint. See the Data flow connection from books.",
-      "position": { "x": 320, "y": 260 },
       "checks": [],
       "indexes": [],
+      "id": "tbl_customer_cadence",
+      "name": "customer_cadence",
+      "comment": "How often a customer orders. Fed by a data flow that is still an empty promise — walkthrough 05 writes the derivations.",
+      "position": {
+        "x": 1020,
+        "y": 300
+      },
       "columns": [
-        { "id": "col_bs_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_bs_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "comment": "Not a foreign key: this table is fed by a data flow, not constrained by one." },
-        { "id": "col_bs_units_sold", "name": "units_sold", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
-        { "id": "col_bs_updated_at", "name": "updated_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+        {
+          "id": "col_cc_customer_id",
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_cc_avg_gap_days",
+          "name": "avg_gap_days",
+          "type": "NUMERIC(10,2)",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "NULL until a customer has placed two orders: there is no gap to average yet."
+        },
+        {
+          "id": "col_cc_order_count",
+          "name": "order_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        }
       ]
     },
     {
+      "schema": "public",
+      "color": "orange",
+      "checks": [],
+      "indexes": [],
       "id": "tbl_catalog_export",
       "name": "catalog_export",
-      "schema": "public",
-      "color": "orange",
-      "comment": "Nightly feed pushed to the retailer catalog API. Reads books; nothing here is a foreign key.",
-      "position": { "x": 640, "y": 260 },
-      "checks": [],
-      "indexes": [],
+      "comment": "What the nightly feed to the price-comparison sites writes. Reads books, but nothing stops books rows disappearing under it.",
+      "position": {
+        "x": 340,
+        "y": 300
+      },
       "columns": [
-        { "id": "col_ce_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_ce_book_id", "name": "book_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_ce_title", "name": "title", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_ce_price_cents", "name": "price_cents", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_ce_exported_at", "name": "exported_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+        {
+          "id": "col_ce_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_ce_book_id",
+          "name": "book_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "comment": "Deliberately not a foreign key: the export keeps rows for books we have stopped selling."
+        },
+        {
+          "id": "col_ce_title",
+          "name": "title",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_ce_price_cents",
+          "name": "price_cents",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_ce_exported_at",
+          "name": "exported_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
       ]
     }
   ],
   "relationships": [
     {
-      "id": "rel_books_authors",
+      "sourceColumnIds": [
+        "col_books_author_id"
+      ],
+      "targetColumnIds": [
+        "col_authors_id"
+      ],
+      "id": "rel_books_author",
       "kind": "fk",
-      "verb": "belongs-to",
+      "verb": "references",
       "sourceTableId": "tbl_books",
-      "sourceColumnIds": ["col_books_author_id"],
       "targetTableId": "tbl_authors",
-      "targetColumnIds": ["col_authors_id"],
       "name": "books_author_id_fkey",
-      "inverseName": "wrote",
-      "onDelete": "RESTRICT",
-      "onUpdate": "NO ACTION",
-      "note": "belongs-to usually pairs with ON DELETE CASCADE, but a deleted author should not silently erase sales history: RESTRICT until someone reassigns or removes the books by hand."
+      "onDelete": "NO ACTION",
+      "onUpdate": "NO ACTION"
     },
     {
+      "sourceColumnIds": [
+        "col_orders_customer_id"
+      ],
+      "targetColumnIds": [
+        "col_customers_id"
+      ],
+      "id": "rel_orders_customer",
+      "kind": "fk",
+      "verb": "belongs-to",
+      "sourceTableId": "tbl_orders",
+      "targetTableId": "tbl_customers",
+      "name": "orders_customer_id_fkey",
+      "inverseName": "placed",
+      "onDelete": "RESTRICT",
+      "onUpdate": "NO ACTION"
+    },
+    {
+      "sourceColumnIds": [
+        "col_books_contributors_json"
+      ],
+      "targetColumnIds": [],
       "id": "rel_books_contributors",
       "kind": "embed",
       "verb": "serializes",
       "sourceTableId": "tbl_books",
-      "sourceColumnIds": ["col_books_contributors_json"],
       "targetTableId": "tbl_contributors",
-      "targetColumnIds": [],
-      "name": "contributors snapshot",
-      "note": "Denormalized on purpose: a book page reads books alone. contributors is still a real table for the roster itself."
+      "name": "contributors_json",
+      "note": "A shape, not a constraint: the JSONB column holds copies of contributors rows, and no database rule keeps the two in step."
     },
     {
-      "id": "rel_books_book_stats",
+      "sourceColumnIds": [],
+      "targetColumnIds": [],
+      "id": "rel_flow_customer_cadence",
       "kind": "flow",
       "verb": "feeds",
-      "sourceTableId": "tbl_books",
-      "sourceColumnIds": [],
-      "targetTableId": "tbl_book_stats",
-      "targetColumnIds": [],
-      "name": "nightly stats rollup",
-      "note": "Nightly job, not a constraint: dropping a book does not touch its stale book_stats row."
+      "sourceTableId": "tbl_orders",
+      "targetTableId": "tbl_customer_cadence",
+      "name": "nightly rollup",
+      "note": "Drawn in walkthrough 02 as a promise, filled in with real derivations in walkthrough 05."
     },
     {
+      "sourceColumnIds": [],
+      "targetColumnIds": [],
       "id": "rel_catalog_export_books",
       "kind": "dependency",
       "verb": "uses",
       "sourceTableId": "tbl_catalog_export",
-      "sourceColumnIds": [],
       "targetTableId": "tbl_books",
-      "targetColumnIds": [],
-      "name": "reads books nightly",
-      "note": "Nothing enforces this. Dropping books would silently break the export job with no constraint violation to warn you."
-    }
-  ],
-  "notes": [
-    {
-      "id": "note_kind_vs_verb",
-      "text": "Kind decides what the database does; the verb only changes the sentence.\n\nfk — real FOREIGN KEY, in the DDL, joinable in Trace, needs a column pair.\nflow — dashed, a comment only, never DDL, not joinable, no columns needed.\nembed — solid diamond, a comment only, needs exactly one column: the one holding the serialized rows.\ndependency — dotted, a comment only, no columns, no rows move.\n\nEvery verb is stored source → target. \"Has\", \"contains\" and \"used by\" are just belongs-to, part-of and uses read backwards — that is why they need no connection of their own.",
-      "position": { "x": 980, "y": 0 },
-      "width": 320,
-      "height": 260,
-      "color": "yellow"
+      "name": "nightly feed",
+      "note": "Documentation only. Nothing in the database knows this job exists, which is exactly why the diagram should."
     }
   ],
   "groups": [],
-  "customTypes": []
+  "customTypes": [],
+  "notes": [
+    {
+      "id": "note_kinds",
+      "text": "Four kinds, one canvas:\n\nfk — a real constraint, in the script.\nembed — rows serialized into a column.\nflow — rows computed from other rows.\ndependency — something reads it; nothing enforces it.\n\nOnly fk reaches the CREATE TABLE script. The other three are for the humans.",
+      "position": {
+        "x": 1780,
+        "y": 0
+      },
+      "width": 330,
+      "height": 230,
+      "color": "yellow"
+    }
+  ]
 }

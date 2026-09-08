@@ -8,14 +8,17 @@
  *
  * It reads the front matter, the section skeleton, the step numbering, the
  * shortcuts the prose names, the links, and hands the companion .dbviz.json to
- * scripts/validate-dbviz.mjs. What it cannot do from plain Node is run the
- * front matter's `checks:` — those need the app's TypeScript, so
- * tests/walkthroughs.test.ts runs them (npm test).
+ * scripts/validate-dbviz.mjs. Run over the whole series (no file arguments) it
+ * also checks the chain: every walkthrough starts from the previous one's
+ * finished diagram, and no table the reader has built ever disappears.
+ *
+ * What it cannot do from plain Node is run the front matter's `checks:` — those
+ * need the app's TypeScript, so tests/walkthroughs.test.ts runs them (npm test).
  *
  * Exits 1 if any walkthrough has errors. Warnings alone do not fail.
  */
 import { execFileSync } from 'node:child_process';
-import { listWalkthroughFiles, slugsInSeries, validateWalkthrough, WALKTHROUGH_DIR } from './walkthrough-lib.mjs';
+import { listWalkthroughFiles, slugsInSeries, validateSeries, validateWalkthrough, WALKTHROUGH_DIR } from './walkthrough-lib.mjs';
 
 const argv = process.argv.slice(2);
 const json = argv.includes('--json');
@@ -53,6 +56,9 @@ for (const file of targets) {
   reports.push({ file, meta: report.meta, errors: report.errors, warnings: report.warnings });
 }
 
+// The chain between walkthroughs can only be judged with all of them in hand.
+const seriesErrors = files.length ? [] : validateSeries();
+
 if (json) {
   console.log(JSON.stringify(reports.length === 1 ? reports[0] : reports, null, 2));
   process.exit(reports.some((r) => r.errors.length) ? 1 : 0);
@@ -71,8 +77,16 @@ for (const r of reports) {
   for (const w of r.warnings) console.log(`  warning: ${w}`);
 }
 
-if (failed) {
-  console.log(`\n${failed} walkthrough(s) with errors.`);
+if (seriesErrors.length) {
+  console.log('\nFAIL     the series does not chain together:');
+  for (const e of seriesErrors) console.log(`  error:   ${e}`);
+}
+
+if (failed || seriesErrors.length) {
+  const parts = [];
+  if (failed) parts.push(`${failed} walkthrough(s) with errors`);
+  if (seriesErrors.length) parts.push(`${seriesErrors.length} break(s) in the chain`);
+  console.log(`\n${parts.join(', ')}.`);
   process.exit(1);
 }
-console.log(`\n${reports.length} walkthrough(s) OK.`);
+console.log(`\n${reports.length} walkthrough(s) OK, chained end to end.`);

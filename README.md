@@ -89,21 +89,28 @@ Press `?` in the app for the full shortcut list.
 
 ## Walkthroughs
 
-[`docs/walkthroughs/`](docs/walkthroughs/) is a series of hands-on guides — one
-task each, worked end to end, every one shipping the finished diagram so you can
-open it instead of typing along. Start with
-[Your first diagram](docs/walkthroughs/00-your-first-diagram.md), or jump to the
-one you are stuck on: [connecting tables](docs/walkthroughs/02-connect-two-tables.md),
-[external groups](docs/walkthroughs/03-group-tables.md),
-[filling one table from another](docs/walkthroughs/05-fill-one-table-from-another.md),
-[Simulate](docs/walkthroughs/06-simulate-a-data-flow.md),
-[indexes](docs/walkthroughs/07-add-indexes.md),
-[views](docs/walkthroughs/08-build-a-view.md).
+[`docs/walkthroughs/`](docs/walkthroughs/) is fifteen hands-on guides that build
+**one database, once**: walkthrough 00 puts two tables on the canvas, and
+walkthrough 14 exports the eighteen-table bookshop they grew into. Each one
+picks the canvas up exactly where the last put it down — the foreign keys from
+02 are what the derivations in 05 resolve through, the enum from 04 is what the
+seeded rows in 13 obey — so the schema in front of you is always the one you
+built.
 
-Each walkthrough's front matter carries assertions about its companion diagram —
-the SQL it generates, whether it lints clean, whether it simulates — which
-`npm test` runs against the app's own code, so the pages cannot quietly go out of
-date. [`docs/walkthroughs/WALKTHROUGH_FORMAT.md`](docs/walkthroughs/WALKTHROUGH_FORMAT.md)
+Start with [Your first diagram](docs/walkthroughs/00-your-first-diagram.md), or
+open any walkthrough and press **Set up the canvas**: it loads the diagram that
+one starts from, so you can begin at
+[filling one table from another](docs/walkthroughs/05-fill-one-table-from-another.md),
+[indexes](docs/walkthroughs/07-add-indexes.md) or
+[importing someone else's schema](docs/walkthroughs/09-import-an-existing-schema.md)
+without typing the ones before it. **Check my work**, at the foot of each one,
+runs that walkthrough's own checks against your canvas and says what is missing.
+
+Those checks are the walkthrough's front matter — assertions about its companion
+diagram, like the SQL it generates, whether it lints clean, whether it simulates
+— and `npm test` runs the same ones against the app's own code, so the pages
+cannot quietly go out of date and the button can never disagree with CI.
+[`docs/walkthroughs/WALKTHROUGH_FORMAT.md`](docs/walkthroughs/WALKTHROUGH_FORMAT.md)
 is the format and the procedure for adding one.
 
 ## Connection types
