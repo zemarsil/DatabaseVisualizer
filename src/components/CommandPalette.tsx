@@ -9,6 +9,7 @@ import {
   FileDown,
   FileImage,
   FilePlus2,
+  FileText,
   FolderOpen,
   Focus,
   HelpCircle,
@@ -43,6 +44,8 @@ import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
 import { simulationTargets } from '@/lib/simulate/engine';
 import { fuzzyFilter } from '@/lib/fuzzy';
+import { copyTextToClipboard } from '@/lib/canvasActions';
+import { selectionMarkdown, selectionSql } from '@/lib/selectionExport';
 import { isContextMenuOpen } from './ui/ContextMenu';
 import { useDialogStore } from './ui/Modal';
 
@@ -148,6 +151,24 @@ function buildItems(): PaletteItem[] {
   act('export-mermaid', 'Export', 'Export Mermaid ER diagram', () => bridge.exportAs?.('mermaid'), { icon: Download });
   act('export-dbml', 'Export', 'Export DBML', () => bridge.exportAs?.('dbml'), { icon: Download });
   act('share', 'Export', 'Copy share link', () => bridge.shareLink?.(), { icon: Link });
+  if (selected.length) {
+    const what = `${selected.length} selected table${selected.length === 1 ? '' : 's'}`;
+    act('copy-sql', 'Export', `Copy the ${what} as SQL`, () => void copyTextToClipboard(selectionSql(d, selected).text, `Copied the SQL for the ${what}.`), {
+      icon: Code2,
+      keywords: ['clipboard', 'ddl', 'create table'],
+    });
+    act('copy-markdown', 'Export', `Copy the ${what} as Markdown`, () => void copyTextToClipboard(selectionMarkdown(d, selected), `Copied the ${what} as a Markdown table.`), {
+      icon: FileText,
+      keywords: ['clipboard', 'obsidian', 'notes', 'data dictionary'],
+    });
+    act(
+      'copy-markdown-sql',
+      'Export',
+      `Copy the ${what} as Markdown + SQL`,
+      () => void copyTextToClipboard(selectionMarkdown(d, selected, { includeSql: true }), `Copied the ${what} as Markdown with the SQL below it.`),
+      { icon: FileText, keywords: ['clipboard', 'obsidian', 'notes'] },
+    );
+  }
 
   act('add-table', 'Edit', 'Add table', () => s.addTable(), { icon: Plus, hint: 'T' });
   act('add-view', 'Edit', 'Add view', () => s.addTable(undefined, { kind: 'view' }), { icon: Eye });

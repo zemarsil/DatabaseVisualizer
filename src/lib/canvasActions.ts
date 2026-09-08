@@ -2,6 +2,18 @@
  * Store-aware actions shared by the canvas key handlers and the right-click
  * menus: copy the selection, paste text (tables, SQL or a whole file) and open
  * dropped files.
+ *
+ * A copy puts the same tables on the clipboard three ways, and the paste target
+ * picks the one it understands:
+ *
+ * - `text/plain` is the DDL, so a text editor or a psql prompt gets SQL;
+ * - `text/html` is the Markdown data dictionary as HTML, so an editor that
+ *   converts rich text on paste (Obsidian, Notion, a mail client) gets a table;
+ * - a private flavor carries the diagram fragment itself, so pasting back onto
+ *   a canvas restores positions, colours and the connections DDL cannot express.
+ *
+ * Not every browser lets us write or read that private flavor, so paste falls
+ * back to the last in-app copy and finally to importing whatever text arrived.
  */
 import { useStore } from '@/store/useStore';
 import { useConnection } from '@/store/useConnection';
@@ -11,38 +23,124 @@ import { parseDiagramFile } from './io';
 import { getSqliteEngine } from './sqlite/engine';
 import { introspectionToDiagram } from './introspectImport';
 import { estimateNodeSize } from './geometry';
+import { selectionHtml, selectionSql } from './selectionExport';
 import { confirmDialog } from '@/components/ui/Modal';
-import type { Table } from '@shared/types';
+import type { Diagram, Table } from '@shared/types';
 
-/** In-memory fallback for browsers that refuse clipboard reads. */
-let lastCopied: string | null = null;
+/** The clipboard flavor holding the diagram fragment, when the browser allows one. */
+export const DBVIZ_FLAVOR = 'application/x-dbviz';
 
-export function copySelection(tableIds?: string[]): string | null {
-  const s = useStore.getState();
-  const ids = tableIds ?? s.selection.tableIds;
-  if (!ids.length) return null;
-  const text = encodeClipboard(s.diagram, ids);
-  lastCopied = text;
-  return text;
+export interface ClipboardFlavors {
+  /** The diagram fragment: full fidelity when pasted back onto a canvas. */
+  json: string;
+  /** What a plain-text target gets: the DDL for the copied tables. */
+  text: string;
+  /** What a rich-text target gets: the Markdown data dictionary, as HTML. */
+  html: string;
 }
 
-export async function copySelectionToClipboard(tableIds?: string[]): Promise<boolean> {
-  const text = copySelection(tableIds);
-  if (!text) return false;
+/** In-memory fallback for browsers that refuse clipboard reads. */
+let lastCopied: ClipboardFlavors | null = null;
+
+/** Every rendering of `tableIds`, or null when none of them is a table in this diagram. */
+export function selectionFlavors(d: Diagram, tableIds: string[]): ClipboardFlavors | null {
+  if (!tableIds.length) return null;
+  const sql = selectionSql(d, tableIds).text;
+  if (!sql) return null;
+  return { json: encodeClipboard(d, tableIds), text: sql, html: selectionHtml(d, tableIds, { includeSql: true }) };
+}
+
+function flavorsFor(tableIds?: string[]): ClipboardFlavors | null {
+  const s = useStore.getState();
+  return selectionFlavors(s.diagram, tableIds ?? s.selection.tableIds);
+}
+
+/**
+ * Fill a copy/cut event with every flavor. Synchronous `setData` is the only
+ * way to offer more than plain text on Safari, and the only way to offer a
+ * private flavor at all, so the keyboard path uses this rather than
+ * `copySelectionToClipboard`.
+ */
+export function writeSelectionToEvent(e: ClipboardEvent, tableIds?: string[]): number {
+  const flavors = flavorsFor(tableIds);
+  if (!flavors || !e.clipboardData) return 0;
+  lastCopied = flavors;
+  e.clipboardData.setData('text/plain', flavors.text);
+  // Each extra flavor stands on its own: a browser that refuses one should
+  // still get the other, and every target has the DDL either way.
+  for (const [type, value] of [
+    ['text/html', flavors.html],
+    [DBVIZ_FLAVOR, flavors.json],
+  ] as const) {
+    try {
+      e.clipboardData.setData(type, value);
+    } catch {
+      /* not supported here */
+    }
+  }
+  return countTables(flavors.json);
+}
+
+function countTables(json: string): number {
+  return decodeClipboard(json)?.tables.length ?? 0;
+}
+
+/** The toast after a copy: it says where each flavor lands so the change is discoverable. */
+export function copiedMessage(n: number): string {
+  return `Copied ${n} table${n === 1 ? '' : 's'}: SQL as plain text, Markdown in a rich-text editor, tables here.`;
+}
+
+async function writeFlavors(flavors: ClipboardFlavors): Promise<void> {
+  lastCopied = flavors;
   try {
-    await navigator.clipboard.writeText(text);
+    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/plain': new Blob([flavors.text], { type: 'text/plain' }),
+          'text/html': new Blob([flavors.html], { type: 'text/html' }),
+        }),
+      ]);
+      return;
+    }
+  } catch {
+    /* older browsers, or one that refuses text/html: fall back to plain text */
+  }
+  try {
+    await navigator.clipboard.writeText(flavors.text);
   } catch {
     /* the in-memory copy still works within this tab */
   }
-  const n = JSON.parse(text).tables.length as number;
-  useStore.getState().toast('success', `Copied ${n} table${n === 1 ? '' : 's'}.`);
+}
+
+/** Write plain text to the clipboard and say so, or say why it did not work. */
+export async function copyTextToClipboard(text: string, message: string): Promise<void> {
+  const s = useStore.getState();
+  try {
+    await navigator.clipboard.writeText(text);
+    s.toast('success', message);
+  } catch {
+    s.toast('error', 'The browser would not let us write to the clipboard.');
+  }
+}
+
+export async function copySelectionToClipboard(tableIds?: string[]): Promise<boolean> {
+  const flavors = flavorsFor(tableIds);
+  if (!flavors) return false;
+  await writeFlavors(flavors);
+  useStore.getState().toast('success', copiedMessage(countTables(flavors.json)));
   return true;
 }
 
-export function cutSelection(): void {
+/** `alreadyOnClipboard` is for the cut event, which filled the clipboard itself. */
+export function cutSelection(opts: { alreadyOnClipboard?: boolean } = {}): void {
   const s = useStore.getState();
   const ids = s.selection.tableIds;
-  if (!copySelection(ids)) return;
+  if (!ids.length) return;
+  if (!opts.alreadyOnClipboard) {
+    const flavors = flavorsFor(ids);
+    if (!flavors) return;
+    void writeFlavors(flavors);
+  }
   s.removeElements({ tableIds: ids, noteIds: s.selection.noteIds });
   s.toast('success', `Cut ${ids.length} table${ids.length === 1 ? '' : 's'}.`);
 }
@@ -106,6 +204,34 @@ export function pasteText(text: string, at?: { x: number; y: number }): 'clipboa
   return kind;
 }
 
+/**
+ * The diagram fragment behind `text`, when this is our own copy coming back:
+ * either the private flavor survived, or the plain text is byte-for-byte the
+ * DDL we last wrote and the fragment is still in memory.
+ */
+function fragmentFor(text: string, flavor?: string): string | null {
+  if (flavor && decodeClipboard(flavor)) return flavor;
+  if (lastCopied && text.trim() && text.trim() === lastCopied.text.trim()) return lastCopied.json;
+  return null;
+}
+
+/** Paste from a clipboard event, preferring the diagram fragment over the DDL. Returns true when something landed. */
+export function pasteFromEvent(e: ClipboardEvent, at?: { x: number; y: number }): boolean {
+  const data = e.clipboardData;
+  if (!data) return false;
+  let flavor = '';
+  try {
+    flavor = data.getData(DBVIZ_FLAVOR);
+  } catch {
+    /* browsers that reject unknown flavors */
+  }
+  const text = data.getData('text/plain') ?? '';
+  const fragment = fragmentFor(text, flavor);
+  if (fragment) return pasteText(fragment, at) !== 'unknown';
+  if (!text.trim()) return false;
+  return pasteText(text, at) !== 'unknown';
+}
+
 /** Paste from the system clipboard (falls back to the last in-app copy). */
 export async function pasteFromClipboard(at?: { x: number; y: number }): Promise<void> {
   let text = '';
@@ -114,7 +240,11 @@ export async function pasteFromClipboard(at?: { x: number; y: number }): Promise
   } catch {
     text = '';
   }
-  if (!text && lastCopied) text = lastCopied;
+  const fragment = fragmentFor(text) ?? (!text && lastCopied ? lastCopied.json : null);
+  if (fragment) {
+    pasteText(fragment, at);
+    return;
+  }
   if (!text) {
     useStore.getState().toast('info', 'Nothing to paste. Copy tables or SQL first.');
     return;

@@ -340,8 +340,15 @@ button beside it.
   "share", "checkpoint", "save", "open".
 - **Right-click a table** → *Show in SQL tab* selects that table and opens
   the drawer (it stays on *Whole schema* until you also click **Selected
-  table** yourself), or *Copy CREATE TABLE* / *Copy CREATE VIEW* to skip the
+  table** yourself), or **Copy as** → *CREATE TABLE* / *CREATE VIEW* to skip the
   drawer entirely and put just that statement on the clipboard.
+- **Right-click a selection or a group region** → **Copy as** offers the same
+  four formats for several tables at once: *SQL script*, *Markdown*,
+  *Markdown + SQL* and *Diagram JSON*. Each one covers the tables you picked and
+  only the connections between them; a foreign key pointing at a table you left
+  behind is listed as left out rather than emitted. A plain `Ctrl+C` does all
+  three at once — the DDL for a text editor, the Markdown dictionary for an
+  editor that takes rich text, and the tables themselves for another canvas.
 - **Right-click empty canvas** → *SQL script* opens the same **SQL** tab as
   the command palette's *Open SQL tab* entry.
 - **The table inspector** has its own **Preview** toggle under an *SQL*

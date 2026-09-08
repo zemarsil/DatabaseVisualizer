@@ -152,7 +152,8 @@ Sources: `src/components/ui/contextMenuItems.ts`, which wires in the operations 
   land on the grid as you drag them; there is no one-shot "snap everything now"), *Detangle
   layout*, *Fit to window*, *Undo*, *Redo*, and the drawer tabs.
 - **Table**: *Rename in place*, *Rename…*, *Duplicate table*, *Color*,
-  *Copy table*, *Cut table*, *Copy table name*, *Show in SQL tab*,
+  *Copy table*, *Cut table*, a **Copy as** group (*CREATE TABLE* / *CREATE VIEW*,
+  *Markdown*, *Markdown + SQL*, *Diagram JSON*, *Table name*), *Show in SQL tab*,
   *All columns* / *Keys only* / *Header only*, *Zoom to table*,
   *Trace from here…*, *Simulate*, *Delete table*.
 - **Column row**: *Primary key*, *Not null*, *Unique*, *Auto-increment*,
@@ -161,10 +162,12 @@ Sources: `src/components/ui/contextMenuItems.ts`, which wires in the operations 
 - **Connection**: *Swap direction*, the four kinds, *Copy tagged query*,
   *Edit in inspector*, *Delete connection*.
 - **Group region**: *Edit group…*, *In another database*, *Select its N table(s)*,
+  *Copy its N table(s)* and the same **Copy as** group as a table,
   *Remove region, keep tables*, *Delete region and its N table(s)*.
 - **Multi-selection**: adds *Align left edges* / *right edges* / *top edges* /
   *bottom edges* / *centres (vertical axis)* / *middles (horizontal axis)*,
-  *Distribute horizontally*, *Distribute vertically*, *Color for all*, and — at exactly
+  *Distribute horizontally*, *Distribute vertically*, *Color for all*, a **Copy as**
+  group whose SQL row is the whole selection's script, and — at exactly
   two tables — *Trace {first} → {second}*, which traces immediately.
 - **Note**: *Edit text*, *Duplicate note*, *Copy text*, *Delete note*.
 

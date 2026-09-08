@@ -27,7 +27,7 @@ import { GROUP_STICKINESS, groupAtPoint, groupBounds, inflate, rectCenter, rectC
 import { effectiveDisplay, visibleColumns } from '@/lib/visibleColumns';
 import { isJoinTable, relationshipCardinality } from '@/lib/schemaInfo';
 import { reachableTables } from '@/lib/trace';
-import { copySelectionToClipboard, cutSelection, openDroppedFiles, pasteText } from '@/lib/canvasActions';
+import { copiedMessage, cutSelection, openDroppedFiles, pasteFromEvent, writeSelectionToEvent } from '@/lib/canvasActions';
 import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode';
 import { NoteNode, type NoteNodeType } from './NoteNode';
 import { GroupNode, GROUP_DRAG_HANDLE, type GroupNodeType } from './GroupNode';
@@ -918,19 +918,18 @@ export function Canvas() {
     const onCopy = (e: ClipboardEvent) => {
       if (isEditable(e.target) || !useStore.getState().selection.tableIds.length) return;
       e.preventDefault();
-      void copySelectionToClipboard();
+      const n = writeSelectionToEvent(e);
+      if (n) useStore.getState().toast('success', copiedMessage(n));
     };
     const onCut = (e: ClipboardEvent) => {
       if (isEditable(e.target) || !useStore.getState().selection.tableIds.length) return;
       e.preventDefault();
-      cutSelection();
+      writeSelectionToEvent(e);
+      cutSelection({ alreadyOnClipboard: true });
     };
     const onPaste = (e: ClipboardEvent) => {
       if (isEditable(e.target)) return;
-      const text = e.clipboardData?.getData('text/plain') ?? '';
-      if (!text.trim()) return;
-      const kind = pasteText(text);
-      if (kind !== 'unknown') e.preventDefault();
+      if (pasteFromEvent(e)) e.preventDefault();
     };
     window.addEventListener('copy', onCopy);
     window.addEventListener('cut', onCut);

@@ -55,7 +55,7 @@ docker compose up --build
 | Find anything | `Ctrl+K` opens the command palette: type a table name to jump to it, or the first letters of an action (export, detangle, collapse, switch dialect…) |
 | Add a table | Double-click the canvas, press `T`, or use the **+ Table** button; the menu next to it adds a view, a note, a group or an enum type |
 | Select a group | `Shift` + drag a box over the canvas — every table and note it touches is selected; drag any of them (or the dashed box) to move the group, `Delete` removes it in one undo step |
-| Right-click anything | Every target has its own menu: the canvas (add a table or note right here, select all, detangle, undo, open a drawer), a table (rename, duplicate, colour, copy `CREATE TABLE`, trace, delete), a column row inside a table (toggle PK / NN / UQ / AI, add a column below, index it, reorder, delete), a connection (swap direction, switch its kind, copy the tagged query), a note, and the entries in the table list. Right-clicking inside a selected group acts on the whole group |
+| Right-click anything | Every target has its own menu: the canvas (add a table or note right here, select all, detangle, undo, open a drawer), a table (rename, duplicate, colour, **Copy as** SQL / Markdown / Markdown + SQL / diagram JSON, trace, delete), a column row inside a table (toggle PK / NN / UQ / AI, add a column below, index it, reorder, delete), a connection (swap direction, switch its kind, copy the tagged query), a note, a group region (copy all of its tables in any format), and the entries in the table list. Right-clicking inside a selected group acts on the whole group |
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks. `Enter` in a column name adds the next row, `Shift+Enter` inserts above, `Ctrl+Backspace` on an empty name deletes; drag the grip to reorder |
 | Views | Switch a table to **View** in the inspector, paste its `SELECT`, and **Detect from SQL** draws the data-flow links from the tables it reads. Tick **Materialized** (PostgreSQL) to store the rows instead of recomputing them per query; on MariaDB and SQLite the script falls back to a plain view and the setting is kept for when you switch back |
 | Rename in place | Double-click a table header (or press `F2`) |
@@ -71,6 +71,7 @@ docker compose up --build
 | Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. Dropping a `.sql`, `.dbviz.json` or SQLite database file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
 | Check the schema | Bottom drawer → **Problems**: lint findings with one-click fixes, and suggested foreign keys from column names |
 | Copy / paste tables | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` on the selection; pasting between browser tabs or diagrams works too |
+| Copy tables out as text | One `Ctrl+C` puts the selection on the clipboard three ways and the paste target picks: a text editor gets the `CREATE TABLE` script (one statement block per table), a Markdown editor such as Obsidian gets the data dictionary — a table of columns per table, then the connections, then the DDL in a `sql` fence — and this app gets the tables back with their positions, colours and every connection kind. Right-click → **Copy as** (or `Ctrl+K` → *Copy the selected tables as…*) picks one format explicitly. Every format covers only the tables you selected: a foreign key to a table you did not copy is left out, and the text says which ones and why |
 | Switch dialect | Top bar selector (PostgreSQL, MariaDB, SQLite); known column types are translated (`SERIAL` ↔ `INT AUTO_INCREMENT`, `TIMESTAMPTZ` ↔ `TIMESTAMP`, `JSONB` ↔ `JSON`, …). Undo reverts |
 | Collapse tables | The chevron in a table header cycles all columns → keys only → header only; **View → All tables** does it for everything; zooming far out collapses automatically |
 | Focus on a table | Select it and press `.` (or right-click → Focus); `[` / `]` change how many hops stay visible, `Esc` clears |
@@ -202,6 +203,8 @@ src/lib/lint.ts          schema linter with one-click fixes; suggest.ts proposes
 src/lib/migrate/         diagram vs. database diff and per-dialect ALTER generation
 src/lib/seed.ts          deterministic seed-data generator
 src/lib/export/          Mermaid and DBML exporters (markdownExport.ts for the data dictionary)
+src/lib/selectionExport.ts  a selection as SQL / Markdown / HTML, keeping only the connections inside it
+src/lib/canvasActions.ts    copy, cut and paste: which clipboard flavor each paste target gets
 src/lib/share.ts         share links (diagram compressed into the URL hash)
 src/lib/library.ts       IndexedDB diagram library and checkpoints
 src/lib/sqlite/          in-browser SQLite engine (sql.js) behind the same interface as the server

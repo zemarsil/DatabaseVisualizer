@@ -9,7 +9,7 @@ import { Check } from 'lucide-react';
 import { PALETTE } from '@/lib/palette';
 import { useStore } from '@/store/useStore';
 import { buildContextMenu, describeElements, hasActions, type ContextTarget, type MenuEnv, type MenuNode } from './contextMenuItems';
-import { pasteFromClipboard } from '@/lib/canvasActions';
+import { copyTextToClipboard, pasteFromClipboard } from '@/lib/canvasActions';
 import { confirmDialog, promptDialog } from './Modal';
 
 interface OpenMenu {
@@ -71,12 +71,7 @@ function ContextMenuView({ menu }: { menu: OpenMenu }) {
     return {
       store: s,
       pasteAt: (at) => void pasteFromClipboard(at),
-      copy: (text, message) => {
-        navigator.clipboard
-          .writeText(text)
-          .then(() => s.toast('success', message))
-          .catch(() => s.toast('error', 'The browser would not let us write to the clipboard.'));
-      },
+      copy: (text, message) => void copyTextToClipboard(text, message),
       renameTable: (tableId) => {
         const table = s.diagram.tables.find((t) => t.id === tableId);
         if (!table) return;
