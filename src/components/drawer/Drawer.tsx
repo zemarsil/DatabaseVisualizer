@@ -1,9 +1,11 @@
-import { ChevronDown, ChevronUp, Code2, Database, FileDown, Route, Shapes, ShieldAlert, Terminal } from 'lucide-react';
+import { ChevronDown, ChevronUp, Code2, Database, FileDown, Play, Route, Shapes, ShieldAlert, Terminal } from 'lucide-react';
 import { useStore, type DrawerTab } from '@/store/useStore';
 import { SqlPanel } from './SqlPanel';
 import { ImportPanel } from './ImportPanel';
 import { DatabasePanel } from './DatabasePanel';
 import { TracePanel } from './TracePanel';
+import { SimulatePanel } from './SimulatePanel';
+import { useSimulation } from '@/store/useSimulation';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
 import { TypesPanel } from './TypesPanel';
 import { ProblemsPanel } from './ProblemsPanel';
@@ -16,6 +18,7 @@ const TABS: { id: DrawerTab; label: string; icon: React.ReactNode }[] = [
   { id: 'types', label: 'Types', icon: <Shapes /> },
   { id: 'import', label: 'Import SQL', icon: <FileDown /> },
   { id: 'trace', label: 'Trace', icon: <Route /> },
+  { id: 'simulate', label: 'Simulate', icon: <Play /> },
   { id: 'problems', label: 'Problems', icon: <ShieldAlert /> },
   { id: 'query', label: 'Query', icon: <Terminal /> },
   { id: 'database', label: 'Database', icon: <Database /> },
@@ -26,6 +29,9 @@ export function Drawer() {
   const openDrawer = useStore((s) => s.openDrawer);
   const closeDrawer = useStore((s) => s.closeDrawer);
   const traceResult = useStore((s) => s.trace.result);
+  const simStages = useSimulation((s) => s.result?.stages.length ?? 0);
+  const simStage = useSimulation((s) => s.stage);
+  const simOn = useSimulation((s) => s.targetId !== null);
   const resizePanel = useStore((s) => s.resizePanel);
   const typeCount = useStore((s) => s.diagram.customTypes.length);
   const diagram = useStore((s) => s.diagram);
@@ -40,6 +46,7 @@ export function Drawer() {
             {t.icon}
             {t.label}
             {t.id === 'trace' && traceResult && <span className="badge badge--trace">{traceResult.hops.length} hops</span>}
+            {t.id === 'simulate' && simOn && <span className="badge badge--flow">{simStages ? `${Math.max(0, simStage + 1)}/${simStages}` : 'on'}</span>}
             {t.id === 'types' && typeCount > 0 && <span className="badge">{typeCount}</span>}
             {t.id === 'problems' && errorCount > 0 && <span className="badge badge--danger">{errorCount}</span>}
           </button>
@@ -55,6 +62,7 @@ export function Drawer() {
           {tab === 'types' && <TypesPanel />}
           {tab === 'import' && <ImportPanel />}
           {tab === 'trace' && <TracePanel />}
+          {tab === 'simulate' && <SimulatePanel />}
           {tab === 'problems' && <ProblemsPanel />}
           {tab === 'query' && <QueryPanel />}
           {tab === 'database' && <DatabasePanel />}

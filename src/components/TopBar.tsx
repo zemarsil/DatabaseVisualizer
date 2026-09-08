@@ -20,6 +20,7 @@ import {
   PanelBottom,
   PanelLeft,
   PanelRight,
+  Play,
   Plus,
   Redo2,
   Route,
@@ -37,6 +38,8 @@ import {
 import { DIALECTS, type Dialect } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
+import { useSimulation } from '@/store/useSimulation';
+import { simulationTargets } from '@/lib/simulate/engine';
 import { downloadDataUrl, downloadText, fileSlug, parseDiagramFile, serializeDiagram, FILE_EXTENSION } from '@/lib/io';
 import { exportDiagramImage } from '@/lib/exportImage';
 import { EXPORT_FORMATS, exportDiagram, type ExportFormat } from '@/lib/export';
@@ -100,6 +103,7 @@ export function TopBar() {
   const layoutDirection = useStore((s) => s.layoutDirection);
   const selection = useStore((s) => s.selection);
   const tracePicking = useStore((s) => s.trace.picking);
+  const simulating = useSimulation((s) => s.targetId !== null);
 
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
@@ -240,6 +244,23 @@ export function TopBar() {
     }
   };
 
+  /**
+   * Simulate into the selected table when a flow feeds it; otherwise open the
+   * Simulate tab, which offers every table that can be fed. A second press
+   * leaves the mode.
+   */
+  const onSimulate = () => {
+    const sim = useSimulation.getState();
+    if (sim.targetId) {
+      sim.stop();
+      return;
+    }
+    const fed = simulationTargets(diagram);
+    const picked = selection.tableIds.find((id) => fed.some((t) => t.id === id));
+    if (picked) sim.start(picked);
+    else openDrawer('simulate');
+  };
+
   const onTrace = () => {
     if (tracePicking) {
       setTracePicking(false);
@@ -376,6 +397,9 @@ export function TopBar() {
         </Menu>
         <button className={`btn${tracePicking ? ' btn--active' : ''}`} onClick={onTrace} title="Trace a connection between two tables">
           <Route /> Trace
+        </button>
+        <button className={`btn${simulating ? ' btn--active' : ''}`} onClick={onSimulate} title={simulating ? 'Leave simulation mode (Esc)' : 'Simulate data flowing into the selected table (S)'}>
+          <Play /> Simulate
         </button>
         <button className="btn btn--icon" onClick={requestFitView} title="Fit to window (F)">
           <Maximize />

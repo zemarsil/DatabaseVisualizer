@@ -149,6 +149,16 @@ function HelpContent() {
         Detangle runs a layered layout that ranks referenced tables before the tables that reference them and minimises edge crossings. Trace finds the
         shortest chain of connections between two tables and writes the JOIN query for it; <em>Run</em> sends it to the Query tab.
       </p>
+      <h4>Watching data move</h4>
+      <p>
+        A data-flow connection can describe, column by column, how its target is computed from its source: an expression, an aggregate over a
+        grouping, a filter, and for sequences an operation over rows in order (the change since the previous row, a running total, a rank). An
+        expression may read a column of another table as <em>table.column</em> when the source reaches it through foreign keys. Select a table a flow
+        feeds and press <K k="S" /> (or the <em>Simulate</em> button, or the Simulate tab): sample rows are generated for the raw inputs, every flow
+        upstream runs once, and playback walks the stages while dots travel the connections and the columns being read and written light up. In the
+        Simulate tab, click a produced row to see the rows it came from and how each value was computed; double-click a raw input cell to change it and
+        watch the change propagate. <K k="Esc" /> leaves the mode.
+      </p>
       <h4>Database</h4>
       <p>
         The Database tab talks to the local API server: it can start a PostgreSQL or MariaDB container through Docker, run the generated schema against any
@@ -208,6 +218,10 @@ function HelpContent() {
           <K k="F" />
         </span>
         <span>Fit diagram to the window</span>
+        <span>
+          <K k="S" />
+        </span>
+        <span>Simulate data flowing into the selected table (again, or <K k="Esc" />, to stop)</span>
         <span>
           <K k="F2" />
         </span>

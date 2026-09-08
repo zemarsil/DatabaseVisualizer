@@ -225,11 +225,36 @@ app can build the `INSERT … SELECT` skeleton itself:
 ```
 
 `targetColumnId` must be a column of the **target** table. `expression` is source-side
-free text (`"quantity * unit_price_cents"`, or `"*"` under `COUNT`). `aggregate` is one of
+SQL (`"quantity * unit_price_cents"`, or `"*"` under `COUNT`). `aggregate` is one of
 `SUM`, `COUNT`, `AVG`, `MIN`, `MAX`, or omitted for a plain per-row value. `groupBy` and
-`filter` are free text. Use these alongside `query`, not instead of it: the structured form
-drives the summaries and the generated skeleton, the query covers what it cannot express
-(the join, the upsert, the trigger).
+`filter` are SQL text too.
+
+Expressions, keys and filters may name a column of **another table** as `table.column`
+when the source table reaches it through foreign keys in this file — `orders.status`
+from an `order_items` flow follows `order_items.order_id → orders.id`. The app resolves
+the lookup from the foreign keys, writes the `JOIN` into the generated skeleton, and
+follows it when simulating, so prefer this over restating the join in `query`. Use the
+plain table name (not `schema.table`) as the qualifier.
+
+A **sequence** (window) operation puts the source rows in order and computes each value
+from its neighbours:
+
+```json
+{ "id": "drv_gap", "targetColumnId": "col_gap_seconds", "expression": "placed_at", "filter": "status = 'paid'",
+  "window": { "fn": "DIFF", "orderBy": ["placed_at"], "partitionBy": ["customer_id"] } }
+```
+
+`fn` is one of `DIFF` (this row minus the previous one — seconds for timestamps, days for
+dates), `LAG`, `LEAD`, `RUNNING_SUM`, `RUNNING_AVG`, `ROW_NUMBER`, `RANK` (the last two
+need no `expression`). `orderBy` is required (a key may end in ` DESC`); `partitionBy`
+restarts the sequence per distinct value. A window may be combined with `aggregate` and
+`groupBy` — the window runs first, then the grouping (an `AVG` of `DIFF`s is a mean gap) —
+and the generator writes that as a subquery.
+
+Use these alongside `query`, not instead of it: the structured form drives the summaries,
+the generated skeleton and the **Simulate** mode (which runs the flows over sample rows and
+shows the lineage of every value), the query covers what it cannot express (a join that is
+not a foreign key, the upsert, the trigger).
 
 **Note** — sticky note on the canvas, for prose the schema cannot hold.
 

@@ -19,6 +19,7 @@ import {
   PanelBottom,
   PanelLeft,
   PanelRight,
+  Play,
   Plus,
   Redo2,
   Route,
@@ -39,6 +40,8 @@ import {
 import { DIALECTS, type Dialect } from '@shared/types';
 import { useStore, type DrawerTab } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
+import { useSimulation } from '@/store/useSimulation';
+import { simulationTargets } from '@/lib/simulate/engine';
 import { fuzzyFilter } from '@/lib/fuzzy';
 import { isContextMenuOpen } from './ui/ContextMenu';
 import { useDialogStore } from './ui/Modal';
@@ -103,6 +106,7 @@ const TABS: { id: DrawerTab; label: string; icon: LucideIcon }[] = [
   { id: 'types', label: 'Types', icon: Shapes },
   { id: 'import', label: 'Import SQL', icon: FileDown },
   { id: 'trace', label: 'Trace', icon: Route },
+  { id: 'simulate', label: 'Simulate', icon: Play },
   { id: 'problems', label: 'Problems', icon: ShieldAlert },
   { id: 'query', label: 'Query', icon: Terminal },
   { id: 'database', label: 'Database', icon: Database },
@@ -178,6 +182,17 @@ function buildItems(): PaletteItem[] {
     s.openDrawer('trace');
     s.setTracePicking(true);
   }, { icon: Route });
+
+  const sim = useSimulation.getState();
+  const fed = simulationTargets(d);
+  const fedSelected = selected.length === 1 ? fed.find((t) => t.id === selected[0]) : undefined;
+  if (fedSelected) act('simulate-selected', 'Simulate', `Simulate data flowing into ${fedSelected.name}`, () => sim.start(fedSelected.id), { icon: Play, hint: 'S', keywords: ['flow', 'rows', 'watch'] });
+  for (const t of fed) {
+    if (t.id === fedSelected?.id) continue;
+    act(`simulate:${t.id}`, 'Simulate', `Simulate data flowing into ${t.name}`, () => sim.start(t.id), { icon: Play, keywords: ['flow', 'rows', 'watch', t.name] });
+  }
+  if (sim.targetId) act('simulate-stop', 'Simulate', 'Stop the simulation', () => sim.stop(), { icon: Play, hint: 'Esc' });
+  act('simulate-tab', 'Simulate', 'Simulate data flow…', () => s.openDrawer('simulate'), { icon: Play, keywords: ['flow', 'rows', 'watch', 'animate'] });
 
   for (const t of TABS) act(`tab:${t.id}`, 'Panels', `Open ${t.label} tab`, () => s.openDrawer(t.id), { icon: t.icon });
   act('sidebar', 'Panels', `${s.sidebarOpen ? 'Hide' : 'Show'} table list`, () => s.setSidebarOpen(!s.sidebarOpen), { icon: PanelLeft });
