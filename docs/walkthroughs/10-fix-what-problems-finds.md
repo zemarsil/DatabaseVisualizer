@@ -258,6 +258,15 @@ reference from `customers` to `crm_contacts`. Click the `book_authors` chip
 **You should see:** the canvas focus on `book_authors` and the inspector
 switch to it.
 
+The chip is not the only way there. Every table name *inside* a finding's
+message text is a link too — in `book_authors links authors and books
+(many-to-many)`, all three names are clickable and each jumps to that table.
+That matters most on the findings that name two tables, where the chip can only
+take you to one of them: on a `fk-without-index` warning that opens
+`daily_sales(book_id) references books but has no index; …`, the chip goes to
+`daily_sales`, and clicking `books` in the message is the only one-click route
+to the other end.
+
 ### 11. Read a suggestion, and know when to leave it
 
 Set the severity dropdown back to **All severities**. In **Suggested foreign
@@ -284,6 +293,9 @@ so taking it is optional in a way an error never is.
   `node scripts/validate-dbviz.mjs file.dbviz.json` before reopening it.
 - **`Ctrl+K`** also jumps straight to any table by name — the same destination
   a finding's chip takes you to, if you already know which table you're after.
+- **Click a table name in the message itself.** Any table the message mentions
+  is a link, which is the quickest way to the *other* table in a finding about
+  two of them.
 
 ## Check your work
 
