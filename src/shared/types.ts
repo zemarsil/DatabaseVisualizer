@@ -108,6 +108,14 @@ export interface Table {
   kind?: TableKind;
   /** The SELECT body of a view (without CREATE VIEW ... AS). Ignored for tables. */
   viewSql?: string;
+  /**
+   * A view whose rows are stored and refreshed on demand rather than recomputed
+   * on every query. PostgreSQL only: MariaDB and SQLite have no materialized
+   * views, so the generator falls back to a plain CREATE VIEW there (with a
+   * warning). The flag is kept either way, so switching dialect and back does
+   * not lose it. Ignored when kind is not 'view'.
+   */
+  materialized?: boolean;
   columns: Column[];
   indexes: Index[];
   /** Table-level CHECK constraints (bodies only). */
@@ -630,6 +638,8 @@ export interface IntrospectedTable {
   kind?: 'table' | 'view';
   /** The view's SELECT, for kind === 'view'. */
   viewSql?: string | null;
+  /** True for a PostgreSQL materialized view (pg_class.relkind 'm'). */
+  materialized?: boolean;
   comment: string | null;
   columns: IntrospectedColumn[];
   primaryKey: string[];

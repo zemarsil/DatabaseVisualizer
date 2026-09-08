@@ -310,12 +310,33 @@ function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string
   return { create, extras, notes };
 }
 
-/** CREATE VIEW for a view table; null (with a warning) when it has no SELECT yet. */
+/**
+ * Display name for messages. DIALECTS labels SQLite "SQLite (in browser)",
+ * which does not read well mid-sentence.
+ */
+function engineName(dialect: Dialect): string {
+  return dialect === 'postgresql' ? 'PostgreSQL' : dialect === 'mariadb' ? 'MariaDB' : 'SQLite';
+}
+
+/**
+ * CREATE VIEW for a view table; null (with a warning) when it has no SELECT yet.
+ *
+ * Materialized views are PostgreSQL's alone. On MariaDB and SQLite the flag
+ * degrades to a plain view rather than emitting a statement those engines
+ * cannot run, so a diagram stays generatable in every dialect; the warning says
+ * the rows will now be recomputed per query instead of stored.
+ */
 function createView(ctx: Ctx, t: Table, warnings: string[]): string | null {
   const sql = (t.viewSql ?? '').trim().replace(/;+$/, '');
   if (!sql) {
     warnings.push(`View ${t.name} has no SELECT yet and was skipped.`);
     return null;
+  }
+  if (t.materialized) {
+    if (ctx.dialect === 'postgresql') return `CREATE MATERIALIZED VIEW ${tableName(t, ctx.dialect)} AS\n${sql};`;
+    warnings.push(
+      `${engineName(ctx.dialect)} has no materialized views, so ${t.name} was written as a regular view: its rows are recomputed on every query instead of stored until refreshed.`,
+    );
   }
   const keyword = ctx.dialect === 'mariadb' ? 'CREATE OR REPLACE VIEW' : 'CREATE VIEW';
   return `${keyword} ${tableName(t, ctx.dialect)} AS\n${sql};`;
@@ -684,7 +705,7 @@ export function generateSchema(d: Diagram): GeneratedSql {
     );
   }
 
-  const label = d.dialect === 'postgresql' ? 'PostgreSQL' : d.dialect === 'mariadb' ? 'MariaDB' : 'SQLite';
+  const label = engineName(d.dialect);
   const externalTables = d.tables.filter((t) => ctx.external.has(t.id));
   const views = orderViews(d).filter((v) => !ctx.external.has(v.id));
   const documented = d.relationships.filter((r) => !kindMeta(r.kind).emitsDdl).length;
@@ -834,7 +855,7 @@ export function generateDropStatements(d: Diagram): string[] {
   const viewDrops = orderViews(d)
     .filter((v) => !external.has(v.id))
     .reverse()
-    .map((v) => `DROP VIEW IF EXISTS ${tableName(v, d.dialect)};`);
+    .map((v) => `DROP ${v.materialized && d.dialect === 'postgresql' ? 'MATERIALIZED VIEW' : 'VIEW'} IF EXISTS ${tableName(v, d.dialect)};`);
   if (d.dialect === 'postgresql') {
     return [
       ...viewDrops,
