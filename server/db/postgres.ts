@@ -152,10 +152,7 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
     );
 
     const extensions = await c.query<{ name: string; schema: string; version: string }>(
-      `SELECT e.extname AS name, n.nspname AS schema, e.extversion AS version
-         FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
-        WHERE e.extname <> 'plpgsql'
-        ORDER BY e.extname`,
+      EXTENSION_QUERIES.forImport,
     );
 
     const enums = await c.query<{ schema: string; name: string; values: string[] }>(
@@ -235,50 +232,31 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
 const MAX_LISTED_FUNCTIONS = 40;
 
 /**
- * Everything the server knows about extensions, which is the authoritative
- * answer for this server and beats any catalog the app ships with.
- *
- * `pg_available_extensions` is what the server has on disk and could install.
- * For the ones actually installed, the objects they brought with them are read
- * out of `pg_depend`: every type, function, index access method and operator
- * class that depends on the extension with deptype 'e' was created *by* it.
- * That is how the app can describe an extension it has never heard of.
+ * The catalog queries, as named constants rather than inline strings, so
+ * tests/introspect-sql.test.ts can run exactly what the driver runs against a
+ * real PostgreSQL. These are the one part of the app a unit test cannot reach:
+ * they are strings handed to a database, and only a database can say whether
+ * they are valid.
  */
-export async function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsResponse> {
-  const c = clientFor(cfg);
-  await c.connect();
-  try {
-    const version = String((await c.query('SELECT version() AS v')).rows[0].v);
-
-    const available = await c.query<{ name: string; default_version: string | null; installed_version: string | null; comment: string | null }>(
-      `SELECT name, default_version, installed_version, comment FROM pg_available_extensions ORDER BY name`,
-    );
-
-    // What an extension depends on lives on the version rows rather than on
-    // pg_available_extensions, so the default version has to be joined back in
-    // (that view has no default_version column of its own).
-    const requires = await c.query<{ name: string; requires: string[] | null }>(
-      `SELECT v.name, v.requires
+export const EXTENSION_QUERIES = {
+  /** Everything the server could install, installed or not. */
+  available: `SELECT name, default_version, installed_version, comment FROM pg_available_extensions ORDER BY name`,
+  /**
+   * What each extension depends on. It lives on the version rows, so the default
+   * version has to be joined back in — pg_available_extension_versions has no
+   * default_version column of its own.
+   */
+  requires: `SELECT v.name, v.requires
          FROM pg_available_extension_versions v
          JOIN pg_available_extensions a ON a.name = v.name AND a.default_version = v.version
         ORDER BY v.name`,
-    );
-    const requiresByName = new Map(requires.rows.map((r) => [r.name, r.requires ?? []]));
-
-    const installed = await c.query<{
-      name: string;
-      version: string;
-      schema: string;
-      types: string[] | null;
-      functions: string[] | null;
-      function_count: number;
-      index_methods: string[] | null;
-      operator_classes: string[] | null;
-    }>(
-      // Every branch is the same shape: objects of one catalog that pg_depend
-      // ties back to this extension. Array types (leading underscore) and the
-      // row types of the extension's own tables are noise, so they are excluded.
-      `SELECT e.extname AS name, e.extversion AS version, n.nspname AS schema,
+  /**
+   * The objects an installed extension created, read out of pg_depend: anything
+   * that depends on the extension with deptype 'e' was created by it. Array
+   * types (leading underscore) and rowtypes are noise, so they are excluded, and
+   * the function list is capped because PostGIS alone has thousands.
+   */
+  installed: `SELECT e.extname AS name, e.extversion AS version, n.nspname AS schema,
               (SELECT array_agg(DISTINCT t.typname ORDER BY t.typname)
                  FROM pg_depend d JOIN pg_type t ON t.oid = d.objid
                 WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
@@ -304,6 +282,55 @@ export async function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsR
                   AND d.classid = 'pg_opclass'::regclass AND d.deptype = 'e') AS operator_classes
          FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
         ORDER BY e.extname`,
+  /** Just the names, for an ordinary schema import. */
+  forImport: `SELECT e.extname AS name, n.nspname AS schema, e.extversion AS version
+         FROM pg_extension e JOIN pg_namespace n ON n.oid = e.extnamespace
+        WHERE e.extname <> 'plpgsql'
+        ORDER BY e.extname`,
+} as const;
+
+/**
+ * Everything the server knows about extensions, which is the authoritative
+ * answer for this server and beats any catalog the app ships with.
+ *
+ * `pg_available_extensions` is what the server has on disk and could install.
+ * For the ones actually installed, the objects they brought with them are read
+ * out of `pg_depend`: every type, function, index access method and operator
+ * class that depends on the extension with deptype 'e' was created *by* it.
+ * That is how the app can describe an extension it has never heard of.
+ */
+export async function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsResponse> {
+  const c = clientFor(cfg);
+  await c.connect();
+  try {
+    const version = String((await c.query('SELECT version() AS v')).rows[0].v);
+
+    const available = await c.query<{ name: string; default_version: string | null; installed_version: string | null; comment: string | null }>(
+      EXTENSION_QUERIES.available,
+    );
+
+    // What an extension depends on lives on the version rows rather than on
+    // pg_available_extensions, so the default version has to be joined back in
+    // (that view has no default_version column of its own).
+    const requires = await c.query<{ name: string; requires: string[] | null }>(
+      EXTENSION_QUERIES.requires,
+    );
+    const requiresByName = new Map(requires.rows.map((r) => [r.name, r.requires ?? []]));
+
+    const installed = await c.query<{
+      name: string;
+      version: string;
+      schema: string;
+      types: string[] | null;
+      functions: string[] | null;
+      function_count: number;
+      index_methods: string[] | null;
+      operator_classes: string[] | null;
+    }>(
+      // Every branch is the same shape: objects of one catalog that pg_depend
+      // ties back to this extension. Array types (leading underscore) and the
+      // row types of the extension's own tables are noise, so they are excluded.
+      EXTENSION_QUERIES.installed,
     );
     const installedByName = new Map(installed.rows.map((r) => [r.name, r]));
 

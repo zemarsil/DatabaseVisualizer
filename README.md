@@ -231,7 +231,7 @@ src/components/          React UI (canvas, inspector, drawer panels, command pal
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
 scripts/                 validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
 docs/                    ADVISOR_OUTPUT_FORMAT.md, EXTENSION_PACK_FORMAT.md, examples, and walkthroughs/
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format, the simulation, the walkthroughs and their clickthroughs
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format, the simulation, extensions, the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
 ```
 
 ```bash
