@@ -48,9 +48,15 @@
     "concurrently": "^10.0.5",
     "typescript": "^5.9.0",
     "vite": "^7.3.0",
-    "vitest": "^3.2.0"
+    "vitest": "^4.1.11"
   },
   "engines": {
     "node": ">=20"
+  },
+  "allowScripts": {
+    "esbuild": true,
+    "cpu-features": false,
+    "protobufjs": false,
+    "ssh2": false
   }
 }

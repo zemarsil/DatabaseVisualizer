@@ -40,6 +40,12 @@ npm start          # http://127.0.0.1:8787
 
 Environment variables for the server: `PORT` (default `8787`), `HOST` (default `127.0.0.1`; the server binds to localhost only, because it can run arbitrary DDL against databases you point it at), `DOCKER_HOST` / `DOCKER_SOCKET`.
 
+### Install scripts, and why not to run `npm audit fix --force`
+
+`package.json` carries an `allowScripts` block, so recent npm (11.x and 12.x, which block dependency lifecycle scripts by default) installs without stopping to ask about them. `esbuild` is allowed, because its script swaps in the native binary that Vite and `tsx` run on. `ssh2`, `cpu-features` and `protobufjs` are denied — their scripts build native SSH crypto and CLI scaffolding this project never reaches, since `dockerode` talks to the daemon over a socket or TCP rather than SSH. The entries are deliberately unpinned, so a routine version bump does not put the question back.
+
+Please do not run `npm audit fix --force`. It rewrites `package.json` and `package-lock.json` in place, which is what turns the next `git pull` into a merge conflict, and it upgrades further than this project supports — at the time of writing it moves Vitest to 5.x, which needs Node 22.12, while this project supports Node 20. Advisories are resolved here instead, by pinning a version that is both patched and in range.
+
 ### Running the app itself in Docker
 
 ```bash
