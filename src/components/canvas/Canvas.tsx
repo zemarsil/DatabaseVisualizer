@@ -145,10 +145,6 @@ export function Canvas() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [dropping, setDropping] = useState(false);
   const dragDepth = useRef(0);
-  // Hovering or selecting a connection raises it above any sibling edges sharing the
-  // same anchor point (see the edges useMemo below), so overlapping FKs on one column
-  // can be told apart.
-  const [hoveredEdgeId, setHoveredEdgeId] = useState<string | null>(null);
   /*
    * True while a marquee (shift + drag) is being dragged. React Flow marks every edge
    * touching a boxed node as selected, and an edge selection replaces the node selection,
@@ -422,7 +418,6 @@ export function Canvas() {
           hue: paletteHue(src.color),
           dimmed: (tracing && !traceRels.has(r.id)) || !inFocus || simDim,
           traced: traceRels.has(r.id),
-          hovered: hoveredEdgeId === r.id,
           simulation,
           attached: selectedTableId !== null && (r.sourceTableId === selectedTableId || r.targetTableId === selectedTableId),
           optional: r.kind === 'fk' && Boolean(srcCol?.nullable),
@@ -432,9 +427,9 @@ export function Canvas() {
         },
       });
     }
-    // React Flow paints edges in array order, so raising a connection above the siblings
-    // it overlaps (same table+column anchor on both ends) means moving it to the end.
-    const activeId = hoveredEdgeId ?? selection.relationshipId;
+    // React Flow paints edges in array order, so raising a selected connection above the
+    // siblings it overlaps (same table+column anchor on both ends) means moving it to the end.
+    const activeId = selection.relationshipId;
     if (activeId) {
       const activeIndex = out.findIndex((e) => e.id === activeId);
       if (activeIndex !== -1 && activeIndex !== out.length - 1) {
@@ -443,7 +438,7 @@ export function Canvas() {
       }
     }
     return out;
-  }, [diagram, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet, simResult, simFlowIndex, simStage, simNonce, simPlaying, simLookupRels, simulating, hoveredEdgeId]);
+  }, [diagram, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet, simResult, simFlowIndex, simStage, simNonce, simPlaying, simLookupRels, simulating]);
 
   /* ---------- change handlers ---------- */
 
@@ -763,9 +758,6 @@ export function Canvas() {
     [setSelection],
   );
 
-  const onEdgeMouseEnter = useCallback((_e: React.MouseEvent, edge: Edge) => setHoveredEdgeId(edge.id), []);
-  const onEdgeMouseLeave = useCallback(() => setHoveredEdgeId(null), []);
-
   const onSelectionContextMenu = useCallback(
     (e: React.MouseEvent, picked: Node[]) => {
       const tableIds = picked.filter((n) => n.type === 'table').map((n) => n.id);
@@ -993,8 +985,6 @@ export function Canvas() {
         onPaneContextMenu={onPaneContextMenu}
         onNodeContextMenu={onNodeContextMenu}
         onEdgeContextMenu={onEdgeContextMenu}
-        onEdgeMouseEnter={onEdgeMouseEnter}
-        onEdgeMouseLeave={onEdgeMouseLeave}
         onSelectionContextMenu={onSelectionContextMenu}
         onNodeDragStart={onNodeDragStart}
         onNodeDrag={onNodeDrag}
