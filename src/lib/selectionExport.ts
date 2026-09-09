@@ -17,6 +17,7 @@ import { encodeClipboard } from './clipboard';
 import { generateMarkdown } from './markdownExport';
 import { markdownToHtml } from './markdownToHtml';
 import { customTypesUsedBy, emptyDiagram } from './model';
+import { extensionsUsedBy } from './extensions/registry';
 import { generateSchema } from './sql/generator';
 
 export interface SelectionSlice {
@@ -41,6 +42,7 @@ export function sliceSelection(d: Diagram, tableIds: string[]): SelectionSlice {
       relationships: d.relationships.filter(inside),
       groups: d.groups.filter((g) => groupIds.has(g.id)),
       customTypes: customTypesUsedBy(d, tables),
+      extensions: extensionsUsedBy(d, tables),
     },
     omitted: d.relationships.filter(straddles),
   };

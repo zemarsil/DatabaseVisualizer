@@ -259,7 +259,7 @@ export function pasteText(text: string, at?: { x: number; y: number }): 'clipboa
       const minY = Math.min(...payload.tables.map((t) => t.position.y));
       offset = { x: at.x - minX, y: at.y - minY };
     }
-    const ids = s.pasteTables(payload.tables, payload.relationships, payload.customTypes, offset);
+    const ids = s.pasteTables(payload.tables, payload.relationships, payload.customTypes, offset, payload.extensions);
     s.toast('success', `Pasted ${ids.length} table${ids.length === 1 ? '' : 's'}.`);
   } else if (kind === 'sql') {
     const res = importSql(text, s.diagram.dialect, s.diagram);
@@ -269,16 +269,22 @@ export function pasteText(text: string, at?: { x: number; y: number }): 'clipboa
     }
     if (at) {
       gridAt(res.tables, at);
-      s.pasteTables(res.tables, res.relationships, res.customTypes, { x: 0, y: 0 });
+      s.pasteTables(res.tables, res.relationships, res.customTypes, { x: 0, y: 0 }, res.extensions);
     } else {
-      s.importTables(res.tables, res.relationships, 'merge', { customTypes: res.customTypes });
+      s.importTables(res.tables, res.relationships, 'merge', { customTypes: res.customTypes, extensions: res.extensions });
     }
     const problems = res.errors.length ? ` (${res.errors.length} statement${res.errors.length === 1 ? '' : 's'} had errors)` : '';
     s.toast('success', `Imported ${res.tables.length} table${res.tables.length === 1 ? '' : 's'} from the pasted SQL${problems}.`);
   } else if (kind === 'diagram') {
     try {
       const d = parseDiagramFile(text);
-      const ids = s.pasteTables(d.tables, d.relationships, d.customTypes, at ? { x: at.x - Math.min(...d.tables.map((t) => t.position.x)), y: at.y - Math.min(...d.tables.map((t) => t.position.y)) } : { x: 0, y: 0 });
+      const ids = s.pasteTables(
+        d.tables,
+        d.relationships,
+        d.customTypes,
+        at ? { x: at.x - Math.min(...d.tables.map((t) => t.position.x)), y: at.y - Math.min(...d.tables.map((t) => t.position.y)) } : { x: 0, y: 0 },
+        d.extensions,
+      );
       s.toast('success', `Added ${ids.length} table${ids.length === 1 ? '' : 's'} from the pasted diagram.`);
     } catch (e) {
       s.toast('error', e instanceof Error ? e.message : 'Could not read the pasted diagram.');

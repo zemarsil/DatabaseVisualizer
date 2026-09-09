@@ -205,6 +205,7 @@ export function DatabasePanel() {
       }
       importTables(converted.tables, converted.relationships, importMode, {
         customTypes: converted.customTypes,
+        extensions: converted.extensions,
         group: importGroup
           ? {
               name: importGroupName.trim() || conn.database || 'Imported database',

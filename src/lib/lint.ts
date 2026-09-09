@@ -10,9 +10,10 @@
 import { kindMeta, type Column, type Diagram, type Relationship, type Table } from '@shared/types';
 import { flowDerivations, isDerivationComplete } from './derivation';
 import { externalTableIds } from './groups';
-import { createColumn, createIndex, customTypeByName } from './model';
+import { createColumn, createExtension, createIndex, customTypeByName } from './model';
 import { fkTargetIsUnique, isJoinTable, pkColumnIds } from './schemaInfo';
-import { isReserved, isSerialType, normalizeType } from './sql/dialect';
+import { isReserved, isSerialType, normalizeType, TYPE_SUGGESTIONS } from './sql/dialect';
+import { baseTypeName, diagramText, extensionIsUsed, extensionLabel, extensionsProvidingType, findExtensionDef } from './extensions/registry';
 
 export type LintSeverity = 'error' | 'warning' | 'info';
 
@@ -31,6 +32,7 @@ export interface LintFinding {
   tableId?: string;
   columnId?: string;
   relationshipId?: string;
+  extensionId?: string;
   fix?: LintFix;
 }
 
@@ -99,6 +101,22 @@ function idType(dialect: Diagram['dialect']): string {
   return dialect === 'mariadb' ? 'INT' : 'INTEGER';
 }
 
+/**
+ * Base names of the types the engine has on its own. A definition that claims one
+ * of these is describing something the schema can already use, so a column typed
+ * with it needs no extension and must not be flagged.
+ */
+const BUILTIN_TYPE_NAMES = new Map<Diagram['dialect'], Set<string>>();
+
+function builtinTypeNames(dialect: Diagram['dialect']): Set<string> {
+  let set = BUILTIN_TYPE_NAMES.get(dialect);
+  if (!set) {
+    set = new Set(TYPE_SUGGESTIONS[dialect].map((t) => baseTypeName(t)));
+    BUILTIN_TYPE_NAMES.set(dialect, set);
+  }
+  return set;
+}
+
 function draftTable(d: Diagram, id: string): Table | undefined {
   return d.tables.find((t) => t.id === id);
 }
@@ -108,7 +126,8 @@ export function lintDiagram(d: Diagram): LintFinding[] {
   const external = externalTableIds(d);
   const tableById = new Map(d.tables.map((t) => [t.id, t]));
   const limit = IDENTIFIER_LIMIT[d.dialect] ?? 63;
-  const push = (f: Omit<LintFinding, 'id'>) => out.push({ ...f, id: `${f.rule}:${f.tableId ?? ''}:${f.columnId ?? ''}:${f.relationshipId ?? ''}` });
+  const push = (f: Omit<LintFinding, 'id'>) =>
+    out.push({ ...f, id: `${f.rule}:${f.tableId ?? ''}:${f.columnId ?? ''}:${f.relationshipId ?? ''}:${f.extensionId ?? ''}` });
 
   /* ---------- tables and columns ---------- */
   // Group by name first: a snapshot has no notion of which table was renamed
@@ -430,6 +449,121 @@ export function lintDiagram(d: Diagram): LintFinding[] {
         severity: 'info',
         message: `${src.name} references itself through a NOT NULL column, so the first row can only be inserted if it points at itself.`,
         relationshipId: r.id,
+      });
+    }
+  }
+
+  /* ---------- extensions ---------- */
+  // Only the name identifies an extension to the engine, so two entries with the
+  // same name are one extension written twice.
+  const extensionCounts = new Map<string, number>();
+  for (const e of d.extensions) {
+    const k = e.name.trim().toLowerCase();
+    if (k) extensionCounts.set(k, (extensionCounts.get(k) ?? 0) + 1);
+  }
+  const usageText = diagramText(d);
+  const enabledNames = new Set([...extensionCounts.keys()]);
+
+  for (const e of d.extensions) {
+    const name = e.name.trim();
+    if (!name) {
+      push({
+        rule: 'extension-without-name',
+        severity: 'error',
+        message: 'An extension entry has no name, so nothing can be generated for it.',
+        extensionId: e.id,
+        fix: { label: 'Remove the entry', safe: false, apply: (dd) => void (dd.extensions = dd.extensions.filter((x) => x.id !== e.id)) },
+      });
+      continue;
+    }
+    if ((extensionCounts.get(name.toLowerCase()) ?? 0) > 1) {
+      push({
+        rule: 'duplicate-extension',
+        severity: 'warning',
+        message: `The extension "${name}" is listed more than once; an engine can only enable it once.`,
+        extensionId: e.id,
+        fix: { label: 'Remove this copy', safe: true, apply: (dd) => void (dd.extensions = dd.extensions.filter((x) => x.id !== e.id)) },
+      });
+    }
+
+    const def = findExtensionDef(name, d.dialect);
+    if (!def) {
+      push({
+        rule: 'extension-unknown',
+        severity: 'info',
+        message: `Nothing here defines "${name}", so its types and functions cannot help with autocomplete or checks. The generated SQL is unaffected. Load a definition pack, or read one off a connected database.`,
+        extensionId: e.id,
+      });
+      continue;
+    }
+
+    for (const req of def.requires ?? []) {
+      if (enabledNames.has(req.toLowerCase())) continue;
+      push({
+        rule: 'extension-missing-requirement',
+        severity: 'error',
+        message: `${extensionLabel(def)} needs "${req}" enabled first; the engine will refuse to create it otherwise.`,
+        extensionId: e.id,
+        fix: {
+          label: `Enable ${req}`,
+          safe: true,
+          apply: (dd) => {
+            if (!dd.extensions.some((x) => x.name.trim().toLowerCase() === req.toLowerCase())) {
+              // Ahead of the extension that needs it, so the script order is right.
+              const at = dd.extensions.findIndex((x) => x.id === e.id);
+              dd.extensions.splice(at < 0 ? dd.extensions.length : at, 0, createExtension({ name: req }));
+            }
+          },
+        },
+      });
+    }
+
+    if (!extensionIsUsed(d, def, usageText)) {
+      push({
+        rule: 'extension-unused',
+        severity: 'info',
+        message: `Nothing in this diagram uses what ${extensionLabel(def)} provides. Enabling an extension you do not use still costs an install and a dependency.`,
+        extensionId: e.id,
+        fix: { label: `Remove ${name}`, safe: false, apply: (dd) => void (dd.extensions = dd.extensions.filter((x) => x.id !== e.id)) },
+      });
+    }
+  }
+
+  // A column typed with something only an extension provides, where the diagram
+  // never enables that extension. Without this the type just looks like a typo.
+  const flaggedTypes = new Set<string>();
+  for (const t of d.tables) {
+    if (t.kind === 'view' || external.has(t.id)) continue;
+    for (const c of t.columns) {
+      const base = baseTypeName(c.type);
+      if (!base || builtinTypeNames(d.dialect).has(base)) continue;
+      if (customTypeByName(d, c.type)) continue;
+      const providers = extensionsProvidingType(c.type, d.dialect).filter((p) => !enabledNames.has(p.name.toLowerCase()));
+      if (providers.length === 0) continue;
+      // One finding per column, but do not repeat the same advice for a type
+      // used across twenty columns of the same table.
+      const dedupe = `${t.id}:${base}`;
+      if (flaggedTypes.has(dedupe)) continue;
+      flaggedTypes.add(dedupe);
+      const first = providers[0];
+      push({
+        rule: 'type-needs-extension',
+        severity: 'error',
+        message:
+          providers.length === 1
+            ? `${t.name}.${c.name} is ${c.type}, a type ${extensionLabel(first)} provides, but the diagram does not enable "${first.name}". The CREATE TABLE will fail.`
+            : `${t.name}.${c.name} is ${c.type}, a type provided by ${providers.map((p) => `"${p.name}"`).join(' or ')}, none of which this diagram enables.`,
+        tableId: t.id,
+        columnId: c.id,
+        fix: {
+          label: `Enable ${first.name}`,
+          safe: true,
+          apply: (dd) => {
+            if (!dd.extensions.some((x) => x.name.trim().toLowerCase() === first.name.toLowerCase())) {
+              dd.extensions.push(createExtension({ name: first.name }));
+            }
+          },
+        },
       });
     }
   }

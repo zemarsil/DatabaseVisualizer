@@ -7,6 +7,7 @@ import {
   type CustomType,
   type Derivation,
   type Diagram,
+  type DiagramExtension,
   type Group,
   type Note,
   type Relationship,
@@ -224,6 +225,26 @@ function parseDiagramValue(raw: unknown): Diagram {
     });
   }
   d.customTypes = customTypes;
+
+  const extensions: DiagramExtension[] = [];
+  const seenExtensions = new Set<string>();
+  for (const re of (Array.isArray(o.extensions) ? o.extensions : []) as unknown[]) {
+    if (!re || typeof re !== 'object') continue;
+    const e = re as Record<string, unknown>;
+    const name = str(e.name).trim();
+    // The name is the identity: an engine cannot enable the same extension
+    // twice, so a file that lists one twice keeps the first entry.
+    if (!name || seenExtensions.has(name.toLowerCase())) continue;
+    seenExtensions.add(name.toLowerCase());
+    extensions.push({
+      id: typeof e.id === 'string' && e.id ? e.id : newId('ext'),
+      name,
+      schema: typeof e.schema === 'string' && e.schema ? e.schema : undefined,
+      version: typeof e.version === 'string' && e.version ? e.version : undefined,
+      comment: typeof e.comment === 'string' && e.comment ? e.comment : undefined,
+    });
+  }
+  d.extensions = extensions;
 
   if (o.viewport && typeof o.viewport === 'object') {
     const v = o.viewport as Record<string, unknown>;
