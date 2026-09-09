@@ -97,6 +97,8 @@ export function runWalkthroughCheck(raw: string, d: Diagram, opts: CheckOptions 
       return list('regions', d.groups.map((g) => g.name));
     case 'types':
       return list('custom types', d.customTypes.map((t) => t.name));
+    case 'extensions':
+      return list('extensions', d.extensions.map((e) => e.name));
     case 'kinds': {
       const want: Record<string, number> = { fk: 0, flow: 0, embed: 0, dependency: 0 };
       for (const part of splitList(arg)) {

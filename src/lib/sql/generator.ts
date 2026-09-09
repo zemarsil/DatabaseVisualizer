@@ -5,6 +5,7 @@ import {
   type CustomType,
   type Derivation,
   type Diagram,
+  type DiagramExtension,
   type Dialect,
   type Relationship,
   type Table,
@@ -14,6 +15,7 @@ import { foreignKeyPath } from '../schemaInfo';
 import { collectReferences, parseExpression, type ColumnRef, type Expr } from '../simulate/expression';
 import { tokenize, type Token } from './tokenizer';
 import { externalTableIds } from '../groups';
+import { findExtensionDef, installMethod } from '../extensions/registry';
 import { isIntegerType, isSerialType, quoteIdent, quoteQualified, quoteString } from './dialect';
 import { orderViews } from './views';
 
@@ -340,6 +342,98 @@ function createView(ctx: Ctx, t: Table, warnings: string[]): string | null {
   }
   const keyword = ctx.dialect === 'mariadb' ? 'CREATE OR REPLACE VIEW' : 'CREATE VIEW';
   return `${keyword} ${tableName(t, ctx.dialect)} AS\n${sql};`;
+}
+
+/**
+ * Statements that enable the diagram's extensions, and the comment lines for the
+ * ones that cannot be enabled from a script.
+ *
+ * These come first in the script: a CREATE TYPE or a column can name a type an
+ * extension provides, so the extension has to exist before either runs.
+ *
+ * Each engine enables extensions its own way, and only PostgreSQL does it in
+ * SQL that belongs in a schema script:
+ *   - PostgreSQL: CREATE EXTENSION IF NOT EXISTS, which is what we emit.
+ *   - MariaDB:    INSTALL SONAME, a server-wide administrative statement. It is
+ *                 emitted, but flagged, because it is not part of creating a schema.
+ *   - SQLite:     modules are compiled in or loaded by the client before it opens
+ *                 the file, so there is nothing to run — only a note.
+ */
+export interface ExtensionInstallPlan {
+  /** Runnable SQL, or null when this engine has no statement that belongs in a schema script. */
+  statement: string | null;
+  /** Comment lines to put in the script, whether or not there is a statement. */
+  comments: string[];
+  /** Why it is only a comment, when it is. */
+  warning?: string;
+}
+
+/**
+ * What one declared extension turns into on this engine. Shared by the script
+ * generator and the inspector card, so what the UI promises and what the script
+ * contains cannot drift apart.
+ */
+export function extensionInstallPlan(dialect: Dialect, e: DiagramExtension): ExtensionInstallPlan {
+  const name = e.name.trim();
+  if (!name) return { statement: null, comments: [] };
+  const def = findExtensionDef(name, dialect);
+  const method = installMethod(def, dialect);
+
+  if (method === 'built-in') {
+    return { statement: null, comments: [`-- ${name} is built into the engine; nothing to install.`] };
+  }
+
+  if (dialect === 'postgresql') {
+    const parts = [`CREATE EXTENSION IF NOT EXISTS ${quoteIdent(name, 'postgresql')}`];
+    if (e.schema && e.schema.trim()) parts.push(`WITH SCHEMA ${quoteIdent(e.schema.trim(), 'postgresql')}`);
+    if (e.version && e.version.trim()) parts.push(`VERSION ${quoteString(e.version.trim())}`);
+    return { statement: `${parts.join(' ')};`, comments: [] };
+  }
+
+  if (dialect === 'mariadb') {
+    if (method === 'install-soname') {
+      // Written out but not executed. INSTALL SONAME installs a plugin into the
+      // whole server rather than this database, needs SUPER, and fails if the
+      // library is not on the server's plugin path — none of which should be
+      // able to roll back an otherwise fine schema. The statement is here in
+      // full so a DBA can run it once, by hand, where it belongs.
+      // The library name is the plugin's; the server appends the platform suffix.
+      return {
+        statement: null,
+        comments: [`-- ${name}: run once per server, as an administrator:`, `--   INSTALL SONAME ${quoteString(name)};`],
+        warning: `MariaDB installs "${name}" into the server, not into a database: it needs SUPER and only has to be done once, so it is written as a comment rather than run with the schema.`,
+      };
+    }
+    return {
+      statement: null,
+      comments: [`-- ${name}: MariaDB has no statement to install this; set it up on the server.`],
+      warning: `Extension "${name}" cannot be installed from a MariaDB schema script; it was written as a comment.`,
+    };
+  }
+
+  return {
+    statement: null,
+    comments: [`-- ${name}: load this module in the client before opening the database (SQLite has no statement for it).`],
+    warning: `SQLite loads "${name}" in the client, not from a script, so it is written as a comment. The in-browser engine cannot load it at all.`,
+  };
+}
+
+function extensionStatements(d: Diagram, warnings: string[]): { statements: string[]; comments: string[] } {
+  const statements: string[] = [];
+  const comments: string[] = [];
+
+  for (const e of d.extensions) {
+    if (!e.name.trim()) continue;
+    const def = findExtensionDef(e.name, d.dialect);
+    if (def && def.dialect !== d.dialect) warnings.push(`Extension "${e.name.trim()}" is defined for ${def.dialect}, not ${d.dialect}.`);
+
+    const plan = extensionInstallPlan(d.dialect, e);
+    if (plan.statement) statements.push(plan.statement);
+    comments.push(...plan.comments);
+    if (plan.warning) warnings.push(plan.warning);
+  }
+
+  return { statements, comments };
 }
 
 /** CREATE TYPE statements for named enum/composite types (PostgreSQL only; MariaDB inlines/falls back per-column). */
@@ -715,6 +809,7 @@ export function generateSchema(d: Diagram): GeneratedSql {
     '-- Generated by Database Visualizer',
     `-- Tables: ${order.length}${views.length ? `, views: ${views.length}` : ''}, foreign keys: ${createdFks}${documented ? `, documented connections: ${documented}` : ''}`,
   ];
+  if (d.extensions.length) headLines.push(`-- Extensions: ${d.extensions.map((e) => e.name).join(', ')}`);
   if (d.dialect === 'sqlite') headLines.push('-- Foreign keys are only enforced when the connection runs PRAGMA foreign_keys = ON (the in-browser engine does).');
   if (externalTables.length) {
     headLines.push(
@@ -722,6 +817,12 @@ export function generateSchema(d: Diagram): GeneratedSql {
     );
   }
   scriptParts.push(headLines.join('\n'));
+
+  const extensions = extensionStatements(d, warnings);
+  if (extensions.statements.length || extensions.comments.length) {
+    statements.push(...extensions.statements);
+    scriptParts.push(['-- Extensions', ...extensions.statements, ...extensions.comments].join('\n'));
+  }
 
   const typeStatements = createTypeStatements(d, warnings);
   if (typeStatements.length) {

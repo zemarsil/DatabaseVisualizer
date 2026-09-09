@@ -2,9 +2,10 @@ import { useState } from 'react';
 import { ChevronDown, ChevronRight, List, Plus, Rows3, Trash2 } from 'lucide-react';
 import type { CustomType, CustomTypeField } from '@shared/types';
 import { useStore } from '@/store/useStore';
-import { TYPE_SUGGESTIONS } from '@/lib/sql/dialect';
+import { typeSuggestions } from '@/lib/extensions/registry';
 import { createCustomTypeField } from '@/lib/model';
 import { confirmDialog } from '../ui/Modal';
+import { ExtensionsSection } from './extensions/ExtensionsSection';
 
 function EnumEditor({ ct }: { ct: CustomType }) {
   const updateCustomType = useStore((s) => s.updateCustomType);
@@ -39,8 +40,9 @@ function EnumEditor({ ct }: { ct: CustomType }) {
 
 function CompositeEditor({ ct }: { ct: CustomType }) {
   const updateCustomType = useStore((s) => s.updateCustomType);
-  const dialect = useStore((s) => s.diagram.dialect);
-  const customTypes = useStore((s) => s.diagram.customTypes);
+  const diagram = useStore((s) => s.diagram);
+  const dialect = diagram.dialect;
+  const customTypes = diagram.customTypes;
   const fields = ct.fields ?? [];
   const setFields = (f: CustomTypeField[]) => updateCustomType(ct.id, { fields: f });
   const patchField = (id: string, patch: Partial<CustomTypeField>) => setFields(fields.map((f) => (f.id === id ? { ...f, ...patch } : f)));
@@ -55,7 +57,7 @@ function CompositeEditor({ ct }: { ct: CustomType }) {
         </button>
       </div>
       <datalist id={`types-${dialect}-with-custom`}>
-        {TYPE_SUGGESTIONS[dialect].map((t) => (
+        {typeSuggestions(diagram).map((t) => (
           <option key={t} value={t} />
         ))}
         {customTypes.filter((t) => t.id !== ct.id).map((t) => (
@@ -153,7 +155,7 @@ export function TypesPanel() {
   const addCustomType = useStore((s) => s.addCustomType);
 
   return (
-    <div className="drawer__col" style={{ maxWidth: 640 }}>
+    <div className="drawer__col types-panel" style={{ maxWidth: 720 }}>
       <div className="drawer__toolbar">
         <h3 style={{ margin: 0 }}>Custom types</h3>
         <span className="grow" />
@@ -172,11 +174,13 @@ export function TypesPanel() {
         validation instead.
       </div>
       {customTypes.length === 0 && <div className="faint small">No custom types yet.</div>}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, overflow: 'auto' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {customTypes.map((ct) => (
           <CustomTypeCard key={ct.id} ct={ct} />
         ))}
       </div>
+
+      <ExtensionsSection />
     </div>
   );
 }

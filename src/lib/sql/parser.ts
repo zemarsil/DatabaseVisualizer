@@ -73,9 +73,18 @@ export interface ParsedView {
   materialized?: boolean;
 }
 
+export interface ParsedExtension {
+  name: string;
+  /** PostgreSQL: WITH SCHEMA ... */
+  schema?: string;
+  /** PostgreSQL: VERSION '...' */
+  version?: string;
+}
+
 export interface ParseResult {
   tables: ParsedTable[];
   views: ParsedView[];
+  extensions: ParsedExtension[];
   enums: { name: string; values: string[] }[];
   compositeTypes: ParsedCompositeType[];
   errors: ParseMessage[];
@@ -120,7 +129,7 @@ const ACTIONS: Record<string, ReferentialAction> = {
 
 class Parser {
   private pos = 0;
-  readonly result: ParseResult = { tables: [], views: [], enums: [], compositeTypes: [], errors: [], warnings: [], statementCount: 0 };
+  readonly result: ParseResult = { tables: [], views: [], extensions: [], enums: [], compositeTypes: [], errors: [], warnings: [], statementCount: 0 };
 
   constructor(private readonly sql: string, private readonly tokens: Token[], private readonly dialect: Dialect) {}
 
@@ -373,6 +382,9 @@ class Parser {
       case 'COMMENT':
         this.parseCommentOn();
         return;
+      case 'INSTALL':
+        this.parseInstall();
+        return;
       case 'SET':
       case 'USE':
       case 'BEGIN':
@@ -388,7 +400,7 @@ class Parser {
         this.skipStatement();
         return;
       default:
-        this.warn(`Skipped ${t.value.toUpperCase()} statement (only CREATE TABLE / INDEX / TYPE, ALTER TABLE and COMMENT ON are imported)`);
+        this.warn(`Skipped ${t.value.toUpperCase()} statement (only CREATE TABLE / INDEX / TYPE / EXTENSION, ALTER TABLE and COMMENT ON are imported)`);
         this.skipStatement();
     }
   }
@@ -438,6 +450,10 @@ class Parser {
     }
     if (this.isWord('TYPE')) {
       this.parseCreateType();
+      return;
+    }
+    if (this.isWord('EXTENSION')) {
+      this.parseCreateExtension();
       return;
     }
     const what = this.peek().type === 'word' ? this.peek().upper : '?';
@@ -1110,6 +1126,73 @@ class Parser {
     this.skipStatement();
   }
 
+  /** CREATE EXTENSION [IF NOT EXISTS] name [WITH] [SCHEMA s] [VERSION 'v'] [CASCADE] */
+  private parseCreateExtension(): void {
+    this.expectWord('EXTENSION');
+    if (this.acceptWord('IF')) {
+      this.expectWord('NOT');
+      this.expectWord('EXISTS');
+    }
+    const name = this.parseIdent();
+    let schema: string | undefined;
+    let version: string | undefined;
+    this.acceptWord('WITH');
+    for (;;) {
+      if (this.acceptWord('SCHEMA')) {
+        schema = this.parseIdent();
+        continue;
+      }
+      if (this.acceptWord('VERSION')) {
+        const t = this.next();
+        // The version can be written as a string or as a bare identifier.
+        version = t.type === 'string' ? t.value : t.value;
+        continue;
+      }
+      // CASCADE creates the dependencies too; it changes nothing we record.
+      if (this.acceptWord('CASCADE')) continue;
+      break;
+    }
+    this.skipStatement();
+    this.addExtension({ name, schema, version });
+  }
+
+  /** MariaDB: INSTALL SONAME 'x' / INSTALL PLUGIN x SONAME 'y'. Both name a plugin library. */
+  private parseInstall(): void {
+    const start = this.expectWord('INSTALL');
+    if (this.acceptWord('IF')) {
+      this.expectWord('NOT');
+      this.expectWord('EXISTS');
+    }
+    if (this.acceptWord('SONAME')) {
+      const t = this.next();
+      // The library name is what MariaDB records, minus the platform suffix.
+      if (t.type === 'string' || t.type === 'word') this.addExtension({ name: t.value.replace(/\.(so|dll|dylib)$/i, '') });
+      this.skipStatement();
+      return;
+    }
+    if (this.acceptWord('PLUGIN')) {
+      const plugin = this.parseIdent();
+      let soname = plugin;
+      if (this.acceptWord('SONAME')) {
+        const t = this.next();
+        if (t.type === 'string' || t.type === 'word') soname = t.value.replace(/\.(so|dll|dylib)$/i, '');
+      }
+      this.addExtension({ name: soname });
+      this.skipStatement();
+      return;
+    }
+    this.warn('Skipped INSTALL statement', start);
+    this.skipStatement();
+  }
+
+  /** An engine can only enable an extension once, so a repeat in the script is not a second one. */
+  private addExtension(e: ParsedExtension): void {
+    const name = e.name.trim();
+    if (!name) return;
+    if (this.result.extensions.some((x) => x.name.toLowerCase() === name.toLowerCase())) return;
+    this.result.extensions.push({ ...e, name });
+  }
+
   private parseCommentOn(): void {
     const start = this.expectWord('COMMENT');
     this.expectWord('ON');
@@ -1154,7 +1237,7 @@ export function parseSql(sql: string, dialect: Dialect): ParseResult {
     tokens = tokenize(sql, { bracketIdentifiers: dialect === 'sqlite' });
   } catch (e) {
     if (e instanceof SqlSyntaxError) {
-      return { tables: [], views: [], enums: [], compositeTypes: [], errors: [{ message: e.message, line: e.line, col: e.col }], warnings: [], statementCount: 0 };
+      return { tables: [], views: [], extensions: [], enums: [], compositeTypes: [], errors: [{ message: e.message, line: e.line, col: e.col }], warnings: [], statementCount: 0 };
     }
     throw e;
   }

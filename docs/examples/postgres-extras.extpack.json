@@ -1,0 +1,49 @@
+{
+  "format": "dbviz-extension-pack",
+  "version": 1,
+  "id": "postgres-extras",
+  "name": "PostgreSQL extras",
+  "description": "Three PostgreSQL extensions Database Visualizer does not bundle. An example of the pack format; see docs/EXTENSION_PACK_FORMAT.md.",
+  "dialect": "postgresql",
+  "extensions": [
+    {
+      "name": "pgroonga",
+      "label": "PGroonga",
+      "summary": "Full-text search over any language, including CJK, where the built-in text search needs a per-language configuration.",
+      "docsUrl": "https://pgroonga.github.io/",
+      "types": [{ "name": "pgroonga_full_text_search_condition", "summary": "A search condition passed to the &@~ operator." }],
+      "functions": [
+        { "name": "pgroonga_score", "example": "pgroonga_score(tableoid, ctid)", "summary": "Relevance of the current row; the usual ORDER BY key." },
+        { "name": "pgroonga_snippet_html", "example": "pgroonga_snippet_html(body, ARRAY['query'])" }
+      ],
+      "indexMethods": ["pgroonga"],
+      "operatorClasses": ["pgroonga_text_full_text_search_ops_v2"],
+      "note": "The index method is named after the extension: USING pgroonga, not USING gin."
+    },
+    {
+      "name": "pg_partman",
+      "label": "pg_partman",
+      "summary": "Creates and retires time- or serial-based partitions on a schedule, so a big table does not need a hand-written partition per month.",
+      "docsUrl": "https://github.com/pgpartman/pg_partman",
+      "functions": [
+        {
+          "name": "create_parent",
+          "example": "create_parent('public.events', 'occurred_at', '1 month')",
+          "summary": "Run once per table, after the partitioned CREATE TABLE."
+        },
+        { "name": "run_maintenance", "example": "run_maintenance()", "summary": "Makes the next partitions and drops expired ones; run it from a scheduler." }
+      ],
+      "note": "Wants its own schema, and a background worker or cron job to call run_maintenance(). The partitions themselves are ordinary tables and the diagram will only ever show the parent."
+    },
+    {
+      "name": "temporal_tables",
+      "label": "temporal_tables",
+      "summary": "System-versioned tables: a trigger copies each superseded row into a history table with the period it was valid for.",
+      "docsUrl": "https://github.com/arkhipov/temporal_tables",
+      "types": [{ "name": "tstzrange", "example": "tstzrange", "summary": "The validity period column. Built into PostgreSQL; listed here because the trigger requires one." }],
+      "functions": [{ "name": "versioning", "example": "versioning('sys_period', 'events_history', true)", "summary": "The trigger function, attached BEFORE INSERT OR UPDATE OR DELETE." }],
+      "requires": [],
+      "note": "Model the history table as a real table and the copying as a data-flow connection from the versioned table to it."
+    }
+  ]
+}

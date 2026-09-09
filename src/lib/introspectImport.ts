@@ -26,6 +26,7 @@ export function introspectionToDiagram(res: IntrospectResponse, dialect: Diagram
   const tableNames = res.tables.map((t) => (dropSchema ? t.name : `${t.schema}.${t.name}`));
   const parsed: ParseResult = {
     enums: (res.enums ?? []).map((e) => ({ name: e.name, values: e.values })),
+    extensions: (res.extensions ?? []).map((e) => ({ name: e.name, schema: e.schema, version: e.version })),
     views: res.tables
       .filter((t) => t.kind === 'view')
       .map((t) => ({

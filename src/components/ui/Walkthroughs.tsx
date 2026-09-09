@@ -9,7 +9,7 @@
  * how far in you are and lets you jump between steps, and the full text for a
  * reader who would rather read the document than be walked through it.
  *
- * The series builds one schema across fifteen walkthroughs, so both views carry
+ * The series builds one schema across every walkthrough in it, so both views carry
  * the same two buttons: **Set up the canvas**, which puts the previous
  * walkthrough's finished diagram in front of you (that is what lets a reader
  * start anywhere), and **Check my work**, which runs this walkthrough's own

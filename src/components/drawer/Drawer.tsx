@@ -35,7 +35,8 @@ export function Drawer() {
   const simStage = useSimulation((s) => s.stage);
   const simOn = useSimulation((s) => s.targetId !== null);
   const resizePanel = useStore((s) => s.resizePanel);
-  const typeCount = useStore((s) => s.diagram.customTypes.length);
+  // The Types tab holds custom types and extensions, so the badge counts both.
+  const typeCount = useStore((s) => s.diagram.customTypes.length + s.diagram.extensions.length);
   const activeWalkthroughSlug = useStore((s) => s.activeWalkthroughSlug);
   const diagram = useStore((s) => s.diagram);
   const errorCount = useMemo(() => lintDiagram(diagram).filter((f) => f.severity === 'error').length, [diagram]);

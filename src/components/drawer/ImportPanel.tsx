@@ -40,10 +40,15 @@ export function ImportPanel() {
     }
     importTables(res.tables, res.relationships, mode, {
       customTypes: res.customTypes,
+      extensions: res.extensions,
       group: group ? { name: groupName.trim() || 'Imported', external: groupExternal } : undefined,
     });
-    const typeNote = res.customTypes.length ? ` and ${res.customTypes.length} type(s)` : '';
-    toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} foreign key(s)${typeNote}.`);
+    const extras = [
+      res.customTypes.length ? `${res.customTypes.length} type(s)` : '',
+      res.extensions.length ? `${res.extensions.length} extension(s)` : '',
+    ].filter(Boolean);
+    const extraNote = extras.length ? ` and ${extras.join(' and ')}` : '';
+    toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} foreign key(s)${extraNote}.`);
     const implied = suggestForeignKeys(useStore.getState().diagram).filter((x) => x.confidence === 'high').length;
     if (implied) toast('info', `${implied} foreign key${implied === 1 ? ' looks' : 's look'} implied by column names. Open Problems to add them.`);
     setSql('');

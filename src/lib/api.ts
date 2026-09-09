@@ -4,6 +4,7 @@ import type {
   ConnectionConfig,
   ContainerInfo,
   CreateContainerRequest,
+  ExtensionsResponse,
   IntrospectResponse,
   QueryRequest,
   QueryResult,
@@ -67,6 +68,7 @@ export const api = {
     test: (connection: ConnectionConfig) => request<{ ok: boolean; serverVersion?: string; error?: string }>('/db/test', { method: 'POST', body: JSON.stringify(connection) }),
     apply: (req: ApplySchemaRequest) => request<ApplySchemaResponse>('/db/apply', { method: 'POST', body: JSON.stringify(req) }),
     introspect: (connection: ConnectionConfig) => request<IntrospectResponse>('/db/introspect', { method: 'POST', body: JSON.stringify(connection) }),
+    extensions: (connection: ConnectionConfig) => request<ExtensionsResponse>('/db/extensions', { method: 'POST', body: JSON.stringify(connection) }),
     query: (req: QueryRequest) => request<QueryResult>('/db/query', { method: 'POST', body: JSON.stringify(req) }),
   },
 };

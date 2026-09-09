@@ -107,9 +107,9 @@ Source: `src/components/drawer/Drawer.tsx` and the panels beside it
 
 | Tab | What it does |
 | --- | --- |
-| **Walkthrough** | The map beside the walkthrough you are running: every step in one list with a tick against the ones that check out, click any of them to move the coach mark there. Empty until you pick one from the **?** help modal's *Browse the fifteen walkthroughs*. Carries **Run the walkthrough** / **Show the step card**, **Set up the canvas** (loads the diagram that walkthrough starts from), **Read the whole thing** (the full text), **Check my work** (runs the walkthrough's `checks:` against the live canvas and lists what does not match), **Open the finished diagram**, and a *Next:* link. |
+| **Walkthrough** | The map beside the walkthrough you are running: every step in one list with a tick against the ones that check out, click any of them to move the coach mark there. Empty until you pick one from the **?** help modal's *Browse the sixteen walkthroughs*. Carries **Run the walkthrough** / **Show the step card**, **Set up the canvas** (loads the diagram that walkthrough starts from), **Read the whole thing** (the full text), **Check my work** (runs the walkthrough's `checks:` against the live canvas and lists what does not match), **Open the finished diagram**, and a *Next:* link. |
 | **SQL** | The generated script. Format selector (SQL, Markdown, Mermaid, DBML), *Whole schema* / *Selected table*, a *Prefix DROP TABLE statements* checkbox, statement count, **Copy** and **Download**. Generator warnings appear above the code. |
-| **Types** | Enum and composite types. Its own add buttons read **+ Enum** and **+ Struct type** — *Composite type* is only the top-bar `▾` menu's and the command palette's spelling. *Values (N)* for an enum, *Fields (N)* for a composite, plus a *Comment*. Neither values nor fields can be reordered: append and delete only. Badge shows how many types exist. |
+| **Types** | Two sections in one scrolling panel. **Custom types** on top: its add buttons read **+ Enum** and **+ Struct type** — *Composite type* is only the top-bar `▾` menu's and the command palette's spelling. *Values (N)* for an enum, *Fields (N)* for a composite, plus a *Comment*. Neither values nor fields can be reordered: append and delete only. **Extensions** below it: a name box with catalog autocomplete and an **Add** button, one-click chips for extensions not yet declared, and a card per extension carrying *Version*, *Schema* (PostgreSQL only), *Why this schema needs it*, chips for the types / functions / index methods / operator classes it provides, and the statement it generates. A collapsed *Where definitions come from* block holds **Load a pack file**, **Read from the database**, **Keep as a pack**, a URL box with **Fetch**, and the list of loaded packs. Badge counts custom types and extensions together. |
 | **Import SQL** | Paste or load a `.sql` file; *Add to the current diagram* or replace; optionally drop everything into a new group. |
 | **Trace** | *From table…* / *To table…*, the hop list, and *Join along the path*. |
 | **Simulate** | *Simulate data flow*: the stage list, the source and target grids, row lineage, and editable raw-input cells. |
@@ -349,4 +349,7 @@ Say so plainly rather than working around it:
 - a named enum type on MariaDB or SQLite (PostgreSQL alone emits `CREATE TYPE`;
   MariaDB inlines `ENUM(...)` per column and SQLite becomes a `CHECK`);
 - a group's rectangle — it is derived from where its member tables sit, never
-  stored, so a group cannot be dragged away from its contents.
+  stored, so a group cannot be dragged away from its contents;
+- an index's method or operator class — an index is a list of columns and a
+  unique flag, so `USING gin (title gin_trgm_ops)` and pgvector's `hnsw` cannot
+  be drawn even when the extension that provides them is declared.

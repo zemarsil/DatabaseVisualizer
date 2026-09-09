@@ -37,6 +37,94 @@ export function dialectLabel(d: Dialect): string {
   return DIALECTS.find((x) => x.id === d)?.label ?? d;
 }
 
+/* ------------------------------------------------------------------ */
+/* Extensions                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * An engine extension the schema depends on: PostGIS, pgvector, pg_trgm, a
+ * MariaDB storage-engine plugin, an SQLite loadable module.
+ *
+ * Only the declaration is stored — the name, and optionally where and which
+ * version — never the extension's own definitions. What an extension *provides*
+ * (its types, its functions, its index methods) lives in a catalog outside the
+ * diagram (src/lib/extensions), so a file stays small and still loads on a
+ * machine that has never heard of the extension: the DDL is generated from the
+ * name alone, and only the autocomplete and the lint hints go quiet.
+ */
+export interface DiagramExtension {
+  id: string;
+  /** Exactly as the engine spells it: "postgis", "vector", "uuid-ossp", "ha_connect". */
+  name: string;
+  /** PostgreSQL: the schema to install into. Omitted means the server's default. */
+  schema?: string;
+  /** Pinned version, e.g. "3.4.2". Omitted means whatever the server offers. */
+  version?: string;
+  /** Why this schema needs it. */
+  comment?: string;
+}
+
+/** A type an extension adds, as it would be written in a column definition. */
+export interface ExtensionType {
+  /** Base name, e.g. "geometry" or "vector". */
+  name: string;
+  /** How the type reads with its arguments filled in, e.g. "vector(1536)"; used for autocomplete. */
+  example?: string;
+  summary?: string;
+}
+
+/** A function an extension adds. `name` is the bare name; `example` is a call you could paste into a DEFAULT. */
+export interface ExtensionFunction {
+  name: string;
+  example?: string;
+  summary?: string;
+}
+
+/** How the engine is told to enable an extension, which decides what the generator writes. */
+export type ExtensionInstall =
+  /** PostgreSQL: CREATE EXTENSION IF NOT EXISTS ... */
+  | 'create-extension'
+  /** MariaDB: INSTALL SONAME '...' */
+  | 'install-soname'
+  /** SQLite: loaded by the client before it opens the database; nothing executable to emit. */
+  | 'client-loaded'
+  /** Compiled into the engine (SQLite FTS5, PostgreSQL plpgsql): present or not, never installed. */
+  | 'built-in';
+
+/**
+ * What one extension is and what it brings with it. Definitions come from three
+ * places, and `source` says which: `bundled` (shipped with the app), `pack`
+ * (a JSON file the user loaded) and `database` (read back off a live server,
+ * which is the only one that is authoritative for that server).
+ */
+export interface ExtensionDef {
+  name: string;
+  dialect: Dialect;
+  /** Display name, e.g. "PostGIS". Defaults to `name` when absent. */
+  label?: string;
+  summary?: string;
+  install?: ExtensionInstall;
+  docsUrl?: string;
+  types?: ExtensionType[];
+  functions?: ExtensionFunction[];
+  /**
+   * Index access methods it *adds*, e.g. pgvector's ["hnsw", "ivfflat"] — the
+   * same thing a server reports for it. Most extensions add none: gist, gin,
+   * spgist and brin are built into PostgreSQL, and an extension supplies
+   * operator classes for them, which belong in `operatorClasses`.
+   */
+  indexMethods?: string[];
+  /** Operator classes it adds, e.g. ["gin_trgm_ops"]. */
+  operatorClasses?: string[];
+  /** Other extensions that must be enabled first. */
+  requires?: string[];
+  /** Anything worth knowing before enabling it: privileges, licensing, gotchas. */
+  note?: string;
+  source?: 'bundled' | 'pack' | 'database';
+  /** Id of the pack this definition came from, when source is 'pack'. */
+  packId?: string;
+}
+
 export type ReferentialAction = 'NO ACTION' | 'RESTRICT' | 'CASCADE' | 'SET NULL' | 'SET DEFAULT';
 
 export const REFERENTIAL_ACTIONS: ReferentialAction[] = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT'];
@@ -527,6 +615,8 @@ export interface Diagram {
   notes: Note[];
   groups: Group[];
   customTypes: CustomType[];
+  /** Engine extensions this schema depends on. Empty for files written before extensions existed. */
+  extensions: DiagramExtension[];
   /** Saved viewport, purely cosmetic. */
   viewport?: { x: number; y: number; zoom: number };
 }
@@ -672,9 +762,42 @@ export interface IntrospectedTable {
   foreignKeys: IntrospectedForeignKey[];
 }
 
+/**
+ * One extension as a live server reports it. Unlike a catalog definition this is
+ * authoritative for that server: `installed` says whether it is enabled here,
+ * and for an installed one the provided types/functions/index methods are read
+ * back from the catalogs rather than guessed.
+ */
+export interface DatabaseExtension {
+  name: string;
+  installed: boolean;
+  installedVersion?: string;
+  defaultVersion?: string;
+  /** Schema it was installed into (PostgreSQL). */
+  schema?: string;
+  comment?: string;
+  requires?: string[];
+  /** Provided objects, for an installed extension. Long lists are capped; see `functionCount`. */
+  types?: string[];
+  functions?: string[];
+  /** How many functions it really provides, when `functions` was capped. */
+  functionCount?: number;
+  indexMethods?: string[];
+  operatorClasses?: string[];
+}
+
+export interface ExtensionsResponse {
+  serverVersion: string;
+  extensions: DatabaseExtension[];
+  /** Set when the engine has no installable extensions and the list describes what is compiled in. */
+  note?: string;
+}
+
 export interface IntrospectResponse {
   serverVersion: string;
   tables: IntrospectedTable[];
   /** Named enum types (PostgreSQL only). */
   enums?: { schema: string; name: string; values: string[] }[];
+  /** Extensions installed in this database, so importing a schema brings its dependencies with it. */
+  extensions?: { name: string; schema?: string; version?: string }[];
 }

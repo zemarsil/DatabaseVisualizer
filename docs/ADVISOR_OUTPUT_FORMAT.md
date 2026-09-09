@@ -8,8 +8,8 @@ Two input channels exist. Pick one per recommendation; do not mix them in one fi
 
 | Channel | How the user loads it | Carries | Loses |
 | --- | --- | --- | --- |
-| **`.dbviz.json` diagram** | File menu → Open (`Ctrl+O`) | everything below: tables, columns, indexes, checks, comments, views, enum/composite types, foreign keys, **data-flow edges with derivations**, **dependency and serialized edges**, **external-source groups**, **tagged queries**, **sticky notes**, colours, positions — and, in the workspace form, **several diagrams in one file** | nothing |
-| **Plain DDL** | Bottom drawer → **Import SQL** → paste → *Add to the current diagram* / *Replace* | tables, columns, indexes, uniques, checks, `COMMENT ON`, foreign keys, `CREATE VIEW`, `CREATE TYPE` (enum and composite) | flows, dependencies, derivations, groups, tagged queries, notes, colours, positions |
+| **`.dbviz.json` diagram** | File menu → Open (`Ctrl+O`) | everything below: tables, columns, indexes, checks, comments, views, enum/composite types, **extensions**, foreign keys, **data-flow edges with derivations**, **dependency and serialized edges**, **external-source groups**, **tagged queries**, **sticky notes**, colours, positions — and, in the workspace form, **several diagrams in one file** | nothing |
+| **Plain DDL** | Bottom drawer → **Import SQL** → paste → *Add to the current diagram* / *Replace* | tables, columns, indexes, uniques, checks, `COMMENT ON`, foreign keys, `CREATE VIEW`, `CREATE TYPE` (enum and composite), `CREATE EXTENSION` | flows, dependencies, derivations, groups, tagged queries, notes, colours, positions |
 
 Rule of thumb: if the recommendation is *only* "here is the schema", emit DDL — it is
 easier to read and the user may want to run it. If it contains reasoning, computation
@@ -29,7 +29,8 @@ inside the block. The importer is a purpose-built schema parser, not a full SQL 
 
 Supported: `CREATE TABLE` with column and table constraints, `ALTER TABLE … ADD
 CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`,
-`COMMENT ON TABLE|COLUMN`, `CREATE VIEW`, and `CREATE TYPE … AS ENUM` / `AS (…)`.
+`COMMENT ON TABLE|COLUMN`, `CREATE VIEW`, `CREATE TYPE … AS ENUM` / `AS (…)`, and
+`CREATE EXTENSION` (plus MariaDB's `INSTALL SONAME` / `INSTALL PLUGIN`).
 `pg_dump` and `mysqldump` output parses fine.
 
 Silently dropped (with a warning): generated columns, partitioning, expression indexes,
@@ -48,6 +49,7 @@ A single JSON document in one fenced ```json block. Shape:
   "version": 1,
   "name": "Orders rollup — advisor recommendation",
   "dialect": "postgresql",
+  "extensions": [ /* Extension */ ],
   "customTypes": [ /* CustomType */ ],
   "groups": [ /* Group */ ],
   "tables": [ /* Table */ ],
@@ -126,6 +128,34 @@ omit an array rather than sending an empty one you have nothing to put in.
 `columnIds` must be ids of columns **in the same table**, in the order the index should
 declare them (order matters for composite indexes — say why in the table comment).
 Expression indexes cannot be represented; put those in a note.
+
+**Extension** — an engine extension the schema depends on.
+
+```json
+{
+  "id": "ext_vector",
+  "name": "vector",
+  "schema": "extensions",
+  "version": "0.7.0",
+  "comment": "Embeddings on documents.body_vector."
+}
+```
+
+`name` is exactly as the engine spells it (`postgis`, `vector`, `uuid-ossp`,
+`pg_trgm`); it is the only field that reaches the generated SQL, as
+`CREATE EXTENSION IF NOT EXISTS <name>` at the top of the script, before the types
+and tables that need it. `schema` and `version` are optional and PostgreSQL-only;
+omit both unless the recommendation depends on them.
+
+**Declare an extension whenever a column's type needs one.** A `vector(1536)`,
+`geometry(Point,4326)`, `citext` or `hstore` column with no matching extension is
+reported as an error in the Problems tab, because the `CREATE TABLE` really will
+fail. On MariaDB and SQLite the declaration documents the dependency but generates
+only a comment, since neither engine installs extensions from a schema script.
+
+What an extension *provides* is never part of this file — the app keeps that in its
+own catalog — so do not invent fields for its types or functions. If you are
+recommending something obscure, say what it provides in a `note` instead.
 
 **CustomType** — a named enum or composite type.
 
@@ -323,8 +353,11 @@ the app writes for a single diagram, and it is what every other tool that reads
    their own band so the region drawn around them does not swallow anything else. Never
    leave everything at `{"x": 0, "y": 0}`; the user can press **L** (Detangle) to
    re-layout, but a sane starting layout is part of the recommendation.
-4. Omit optional fields rather than sending `null`. Unknown fields are ignored.
-5. One JSON object per recommendation, in one fenced block, valid JSON — no comments, no
+4. **Declare the extensions the column types need.** A type only an extension provides
+   (`vector`, `geometry`, `geography`, `citext`, `hstore`, `ltree`, `cube`) is an error
+   in the Problems tab until the matching extension is in `extensions`.
+5. Omit optional fields rather than sending `null`. Unknown fields are ignored.
+6. One JSON object per recommendation, in one fenced block, valid JSON — no comments, no
    trailing commas.
 
 Tell the user to save the block as `something.dbviz.json` and open it with

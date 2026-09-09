@@ -1,5 +1,5 @@
-import type { CustomType, Diagram, Dialect, Relationship, Table } from '@shared/types';
-import { createColumn, createCustomTypeField, createIndex, createRelationship, createTable } from '../model';
+import type { CustomType, Diagram, DiagramExtension, Dialect, Relationship, Table } from '@shared/types';
+import { createColumn, createCustomTypeField, createExtension, createIndex, createRelationship, createTable } from '../model';
 import { newId } from '../ids';
 import { parseSql, type ParseResult, type ParsedTable } from './parser';
 
@@ -7,6 +7,7 @@ export interface ImportResult {
   tables: Table[];
   relationships: Relationship[];
   customTypes: CustomType[];
+  extensions: DiagramExtension[];
   errors: string[];
   warnings: string[];
   statementCount: number;
@@ -134,7 +135,17 @@ export function parseResultToDiagram(res: ParseResult, existing: Diagram | null 
     });
   }
 
-  return { tables, relationships, customTypes, errors, warnings, statementCount: res.statementCount };
+  // The engine keys an extension by name, so one already declared is the same
+  // one: keep the diagram's entry (it may carry a comment) rather than adding a twin.
+  const existingExtensions = new Set((existing?.extensions ?? []).map((e) => e.name.trim().toLowerCase()));
+  const extensions: DiagramExtension[] = [];
+  for (const e of res.extensions) {
+    if (existingExtensions.has(e.name.toLowerCase())) continue;
+    existingExtensions.add(e.name.toLowerCase());
+    extensions.push(createExtension({ name: e.name, schema: e.schema, version: e.version }));
+  }
+
+  return { tables, relationships, customTypes, extensions, errors, warnings, statementCount: res.statementCount };
 }
 
 function parsedTableToTable(pt: ParsedTable): Table {
