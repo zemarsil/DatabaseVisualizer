@@ -52,6 +52,7 @@ docker compose up --build
 
 | What | How |
 | --- | --- |
+| Several databases at once | The tabs above the canvas are the diagrams of this workspace, like the worksheets of a spreadsheet: **+** adds one, double-click a tab to rename it, drag to reorder, right-click for duplicate / move / close, `Ctrl+PgUp` / `Ctrl+PgDn` steps between them. Each tab keeps its own dialect, undo history, selection and viewport; `Ctrl+C` in one and `Ctrl+V` in another copies tables across; **File → Save** writes every tab into one `.dbviz.json` |
 | Find anything | `Ctrl+K` opens the command palette: type a table name to jump to it, or the first letters of an action (export, detangle, collapse, switch dialect…) |
 | Add a table | Double-click the canvas, press `T`, or use the **+ Table** button; the menu next to it adds a view, a note, a group or an enum type |
 | Select a group | `Shift` + drag a box over the canvas — every table and note it touches is selected; drag any of them (or the dashed box) to move the group, `Delete` removes it in one undo step |
@@ -79,8 +80,8 @@ docker compose up --build
 | Align and tidy | Box-select, then right-click → Align / Distribute; **View → Snap to grid**, a toggle that makes tables land on the grid as you drag them; arrow keys nudge the selection (`Shift` for bigger steps); right-click the canvas → **Group tables by schema** |
 | Detangle | **Detangle** button (`L`), direction menu next to it |
 | Trace | **Trace** button: with two tables selected it traces immediately, otherwise it enters pick mode; or use the **Trace** drawer tab |
-| Save / open | File menu, `Ctrl+S` / `Ctrl+O` (`.dbviz.json`). **File → Open recent…** lists every diagram this browser has worked on, with thumbnails |
-| Checkpoints | Inspector → Diagram panel → **Checkpoints**, or **File → Save checkpoint…**: a named snapshot you can restore any time |
+| Save / open | File menu, `Ctrl+S` / `Ctrl+O` (`.dbviz.json`, the whole workspace in one file). **File → Open recent…** lists every workspace this browser has worked on, with thumbnails |
+| Checkpoints | Inspector → Diagram panel → **Checkpoints**, or **File → Save checkpoint…**: a named snapshot you can restore any time. A checkpoint belongs to the tab it was taken on |
 | Export | File menu → PNG, SVG, SQL script, Markdown data dictionary, Mermaid ER diagram, or DBML; the SQL tab previews all the text formats |
 | Share | **File → Copy share link**: the whole diagram is compressed into the URL, so whoever opens it gets a copy with nothing to install |
 | Docker & database | **Database** button → left column manages containers, right column tests a connection, runs the schema, reads an existing schema, **migrates** a live database to match the diagram, or **seeds** it with generated rows |
@@ -209,7 +210,8 @@ src/lib/groups.ts        table groups: region geometry, membership, external tab
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
 src/lib/simulate/        expression.ts: SQL expression parser/evaluator; engine.ts: runs the data flows over sample rows with lineage
-src/lib/io.ts            .dbviz.json save/load
+src/lib/io.ts            .dbviz.json save/load (one diagram, or a workspace of several)
+src/lib/sheets.ts        add / rename / close a diagram tab, with the questions each one asks first
 src/lib/lint.ts          schema linter with one-click fixes; suggest.ts proposes foreign keys
 src/lib/migrate/         diagram vs. database diff and per-dialect ALTER generation
 src/lib/seed.ts          deterministic seed-data generator
@@ -217,9 +219,10 @@ src/lib/export/          Mermaid and DBML exporters (markdownExport.ts for the d
 src/lib/selectionExport.ts  a selection as SQL / Markdown / HTML, keeping only the connections inside it
 src/lib/canvasActions.ts    copy, cut and paste: which clipboard flavor each paste target gets
 src/lib/share.ts         share links (diagram compressed into the URL hash)
-src/lib/library.ts       IndexedDB diagram library and checkpoints
+src/lib/library.ts       IndexedDB workspace library and per-diagram checkpoints
 src/lib/sqlite/          in-browser SQLite engine (sql.js) behind the same interface as the server
-src/store/useStore.ts    zustand store with undo/redo and autosave
+src/store/useStore.ts    zustand store with undo/redo and autosave; the sheets of the workspace live here
+src/components/SheetTabs.tsx  the diagram tabs above the canvas
 src/store/useSimulation.ts  simulation mode: target, sample options, playback, recompute on edit
 src/components/          React UI (canvas, inspector, drawer panels, command palette)
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
@@ -252,6 +255,44 @@ It flags duplicate ids, dangling table/column/group references, mismatched forei
 column lists, verbs that do not fit their connection kind, dialect/type mix-ups, unknown
 colour keys and stacked table positions — all things the app loads without complaint but
 that produce a wrong diagram.
+
+## Several diagrams in one workspace
+
+The tabs above the canvas are the diagrams of one workspace, the way a
+spreadsheet holds several worksheets in one file. Use them for the databases a
+system actually has — the application database, the warehouse it feeds, the
+third-party database you only read — or for versions of one schema you want to
+compare side by side.
+
+Each tab is a whole diagram: its own dialect, tables, connections, groups,
+notes, and its own undo history, selection and viewport, so switching away and
+back puts you exactly where you were. What is global stays global: the theme,
+the panel sizes, and the one database connection the **Database** and **Query**
+tabs talk to. A simulation stops when you leave the tab it was running on.
+`Ctrl+C` in one tab and `Ctrl+V` in another copies tables between diagrams,
+connections and all.
+
+Saving writes the whole workspace into one `.dbviz.json`:
+
+```json
+{ "version": 1, "kind": "workspace", "name": "Orders platform",
+  "activeSheet": "sht_app",
+  "sheets": [ { "id": "sht_app",  "name": "Application", "dialect": "postgresql", "tables": [ … ] },
+              { "id": "sht_wh",   "name": "Warehouse",   "dialect": "postgresql", "tables": [ … ] } ] }
+```
+
+A workspace holding a single diagram is written as a bare diagram instead —
+byte for byte the file this app has always written — so nothing that reads
+`.dbviz.json` has to learn a new shape until there is a second diagram to put
+in it. Files written before workspaces existed load as a workspace of one, and
+`node scripts/validate-dbviz.mjs` reads both shapes.
+[`docs/ADVISOR_OUTPUT_FORMAT.md`](docs/ADVISOR_OUTPUT_FORMAT.md) documents the
+envelope for tools that generate one.
+
+**File → Open recent…** lists workspaces rather than single diagrams, and each
+tab has its own checkpoints, so restoring one puts back that diagram and leaves
+the others alone. A share link still carries one diagram: opening one adds it to
+your workspace as a new tab instead of replacing what you had.
 
 ## Groups and a second database
 

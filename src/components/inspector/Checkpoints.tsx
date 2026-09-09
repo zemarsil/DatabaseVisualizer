@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BookmarkPlus, History, Trash2 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { defaultCheckpointName, deleteCheckpoint, getCurrentDiagramId, listCheckpoints, recordToDiagram, relativeTime, saveCheckpoint, type CheckpointRecord } from '@/lib/library';
+import { defaultCheckpointName, deleteCheckpoint, listCheckpoints, recordToDiagram, relativeTime, saveCheckpoint, type CheckpointRecord } from '@/lib/library';
 import { confirmDialog } from '../ui/Modal';
 
 export const CHECKPOINTS_EVENT = 'dbviz:checkpoints';
 
-/** Named snapshots of the current diagram, restorable at any time. */
+/** Named snapshots of the diagram on this sheet, restorable at any time. */
 export function Checkpoints() {
   const setDiagram = useStore((s) => s.setDiagram);
   const toast = useStore((s) => s.toast);
+  // Checkpoints belong to the sheet, so switching tabs shows that diagram's own.
+  const sheetId = useStore((s) => s.activeSheetId);
   const [list, setList] = useState<CheckpointRecord[]>([]);
   const [name, setName] = useState('');
 
   const refresh = useCallback(async () => {
-    setList(await listCheckpoints(getCurrentDiagramId()).catch(() => []));
-  }, []);
+    setList(await listCheckpoints(sheetId).catch(() => []));
+  }, [sheetId]);
 
   useEffect(() => {
     void refresh();
@@ -32,7 +34,7 @@ export function Checkpoints() {
   };
 
   const restore = async (c: CheckpointRecord) => {
-    const ok = await confirmDialog({ title: `Restore "${c.name}"?`, message: 'The current state is replaced by the checkpoint. Ctrl+Z will not bring it back, but the autosave keeps the diagram in the library.', confirmLabel: 'Restore' });
+    const ok = await confirmDialog({ title: `Restore "${c.name}"?`, message: 'The diagram on this sheet is replaced by the checkpoint. Ctrl+Z will not bring it back, but the autosave keeps the workspace in the library.', confirmLabel: 'Restore' });
     if (!ok) return;
     setDiagram(recordToDiagram(c));
     toast('success', `Restored "${c.name}".`);

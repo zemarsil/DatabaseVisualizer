@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /**
- * Structural check for a hand-written .dbviz.json (see docs/ADVISOR_OUTPUT_FORMAT.md).
+ * Structural check for a hand-written .dbviz.json (see docs/ADVISOR_OUTPUT_FORMAT.md),
+ * whether it holds one diagram or a workspace of several.
  *
  * The app loads tolerantly: a dangling relationship, a verb that does not fit its
  * kind, or a bad colour key produces no error, just a wrong-looking diagram. This
@@ -278,6 +279,34 @@ function validate(doc) {
   return { errors, warnings };
 }
 
+/**
+ * A workspace file holds several diagrams under "sheets"; each one is a diagram
+ * object with an id, so each is checked on its own and told apart in the report.
+ */
+function validateWorkspace(doc) {
+  const errors = [];
+  const warnings = [];
+  if (doc.version !== 1) warnings.push(`"version" should be 1 (found ${JSON.stringify(doc.version)}).`);
+  if (typeof doc.name !== 'string' || !doc.name.trim()) warnings.push('"name" is missing; the workspace takes the name of its first diagram.');
+  if (doc.sheets.length === 0) return { errors: ['"sheets" is empty; a workspace needs at least one diagram.'], warnings };
+  const ids = new Set();
+  doc.sheets.forEach((sheet, i) => {
+    const where = `sheets[${i}]${sheet && typeof sheet.name === 'string' ? ` "${sheet.name}"` : ''}`;
+    if (!sheet || typeof sheet !== 'object' || Array.isArray(sheet)) {
+      errors.push(`${where} is not an object.`);
+      return;
+    }
+    if (typeof sheet.id !== 'string' || !sheet.id) warnings.push(`${where} has no "id"; one is generated on load, and its checkpoints cannot follow it.`);
+    else if (ids.has(sheet.id)) errors.push(`${where}: "id" ${JSON.stringify(sheet.id)} is used by an earlier sheet; the app gives one of them a new id on load.`);
+    else ids.add(sheet.id);
+    const r = validate(sheet);
+    for (const m of r.errors) errors.push(`${where}: ${m}`);
+    for (const m of r.warnings) warnings.push(`${where}: ${m}`);
+  });
+  if (doc.activeSheet !== undefined && !ids.has(doc.activeSheet)) warnings.push(`"activeSheet" ${JSON.stringify(doc.activeSheet)} is not one of the sheet ids; the first sheet opens instead.`);
+  return { errors, warnings };
+}
+
 const files = process.argv.slice(2);
 if (files.length === 0) {
   console.error('usage: node scripts/validate-dbviz.mjs <file.dbviz.json> [...]');
@@ -294,7 +323,7 @@ for (const file of files) {
     failed = true;
     continue;
   }
-  const { errors, warnings } = validate(doc);
+  const { errors, warnings } = doc && typeof doc === 'object' && Array.isArray(doc.sheets) ? validateWorkspace(doc) : validate(doc);
   console.log(file);
   for (const m of errors) console.log(`  ERROR  ${m}`);
   for (const m of warnings) console.log(`  warn   ${m}`);

@@ -10,7 +10,7 @@ covers:
   - PNG and SVG export
   - The .dbviz.json file format
   - Copy share link
-  - The diagram library
+  - The workspace library
   - Checkpoints
   - The unsaved-changes indicator
 shortcuts:
@@ -407,9 +407,15 @@ button beside it.
   canvas it opens outright, same as `Ctrl+O`; on a canvas that already has
   tables it asks *Replace* or *Add tables* — a merge option `Ctrl+O` does not
   offer.
-- **The diagram library** (`File → Open recent…`) also has **Download
-  .dbviz.json** on every entry, so you can grab a file for a diagram you never
+- **The workspace library** (`File → Open recent…`) also has **Download
+  .dbviz.json** on every entry, so you can grab a file for work you never
   explicitly saved.
+- **Add a second diagram** with the **+** at the end of the tab strip above the
+  canvas, and press `Ctrl+S` again: one file now holds both, under a
+  `"sheets"` array, and opening it brings both tabs back. With a single diagram
+  the file stays exactly the shape shown above. A share link still carries one
+  diagram — opening one adds it to your workspace as another tab rather than
+  replacing what you had.
 - **Hand-write a `.dbviz.json`** instead of exporting one from the app —
   [`../ADVISOR_OUTPUT_FORMAT.md`](../ADVISOR_OUTPUT_FORMAT.md) documents every
   field, and `node scripts/validate-dbviz.mjs file.dbviz.json` checks it

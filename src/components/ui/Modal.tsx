@@ -149,6 +149,14 @@ function HelpContent() {
         with Shift + drag acts on all of it at once, and adds align and distribute. Notes and the table list on the left have menus too, and the arrow keys
         with <K k="Enter" /> drive whichever menu is open.
       </p>
+      <h4>Several diagrams in one workspace</h4>
+      <p>
+        The tabs above the canvas are the diagrams of this workspace, the way a spreadsheet holds several worksheets in one file: one per database, or one per
+        subsystem of the same one. The <strong>+</strong> at the end of the strip adds one, double-click a tab to rename it, drag tabs to reorder them, and{' '}
+        <K k="Ctrl" /> <K k="PgUp" /> / <K k="PgDn" /> steps between them. Each tab keeps its own dialect, undo history, selection and viewport, so switching
+        away and back puts you exactly where you were. <K k="Ctrl" /> <K k="C" /> in one tab and <K k="Ctrl" /> <K k="V" /> in another copies tables between
+        them. Saving writes every tab into the one .dbviz.json file, and a file holding a single diagram is still the plain diagram file it always was.
+      </p>
       <h4>Reading a big diagram</h4>
       <p>
         The chevron in a table header cycles between every column, keys only, and header only; the View menu does it for all tables at once, and zooming far
@@ -188,9 +196,10 @@ function HelpContent() {
       </p>
       <h4>Saving</h4>
       <p>
-        Every diagram is kept in this browser automatically; <em>File → Open recent…</em> lists them with thumbnails. Save a checkpoint before a risky change
-        (Diagram panel in the inspector, or <em>File → Save checkpoint…</em>) and restore it later. <K k="Ctrl" /> <K k="S" /> downloads a .dbviz.json
-        file, <em>Copy share link</em> puts the whole diagram in a URL, and the export menu writes PNG, SVG, SQL, Markdown, Mermaid or DBML.
+        Every workspace is kept in this browser automatically; <em>File → Open recent…</em> lists them with thumbnails. Save a checkpoint before a risky
+        change (Diagram panel in the inspector, or <em>File → Save checkpoint…</em>) and restore it later — a checkpoint belongs to the tab it was taken on.{' '}
+        <K k="Ctrl" /> <K k="S" /> downloads the workspace as one .dbviz.json file, <em>Copy share link</em> puts the diagram you are on in a URL, and the
+        export menu writes PNG, SVG, SQL, Markdown, Mermaid or DBML for it.
       </p>
       <h4>Taking tables out as text</h4>
       <p>
@@ -223,6 +232,10 @@ function HelpContent() {
           <K k="Ctrl" /> <K k="O" />
         </span>
         <span>Open diagram file</span>
+        <span>
+          <K k="Ctrl" /> <K k="PgUp" /> / <K k="PgDn" />
+        </span>
+        <span>Previous / next diagram tab in this workspace</span>
         <span>
           <K k="Ctrl" /> <K k="C" /> / <K k="X" /> / <K k="V" />
         </span>

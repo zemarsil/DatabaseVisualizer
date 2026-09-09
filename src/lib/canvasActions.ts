@@ -23,7 +23,7 @@ import { useStore } from '@/store/useStore';
 import { useConnection } from '@/store/useConnection';
 import { classifyPastedText, decodeClipboard } from './clipboard';
 import { importSql } from './sql/import';
-import { parseDiagramFile } from './io';
+import { parseDiagramFile, parseWorkspaceFile } from './io';
 import { getSqliteEngine } from './sqlite/engine';
 import { introspectionToDiagram } from './introspectImport';
 import { estimateNodeSize } from './geometry';
@@ -377,7 +377,21 @@ export async function openDroppedFiles(files: File[], at?: { x: number; y: numbe
       }
       const text = await file.text();
       if (name.endsWith('.json')) {
-        const d = parseDiagramFile(text);
+        const ws = parseWorkspaceFile(text);
+        if (ws.sheets.length > 1) {
+          // A workspace file arrives as tabs of its own: nothing already open is displaced.
+          let after: string | undefined;
+          const added = new Map<string, string>();
+          for (const sh of ws.sheets) {
+            after = s.addSheet({ diagram: sh.diagram, after, activate: false });
+            added.set(sh.id, after);
+          }
+          const landOn = added.get(ws.activeSheetId);
+          if (landOn) useStore.getState().switchSheet(landOn);
+          s.toast('success', `Opened "${ws.name}" — its ${ws.sheets.length} diagrams were added as tabs of this workspace.`);
+          continue;
+        }
+        const d = ws.sheets[0].diagram;
         if (s.diagram.tables.length === 0) {
           s.setDiagram(d);
           s.toast('success', `Opened "${d.name}".`);

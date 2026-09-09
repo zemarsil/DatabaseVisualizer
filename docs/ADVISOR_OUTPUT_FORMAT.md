@@ -8,7 +8,7 @@ Two input channels exist. Pick one per recommendation; do not mix them in one fi
 
 | Channel | How the user loads it | Carries | Loses |
 | --- | --- | --- | --- |
-| **`.dbviz.json` diagram** | File menu → Open (`Ctrl+O`) | everything below: tables, columns, indexes, checks, comments, views, enum/composite types, foreign keys, **data-flow edges with derivations**, **dependency and serialized edges**, **external-source groups**, **tagged queries**, **sticky notes**, colours, positions | nothing |
+| **`.dbviz.json` diagram** | File menu → Open (`Ctrl+O`) | everything below: tables, columns, indexes, checks, comments, views, enum/composite types, foreign keys, **data-flow edges with derivations**, **dependency and serialized edges**, **external-source groups**, **tagged queries**, **sticky notes**, colours, positions — and, in the workspace form, **several diagrams in one file** | nothing |
 | **Plain DDL** | Bottom drawer → **Import SQL** → paste → *Add to the current diagram* / *Replace* | tables, columns, indexes, uniques, checks, `COMMENT ON`, foreign keys, `CREATE VIEW`, `CREATE TYPE` (enum and composite) | flows, dependencies, derivations, groups, tagged queries, notes, colours, positions |
 
 Rule of thumb: if the recommendation is *only* "here is the schema", emit DDL — it is
@@ -273,6 +273,37 @@ Use notes for: the summary of the recommendation, anything the model cannot repr
 (partitioning, generated columns, expression indexes, triggers), and trade-offs the user
 should see next to the diagram. Same colour keys as tables.
 
+### Option B2 — several diagrams in one file (a workspace)
+
+When one recommendation spans more than one database — an application database and the
+warehouse it feeds, a "today" and a "proposed" version of the same schema, one diagram per
+bounded context — wrap the diagrams in a workspace instead of emitting several files. The
+app opens it as a strip of tabs above the canvas, one per diagram, and saves them together:
+
+```json
+{
+  "version": 1,
+  "kind": "workspace",
+  "name": "Orders platform — advisor recommendation",
+  "activeSheet": "sht_app",
+  "sheets": [
+    { "id": "sht_app", "version": 1, "name": "Application database", "dialect": "postgresql", "tables": [] },
+    { "id": "sht_warehouse", "version": 1, "name": "Warehouse", "dialect": "postgresql", "tables": [] }
+  ]
+}
+```
+
+Each entry of `sheets` is exactly an Option B document plus an `id`, so everything below
+applies to it unchanged — including that ids must be unique **within** a sheet. Two sheets
+may reuse an id between them; they are separate diagrams, and nothing references across
+them. `activeSheet` is the id of the tab that opens first, and each sheet carries its own
+`dialect`, so a PostgreSQL application database and a SQLite analytics copy can sit side by
+side in one file.
+
+Emit the plain Option B shape whenever there is only one diagram: a bare document is what
+the app writes for a single diagram, and it is what every other tool that reads
+`.dbviz.json` expects.
+
 ### Rules that keep the file loadable
 
 1. **Every id is a unique string across the whole file** — tables, columns, indexes,
@@ -297,11 +328,12 @@ should see next to the diagram. Same colour keys as tables.
    trailing commas.
 
 Tell the user to save the block as `something.dbviz.json` and open it with
-**File → Open** (`Ctrl+O`), and note whether it replaces or extends their current
-diagram. A `.dbviz.json` always **replaces** the whole diagram on open; if you are only
-proposing an addition to a schema they already have, either emit DDL (which can be
-imported in *Add to the current diagram* mode) or restate their existing tables in the
-JSON alongside yours.
+**File → Open** (`Ctrl+O`), and note whether it replaces or extends what they have.
+`Ctrl+O` always **replaces** the whole workspace. Dropping the file on the canvas is
+gentler: a workspace file of several diagrams arrives as new tabs beside their own, and a
+single-diagram file offers *Replace* or *Add tables*. If you are only proposing an
+addition to a schema they already have, either emit DDL (which can be imported in *Add to
+the current diagram* mode) or restate their existing tables in the JSON alongside yours.
 
 ---
 
@@ -313,6 +345,7 @@ From the repo root:
 node scripts/validate-dbviz.mjs path/to/file.dbviz.json
 ```
 
+It reads a workspace file too, checking every sheet and naming the one at fault.
 It reports duplicate ids, dangling references, mismatched FK column arrays, verbs that do
 not fit their kind, derivations pointing at the wrong table, bad colour keys, bad
 referential actions, dialect/type mix-ups and tables stacked at the same position — all

@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { fuzzyFilter, fuzzyScore } from '../src/lib/fuzzy';
 import { diagramThumbnail, diagramThumbnailSvg } from '../src/lib/thumbnail';
-import { checkpointRecord, defaultCheckpointName, diagramRecord, recordToDiagram, relativeTime } from '../src/lib/library';
+import { checkpointRecord, defaultCheckpointName, recordToDiagram, recordToWorkspace, relativeTime, workspaceRecord } from '../src/lib/library';
 import { sampleDiagram } from '../src/lib/sample';
-import { emptyDiagram } from '../src/lib/model';
+import { emptyDiagram, singleSheetWorkspace } from '../src/lib/model';
 
 describe('fuzzy', () => {
   it('scores prefixes and word starts above scattered matches', () => {
@@ -45,11 +45,18 @@ describe('thumbnail', () => {
 });
 
 describe('library records', () => {
-  it('shapes diagram and checkpoint records and reads them back', () => {
+  it('shapes workspace and checkpoint records and reads them back', () => {
     const d = sampleDiagram();
-    const rec = diagramRecord(d, 'dgm_1', 123);
-    expect(rec).toMatchObject({ id: 'dgm_1', name: d.name, dialect: d.dialect, tableCount: d.tables.length, updatedAt: 123 });
+    const rec = workspaceRecord(singleSheetWorkspace(d, 'sht_1'), 'dgm_1', 123);
+    expect(rec).toMatchObject({ id: 'dgm_1', name: d.name, dialect: d.dialect, tableCount: d.tables.length, sheetCount: 1, sheetIds: ['sht_1'], updatedAt: 123 });
     expect(recordToDiagram(rec).tables.map((t) => t.name)).toEqual(d.tables.map((t) => t.name));
+
+    // Two sheets: the record counts both, and reading it back keeps them apart.
+    const second = emptyDiagram('sqlite', 'Reporting');
+    const two = { version: 1 as const, name: 'Shop', activeSheetId: 'sht_2', sheets: [{ id: 'sht_1', diagram: d }, { id: 'sht_2', diagram: second }] };
+    const pair = workspaceRecord(two, 'dgm_2', 5);
+    expect(pair).toMatchObject({ name: 'Shop', dialect: 'sqlite', tableCount: d.tables.length, sheetCount: 2, sheetIds: ['sht_1', 'sht_2'] });
+    expect(recordToWorkspace(pair).sheets.map((sh) => sh.diagram.name)).toEqual([d.name, 'Reporting']);
     const ck = checkpointRecord(d, 'dgm_1', '  ', 0);
     expect(ck.name).toBe(defaultCheckpointName(0));
     expect(ck.diagramId).toBe('dgm_1');
