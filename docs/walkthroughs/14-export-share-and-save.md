@@ -28,7 +28,7 @@ checks:
 prerequisites:
   - 13-run-the-schema-on-a-real-database
 next:
-  - none
+  - 15-add-an-extension
 ---
 # Export, share and save
 
@@ -39,7 +39,7 @@ point. The diagram is finished: eighteen tables, four regions, two custom
 types, a view, six data flows, an embed, a dependency, thirteen indexes and a
 handful of sticky notes, built one walkthrough at a time since walkthrough 00.
 
-This last walkthrough puts it through every route the app has for getting a
+This walkthrough puts it through every route the app has for getting a
 diagram *out*: the four text formats in the SQL tab, a PNG and an SVG, a
 shareable link, a `.dbviz.json` file, and the app's own library and
 checkpoints. By the end you will know, from having actually looked, which of
@@ -551,12 +551,16 @@ than exporting a picture and calling it documentation.
 
 ## Where to go next
 
-That is the series: fifteen walkthroughs, one bookshop, built once and never
-restarted. The canvas you are looking at is the same one walkthrough 00 opened
-with two tables on it.
+That is the bookshop: fifteen walkthroughs, built once and never restarted. The
+canvas you are looking at is the same one walkthrough 00 opened with two tables
+on it.
 
-Where to go from here is your own schema. A few of these are worth re-reading
-with it in front of you rather than the bookshop:
+- [Add an extension](15-add-an-extension.md) is the coda, and the one thing the
+  bookshop still cannot do: a column type PostgreSQL does not have on its own.
+  It is also the only walkthrough that adds to the canvas after this one.
+
+Otherwise, where to go from here is your own schema. A few of these are worth
+re-reading with it in front of you rather than the bookshop:
 
 - [Fill one table from another](05-fill-one-table-from-another.md) — the
   hardest single idea in the series, and the one most worth applying to a

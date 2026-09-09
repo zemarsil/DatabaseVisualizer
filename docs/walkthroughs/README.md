@@ -61,6 +61,7 @@ type "walkthrough".
 | 12 | [Read a big diagram](12-read-a-big-diagram.md) | intermediate | 12 min | Collapsing, focus mode, Detangle, hand alignment, the command palette and regions — how to read the eighteen-table schema you have built without getting lost in it. |
 | 13 | [Run the schema on a real database](13-run-the-schema-on-a-real-database.md) | advanced | 20 min | The whole bookshop schema, created inside a Docker PostgreSQL container, queried, seeded, migrated after a change, and read back into the diagram. |
 | 14 | [Export, share and save](14-export-share-and-save.md) | beginner | 10 min | Turn the finished bookshop into SQL, a Markdown dictionary, Mermaid, DBML, a picture, a link or a portable file, and see exactly what each one keeps. |
+| 15 | [Add an extension](15-add-an-extension.md) | intermediate | 14 min | A book_embeddings table typed with pgvector and a case-insensitive email column, by declaring the two extensions PostgreSQL needs before either will create. |
 
 The series builds one schema, so its diagrams are the stages of that build.
 Open any of them with **File → Open** (`Ctrl+O`), or by dropping the file on
@@ -81,6 +82,7 @@ the stage it starts from for you:
 - [`diagrams/11-trace-a-path-between-tables.dbviz.json`](diagrams/11-trace-a-path-between-tables.dbviz.json) — the canvas at the end of 11 Trace a path between tables
 - [`diagrams/12-read-a-big-diagram.dbviz.json`](diagrams/12-read-a-big-diagram.dbviz.json) — the canvas at the end of 12 Read a big diagram
 - [`diagrams/13-run-the-schema-on-a-real-database.dbviz.json`](diagrams/13-run-the-schema-on-a-real-database.dbviz.json) — the canvas at the end of 13 Run the schema on a real database
+- [`diagrams/15-add-an-extension.dbviz.json`](diagrams/15-add-an-extension.dbviz.json) — the canvas at the end of 15 Add an extension
 
 <!-- /generated -->
 

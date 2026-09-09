@@ -37,7 +37,19 @@ import {
   type Table,
   type TableDisplay,
 } from '@shared/types';
-import { createColumn, createCustomType, createCustomTypeField, createDerivation, createGroup, createIndex, createRelationship, createTable, tableById } from '@/lib/model';
+import {
+  createColumn,
+  createCustomType,
+  createCustomTypeField,
+  createDerivation,
+  createExtension,
+  createGroup,
+  createIndex,
+  createRelationship,
+  createTable,
+  extensionByName,
+  tableById,
+} from '@/lib/model';
 import { importSql } from '@/lib/sql/import';
 import { runWalkthroughCheck } from '@/lib/walkthroughChecks';
 
@@ -338,6 +350,7 @@ const DELEGATED: Record<string, string | null> = {
   views: 'every view name in the diagram, comma separated',
   groups: 'every group name in the diagram, comma separated',
   types: 'every custom type name in the diagram, comma separated',
+  extensions: 'every extension name in the diagram, comma separated',
   kinds: 'relationship counts per kind, e.g. "fk:3, flow:1"',
   indexes: 'total number of indexes across every table',
   derivations: 'total number of derivations across every flow',
@@ -393,6 +406,19 @@ export const GOALS: Record<string, GoalSpec> = {
         return true;
       }
       d.tables.push(createTable({ name: arg, kind: 'view', position: nextSlot(d), viewSql: '' }));
+      return true;
+    },
+  },
+
+  extension: {
+    arg: 'an extension the diagram must declare, e.g. vector',
+    check: (arg, { diagram: d }) => {
+      const e = extensionByName(d, arg);
+      return e ? { ok: true, detail: `${arg} is declared.` } : { ok: false, detail: `the diagram does not declare the ${arg} extension yet.` };
+    },
+    apply: (arg, d) => {
+      if (extensionByName(d, arg)) return false;
+      d.extensions.push(createExtension({ name: arg }));
       return true;
     },
   },

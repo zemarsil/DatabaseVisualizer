@@ -35,7 +35,7 @@ npx vitest run tests/tour.test.ts -t NN-slug                         # the step 
 
 ## The series is one build
 
-The fifteen walkthroughs are not fifteen exercises. They build **one database,
+The sixteen walkthroughs are not sixteen exercises. They build **one database,
 once**: walkthrough N starts from exactly what N-1 left on the canvas, and the
 schema grows the whole way down. That shapes everything below, so it comes
 first.
@@ -181,6 +181,7 @@ walkthrough that puts each table on the canvas; every later stage still has it.
 | `v_customer_orders` | 08 | the view, with its sources detected from SQL |
 | `warehouses`, `stock_levels`, `shipments`, `shipment_items` | 09 | imported from someone else's script, mistakes included; cleaned up in 10 |
 | `reviews` | 11 | a second path between `books` and `customers`, for tracing |
+| `book_embeddings` | 15 | the column an extension has to exist for: `vector(768)` |
 
 Conventions that keep the examples consistent with each other and with
 `docs/examples/orders-rollup.dbviz.json`:

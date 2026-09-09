@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { create } from 'zustand';
 import { BookOpen, X } from 'lucide-react';
 import { WalkthroughBrowser } from './Walkthroughs';
+import { WALKTHROUGHS } from '@/lib/walkthroughs';
 
 export interface ConfirmOptions {
   title: string;
@@ -110,10 +111,11 @@ function HelpContent() {
       <p>
         This is the short version.{' '}
         <button className="link-btn" onClick={() => setHelpView('list')}>
-          <BookOpen size={13} /> Browse the fifteen walkthroughs
+          <BookOpen size={13} /> Browse the {WALKTHROUGHS.length} walkthroughs
         </button>{' '}
-        for the long one: one bookshop database built across all fifteen, each picking up where the last left off — tables, connections, external groups,
-        enums, data flows, Simulate, indexes, views, importing someone else's schema, and running the result on a real database. They run as
+        for the long one: one bookshop database built across all {WALKTHROUGHS.length}, each picking up where the last left off — tables, connections,
+        external groups, enums, data flows, Simulate, indexes, views, importing someone else's schema, running the result on a real database, and the
+        extensions a schema depends on. They run as
         clickthroughs: a card follows you around the window, points at what each step is about, ticks itself off as you do it, and will{' '}
         <strong>Do it for me</strong> on any step you would rather watch. Start anywhere — the card you get before step 1 has a{' '}
         <strong>Set up the canvas</strong> button that puts the diagram that walkthrough starts from in front of you.

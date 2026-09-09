@@ -93,9 +93,10 @@ Press `?` in the app for the full shortcut list.
 
 ## Walkthroughs
 
-[`docs/walkthroughs/`](docs/walkthroughs/) is fifteen hands-on guides that build
-**one database, once**: walkthrough 00 puts two tables on the canvas, and
-walkthrough 14 exports the eighteen-table bookshop they grew into. Each one
+[`docs/walkthroughs/`](docs/walkthroughs/) is sixteen hands-on guides that build
+**one database, once**: walkthrough 00 puts two tables on the canvas, walkthrough
+14 exports the eighteen-table bookshop they grew into, and walkthrough 15 adds
+the one column type PostgreSQL cannot make without an extension. Each one
 picks the canvas up exactly where the last put it down — the foreign keys from
 02 are what the derivations in 05 resolve through, the enum from 04 is what the
 seeded rows in 13 obey — so the schema in front of you is always the one you
