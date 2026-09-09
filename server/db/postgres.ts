@@ -254,12 +254,14 @@ export async function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsR
       `SELECT name, default_version, installed_version, comment FROM pg_available_extensions ORDER BY name`,
     );
 
-    // requires lives on the version rows, not on pg_available_extensions.
+    // What an extension depends on lives on the version rows rather than on
+    // pg_available_extensions, so the default version has to be joined back in
+    // (that view has no default_version column of its own).
     const requires = await c.query<{ name: string; requires: string[] | null }>(
-      `SELECT DISTINCT ON (name) name, requires
-         FROM pg_available_extension_versions
-        WHERE version = default_version
-        ORDER BY name, version`,
+      `SELECT v.name, v.requires
+         FROM pg_available_extension_versions v
+         JOIN pg_available_extensions a ON a.name = v.name AND a.default_version = v.version
+        ORDER BY v.name`,
     );
     const requiresByName = new Map(requires.rows.map((r) => [r.name, r.requires ?? []]));
 
@@ -283,13 +285,10 @@ export async function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsR
                   AND d.classid = 'pg_type'::regclass AND d.deptype = 'e'
                   AND t.typtype IN ('b', 'e', 'r', 'd', 'm')
                   AND t.typname NOT LIKE '\\_%') AS types,
-              (SELECT array_agg(proname) FROM (
-                 SELECT DISTINCT p.proname
-                   FROM pg_depend d JOIN pg_proc p ON p.oid = d.objid
-                  WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
-                    AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e'
-                  ORDER BY p.proname
-                  LIMIT ${MAX_LISTED_FUNCTIONS}) s) AS functions,
+              (SELECT (array_agg(DISTINCT p.proname ORDER BY p.proname))[1:${MAX_LISTED_FUNCTIONS}]
+                 FROM pg_depend d JOIN pg_proc p ON p.oid = d.objid
+                WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
+                  AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e') AS functions,
               (SELECT count(DISTINCT p.proname)
                  FROM pg_depend d JOIN pg_proc p ON p.oid = d.objid
                 WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
@@ -297,7 +296,8 @@ export async function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsR
               (SELECT array_agg(DISTINCT am.amname ORDER BY am.amname)
                  FROM pg_depend d JOIN pg_am am ON am.oid = d.objid
                 WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
-                  AND d.classid = 'pg_am'::regclass AND d.deptype = 'e') AS index_methods,
+                  AND d.classid = 'pg_am'::regclass AND d.deptype = 'e'
+                  AND am.amtype = 'i') AS index_methods,
               (SELECT array_agg(DISTINCT oc.opcname ORDER BY oc.opcname)
                  FROM pg_depend d JOIN pg_opclass oc ON oc.oid = d.objid
                 WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid

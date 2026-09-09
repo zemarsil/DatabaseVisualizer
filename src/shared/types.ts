@@ -107,7 +107,12 @@ export interface ExtensionDef {
   docsUrl?: string;
   types?: ExtensionType[];
   functions?: ExtensionFunction[];
-  /** Index access methods it adds, e.g. ["gist", "spgist"] or ["hnsw", "ivfflat"]. */
+  /**
+   * Index access methods it *adds*, e.g. pgvector's ["hnsw", "ivfflat"] — the
+   * same thing a server reports for it. Most extensions add none: gist, gin,
+   * spgist and brin are built into PostgreSQL, and an extension supplies
+   * operator classes for them, which belong in `operatorClasses`.
+   */
   indexMethods?: string[];
   /** Operator classes it adds, e.g. ["gin_trgm_ops"]. */
   operatorClasses?: string[];

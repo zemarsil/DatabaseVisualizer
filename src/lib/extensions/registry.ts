@@ -38,11 +38,46 @@ function currentPacks(): ExtensionPack[] {
   return packs;
 }
 
+/**
+ * Fold what a server reported into what was already known about the same
+ * extension.
+ *
+ * A server is authoritative about *what exists* and hopeless at explaining it:
+ * `pg_depend` reports pg_trgm's internal `gtrgm` GiST support type and hstore's
+ * `ghstore` alongside the real one, with no summaries, no examples and no links,
+ * because those are not things a catalog stores. A curated definition has all of
+ * that and lists only the types someone would actually type into a column.
+ *
+ * So a curated entry keeps its prose and its type list, and the server fills in
+ * only what the curated one is missing. An extension nothing curated has ever
+ * heard of takes the server's answer whole — which is the case the whole
+ * read-from-the-database feature exists for.
+ */
+function mergeLearned(known: ExtensionDef | undefined, fresh: ExtensionDef): ExtensionDef {
+  if (!known) return fresh;
+  return {
+    ...fresh,
+    label: known.label ?? fresh.label,
+    summary: known.summary ?? fresh.summary,
+    docsUrl: known.docsUrl ?? fresh.docsUrl,
+    install: known.install ?? fresh.install,
+    note: known.note ?? fresh.note,
+    types: known.types ?? fresh.types,
+    functions: known.functions ?? fresh.functions,
+    indexMethods: fresh.indexMethods ?? known.indexMethods,
+    operatorClasses: fresh.operatorClasses ?? known.operatorClasses,
+    requires: fresh.requires ?? known.requires,
+  };
+}
+
 function rebuild(): Map<string, ExtensionDef> {
   const out = new Map<string, ExtensionDef>();
   for (const def of BUNDLED_EXTENSIONS) out.set(key(def.dialect, def.name), def);
   for (const pack of currentPacks()) for (const def of pack.extensions) out.set(key(def.dialect, def.name), def);
-  for (const def of learned) out.set(key(def.dialect, def.name), def);
+  for (const def of learned) {
+    const k = key(def.dialect, def.name);
+    out.set(k, mergeLearned(out.get(k), def));
+  }
   return out;
 }
 

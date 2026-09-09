@@ -326,22 +326,20 @@ describe('definition packs', () => {
     expect(findExtensionDef('h3', 'postgresql')?.types).toEqual([{ name: 'h3index' }]);
   });
 
-  it('lets a pack override a bundled definition, and a server override the pack', () => {
+  it('lets a pack override a bundled definition', () => {
     addExtensionPack(
       parseExtensionPack(
         JSON.stringify({
           format: 'dbviz-extension-pack',
           id: 'override',
           name: 'Override',
-          extensions: [{ name: 'vector', dialect: 'postgresql', summary: 'from a pack' }],
+          extensions: [{ name: 'vector', dialect: 'postgresql', summary: 'from a pack', types: ['bespoke'] }],
         }),
       ).pack!,
     );
-    expect(findExtensionDef('vector', 'postgresql')?.summary).toBe('from a pack');
-
-    setLearnedExtensions([{ name: 'vector', dialect: 'postgresql', summary: 'from the server' }]);
-    expect(findExtensionDef('vector', 'postgresql')?.summary).toBe('from the server');
-    expect(findExtensionDef('vector', 'postgresql')?.source).toBe('database');
+    const def = findExtensionDef('vector', 'postgresql')!;
+    expect(def.summary).toBe('from a pack');
+    expect(def.types).toEqual([{ name: 'bespoke' }]);
   });
 
   it('refuses a file that is not a pack, with a reason', () => {
@@ -397,11 +395,32 @@ describe('definitions read off a live server', () => {
     expect(defs[0].note).toContain('2 of its 1200 functions');
   });
 
-  it('outranks the bundled definition for the same extension', () => {
+  it('keeps the curated prose and type list when one exists', () => {
     setLearnedExtensions(definitionsFromDatabase(RESPONSE, 'postgresql'));
     const def = findExtensionDef('postgis', 'postgresql')!;
     expect(def.source).toBe('database');
-    expect(def.summary).toBe('PostGIS geometry and geography types');
+    // A server has no summaries, no docs link and no examples, and reports
+    // internal GiST support types beside the real ones, so the bundled entry's
+    // prose and curated type list survive the merge.
+    expect(def.label).toBe('PostGIS');
+    expect(def.docsUrl).toContain('postgis.net');
+    expect(def.types?.map((t) => t.name)).toContain('geometry');
+    expect(def.types?.some((t) => t.example)).toBe(true);
+    // What only the server can know does come through.
+    expect(def.indexMethods).toEqual(['gist']);
+  });
+
+  it('takes a server definition whole for an extension nothing else describes', () => {
+    setLearnedExtensions(
+      definitionsFromDatabase(
+        { serverVersion: 'PostgreSQL 16.2', extensions: [{ name: 'h3', installed: true, types: ['h3index'], comment: 'Hexagonal indexing' }] },
+        'postgresql',
+      ),
+    );
+    const def = findExtensionDef('h3', 'postgresql')!;
+    expect(def.summary).toBe('Hexagonal indexing');
+    expect(def.types).toEqual([{ name: 'h3index' }]);
+    expect(extensionsProvidingType('h3index', 'postgresql').map((p) => p.name)).toEqual(['h3']);
   });
 
   it('packages them so they survive a reload', () => {

@@ -95,8 +95,8 @@ and the whole definition travels in the `.dbviz.json`. An extension type is
 something **the engine supplies** — `vector` exists because someone installed
 pgvector on the server, and this diagram can only say that it needs it. So the
 diagram stores an extension's *name* and nothing else. What `vector` provides —
-its types, its functions, its `hnsw` and `ivfflat` index methods — is not in
-your file. It comes from a catalog the app keeps separately, which is why a
+its types, its functions, the `hnsw` and `ivfflat` index methods it adds — is
+not in your file. It comes from a catalog the app keeps separately, which is why a
 diagram you share stays small and still opens for someone who has never heard
 of pgvector: they get the right SQL, they just get no autocomplete.
 
@@ -356,8 +356,9 @@ and a clean **Problems** tab.
 - Delete the `vector` extension card and watch the error come back — then undo
   it with `Ctrl+Z`. The check is live: it is recomputed from the diagram on
   every change, not at generate time.
-- Add `pg_trgm` and read its card. It provides no types at all — only functions
-  and the `gin_trgm_ops` operator class that makes an unanchored
+- Add `pg_trgm` and read its card. It provides no types and no index method of
+  its own — only functions and the `gin_trgm_ops` operator class that teaches
+  the built-in GIN about text, which is what makes an unanchored
   `LIKE '%dune%'` on `books.title` use an index instead of scanning. Then
   notice that this app cannot express that index, because an index here is a
   list of columns with no method and no operator class. That is a real limit,

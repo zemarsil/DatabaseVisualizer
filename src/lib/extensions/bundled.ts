@@ -42,8 +42,7 @@ const POSTGRES: ExtensionDef[] = [
       { name: 'ST_SetSRID', example: 'ST_SetSRID(ST_MakePoint(lon, lat), 4326)' },
       { name: 'ST_AsGeoJSON', example: 'ST_AsGeoJSON(geom)' },
     ],
-    indexMethods: ['gist', 'spgist', 'brin'],
-    note: 'Installs several thousand functions and a spatial_ref_sys table. Enabling it needs privileges most application roles do not have.',
+    note: 'Indexed with the built-in GiST (or SP-GiST, or BRIN) using the operator classes it installs. Installs several thousand functions and a spatial_ref_sys table. Enabling it needs privileges most application roles do not have.',
   },
   {
     name: 'postgis_raster',
@@ -53,7 +52,6 @@ const POSTGRES: ExtensionDef[] = [
     docsUrl: 'https://postgis.net/docs/RT_reference.html',
     types: [{ name: 'raster', summary: 'A grid of cells with a georeference.' }],
     requires: ['postgis'],
-    indexMethods: ['gist'],
   },
   {
     name: 'vector',
@@ -86,7 +84,6 @@ const POSTGRES: ExtensionDef[] = [
       { name: 'word_similarity', example: 'word_similarity(a, b)' },
       { name: 'show_trgm', example: 'show_trgm(text)', summary: 'The trigrams a string breaks into; useful when a match surprises you.' },
     ],
-    indexMethods: ['gin', 'gist'],
     operatorClasses: ['gin_trgm_ops', 'gist_trgm_ops'],
     note: 'Adds no types. A GIN index with gin_trgm_ops is what turns an unanchored LIKE or ILIKE from a sequential scan into an index scan.',
   },
@@ -97,7 +94,6 @@ const POSTGRES: ExtensionDef[] = [
     summary: 'A flat string-to-string map in one column. Predates JSONB; JSONB is the better default for new schemas.',
     docsUrl: 'https://www.postgresql.org/docs/current/hstore.html',
     types: [{ name: 'hstore', summary: 'Key/value pairs, both sides text, no nesting.' }],
-    indexMethods: ['gin', 'gist'],
     operatorClasses: ['gin_hstore_ops', 'gist_hstore_ops'],
   },
   {
@@ -147,8 +143,7 @@ const POSTGRES: ExtensionDef[] = [
       { name: 'lquery', summary: 'A pattern matched against an ltree.' },
       { name: 'ltxtquery', summary: 'A full-text style query over label paths.' },
     ],
-    indexMethods: ['gist', 'gin'],
-    note: 'A good fit when the tree is read far more often than it is re-parented; moving a subtree rewrites every descendant path.',
+    note: 'Indexed with the built-in GiST. A good fit when the tree is read far more often than it is re-parented; moving a subtree rewrites every descendant path.',
   },
   {
     name: 'cube',
@@ -157,7 +152,7 @@ const POSTGRES: ExtensionDef[] = [
     summary: 'Multidimensional cubes and points, with GiST indexing for nearest-neighbour searches.',
     docsUrl: 'https://www.postgresql.org/docs/current/cube.html',
     types: [{ name: 'cube', summary: 'A point or a box in N dimensions.' }],
-    indexMethods: ['gist'],
+    note: 'Indexed with the built-in GiST, which is what makes a nearest-neighbour search on it cheap.',
   },
   {
     name: 'earthdistance',
@@ -177,7 +172,7 @@ const POSTGRES: ExtensionDef[] = [
     label: 'btree_gin',
     summary: 'GIN operator classes for ordinary scalar types, so one GIN index can cover a jsonb column and an int alongside it.',
     docsUrl: 'https://www.postgresql.org/docs/current/btree-gin.html',
-    indexMethods: ['gin'],
+    note: 'Adds no index method of its own: it teaches the built-in GIN about types it could not index before.',
   },
   {
     name: 'btree_gist',
@@ -185,7 +180,7 @@ const POSTGRES: ExtensionDef[] = [
     label: 'btree_gist',
     summary: 'GiST operator classes for scalar types. The usual reason to enable it is an exclusion constraint mixing a range with an equality column.',
     docsUrl: 'https://www.postgresql.org/docs/current/btree-gist.html',
-    indexMethods: ['gist'],
+    note: 'Adds no index method of its own: it teaches the built-in GiST about types it could not index before.',
   },
   {
     name: 'unaccent',
@@ -202,7 +197,6 @@ const POSTGRES: ExtensionDef[] = [
     label: 'intarray',
     summary: 'Faster operators and GIN/GiST support for arrays of integers.',
     docsUrl: 'https://www.postgresql.org/docs/current/intarray.html',
-    indexMethods: ['gin', 'gist'],
     operatorClasses: ['gin__int_ops', 'gist__int_ops'],
   },
   {

@@ -112,7 +112,7 @@ in-browser SQLite engine from `PRAGMA compile_options`.
 | `install` | no | How the engine enables it — see below. Defaults to the engine's usual way. |
 | `types` | no | The types it adds. These reach column autocomplete and the "needs an extension" check. |
 | `functions` | no | The functions it adds. These reach the DEFAULT autocomplete. |
-| `indexMethods` | no | Index access methods, e.g. `["gist"]` or `["hnsw", "ivfflat"]`. |
+| `indexMethods` | no | Index access methods the extension *adds*, e.g. pgvector's `["hnsw", "ivfflat"]`. Most extensions add none — `gist`, `gin`, `spgist` and `brin` are built into PostgreSQL, and an extension supplies operator classes *for* them, which belong below. |
 | `operatorClasses` | no | Operator classes, e.g. `["gin_trgm_ops"]`. |
 | `requires` | no | Extensions that must be enabled first. Problems reports a missing one as an error, with a fix that adds it ahead of this one. |
 | `note` | no | Anything worth knowing before enabling it: privileges, licensing, gotchas. |
