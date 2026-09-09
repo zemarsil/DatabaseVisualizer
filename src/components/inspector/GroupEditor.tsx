@@ -1,7 +1,7 @@
 import { Crosshair, Database, Trash2, Ungroup } from 'lucide-react';
 import type { Group } from '@shared/types';
 import { useStore } from '@/store/useStore';
-import { PALETTE } from '@/lib/palette';
+import { Swatches } from '../ui/Swatches';
 import { confirmDialog } from '../ui/Modal';
 
 export function GroupEditor({ group }: { group: Group }) {
@@ -74,17 +74,7 @@ export function GroupEditor({ group }: { group: Group }) {
 
       <div className="field">
         <span className="field__label">Colour</span>
-        <div className="swatches">
-          {PALETTE.map((p) => (
-            <button
-              key={p.key}
-              className={`swatch${group.color === p.key ? ' swatch--active' : ''}`}
-              style={{ background: p.hue }}
-              title={p.label}
-              onClick={() => updateGroup(group.id, { color: p.key })}
-            />
-          ))}
-        </div>
+        <Swatches value={group.color} onPick={(key) => updateGroup(group.id, { color: key })} label="Group colour" />
       </div>
 
       <div className="stat-grid" style={{ margin: '4px 0 14px' }}>

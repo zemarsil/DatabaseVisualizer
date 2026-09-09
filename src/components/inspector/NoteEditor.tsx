@@ -1,7 +1,7 @@
 import { Trash2 } from 'lucide-react';
 import type { Note } from '@shared/types';
 import { useStore } from '@/store/useStore';
-import { PALETTE } from '@/lib/palette';
+import { Swatches } from '../ui/Swatches';
 
 export function NoteEditor({ note }: { note: Note }) {
   const updateNote = useStore((s) => s.updateNote);
@@ -14,11 +14,7 @@ export function NoteEditor({ note }: { note: Note }) {
       </div>
       <div className="field">
         <span className="field__label">Color</span>
-        <div className="swatches">
-          {PALETTE.map((p) => (
-            <button key={p.key} className={`swatch${note.color === p.key ? ' swatch--active' : ''}`} style={{ background: p.hue }} title={p.label} onClick={() => updateNote(note.id, { color: p.key })} />
-          ))}
-        </div>
+        <Swatches value={note.color} onPick={(key) => updateNote(note.id, { color: key })} label="Note colour" />
       </div>
       <div className="faint small">Drag the corners of the note on the canvas to resize it.</div>
       <div className="divider" />

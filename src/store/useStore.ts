@@ -50,6 +50,8 @@ import { useUi } from '@/store/useUi';
 
 export type Theme = 'dark' | 'light';
 export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'simulate' | 'types' | 'problems' | 'query' | 'walkthrough';
+/** A place in the table inspector another part of the app can hand the cursor to. */
+export type InspectorField = 'name' | 'schema' | 'columns';
 
 export type { Selection };
 
@@ -175,6 +177,8 @@ interface State {
   focusRelationshipId: string | null;
   /** Column id the inspector should focus (set by addColumn so Enter-to-add keeps typing flowing). */
   focusColumnId: string | null;
+  /** Field of the table inspector that should take focus next: the hand-off from a new table or the canvas rename box into the form. */
+  focusFieldTarget: InspectorField | null;
 
   /* ---- sheets: several diagrams in one workspace ---- */
   /** Name of the workspace as a whole: what it saves as, whatever its sheets are called. */
@@ -283,6 +287,8 @@ interface Actions {
   focusTable: (id: string | null) => void;
   focusRelationship: (id: string | null) => void;
   focusColumn: (id: string | null) => void;
+  /** Point the table inspector at one of its fields; it clears the request once the cursor is there. */
+  focusInspectorField: (field: InspectorField | null) => void;
   importTables: (
     tables: Table[],
     relationships: Relationship[],
@@ -530,6 +536,7 @@ export const useStore = create<Store>()(
       focusTableId: null,
       focusRelationshipId: null,
       focusColumnId: null,
+      focusFieldTarget: null,
 
       /* ---------------- history ---------------- */
       undo: () => {
@@ -718,6 +725,8 @@ export const useStore = create<Store>()(
         set((s) => {
           s.selection = { ...emptySelection(), tableIds: [t.id] };
           s.inspectorOpen = true;
+          // Straight into the name box, so a new table is one T away from being typed.
+          s.focusFieldTarget = 'name';
         });
         return t.id;
       },
@@ -1139,6 +1148,7 @@ export const useStore = create<Store>()(
       focusTable: (id) => set((s) => void (s.focusTableId = id)),
       focusRelationship: (id) => set((s) => void (s.focusRelationshipId = id)),
       focusColumn: (id) => set((s) => void (s.focusColumnId = id)),
+      focusInspectorField: (field) => set((s) => void (s.focusFieldTarget = field)),
       importTables: (tables, relationships, mode, opts) => {
         const { layoutDirection, diagram } = get();
         const group = opts?.group;

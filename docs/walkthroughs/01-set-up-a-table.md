@@ -14,7 +14,12 @@ covers:
 shortcuts:
   - T
   - Enter
+  - Tab
   - Shift+Enter
+  - Alt+P
+  - Alt+N
+  - Alt+U
+  - Alt+I
   - Ctrl+Backspace
   - F2
   - Arrow keys
@@ -153,9 +158,17 @@ press `Enter` again for the next one. Add one column to `authors`:
 | --- | --- | --- |
 | `country` | `CHAR(2)` | — |
 
-`Shift+Enter` inserts a row *above* the current one instead, and
-`Ctrl+Backspace` on an empty name deletes the row you are in — so a mistyped
-column costs one keystroke, not a trip to the context menu.
+The flags have keys of their own, and they are the reason this loop never has to
+stop: `Alt+P`, `Alt+N`, `Alt+U` and `Alt+I` tick **PK**, **NN**, **UQ** and
+**AI** on the row you are typing, from inside the name or the type box. The
+cursor does not move, so `Enter` still means "next column" straight afterwards.
+Tabbing to the toggles works too — they share a single tab stop and the `Arrow
+keys` walk between them — and `Enter` from there also adds the next column.
+
+`Shift+Enter` inserts a row *above* the current one instead, `Arrow keys` in a
+column name move to the row above or below, and `Ctrl+Backspace` on an empty
+name deletes the row you are in — so a mistyped column costs one keystroke, not
+a trip to the context menu.
 
 **You should see:** three rows in the grid, and three column lines in the
 generated `CREATE TABLE public.authors`.
@@ -264,8 +277,13 @@ goals:
 Press `T`. (Double-clicking empty canvas, the **+ Table** button, and
 right-click → *Add table here* all do the same thing; the last two put the table
 where you clicked.) The new table is called `new_table` and already has one
-column: `id`, `INTEGER`, primary key, not null, auto-increment. Press `F2` and
-type `customers` to rename it.
+column: `id`, `INTEGER`, primary key, not null, auto-increment.
+
+The cursor is already in the inspector's *Name* box, so type `customers` over
+it. `Enter` moves on to *Schema*, and `Enter` again drops into the column grid —
+that is the whole table header, without reaching for the mouse. (If you would
+rather name it on the canvas, `F2` still renames in place, and `Tab` out of that
+box commits the name and lands in *Schema* just the same.)
 
 Then change `id`'s type from `INTEGER` to `BIGSERIAL`, leaving **PK**, **NN**
 and **AI** on, and type the other two columns:
