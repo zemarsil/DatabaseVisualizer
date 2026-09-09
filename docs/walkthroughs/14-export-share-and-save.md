@@ -341,7 +341,9 @@ button beside it.
 - **Right-click a table** → *Show in SQL tab* selects that table and opens
   the drawer (it stays on *Whole schema* until you also click **Selected
   table** yourself), or **Copy as** → *CREATE TABLE* / *CREATE VIEW* to skip the
-  drawer entirely and put just that statement on the clipboard.
+  drawer entirely and put that statement on the clipboard — with the enum types
+  it needs, and without a foreign key to a table you did not copy, so it runs on
+  its own.
 - **Right-click a selection or a group region** → **Copy as** offers the same
   four formats for several tables at once: *SQL script*, *Markdown*,
   *Markdown + SQL* and *Diagram JSON*. Each one covers the tables you picked and

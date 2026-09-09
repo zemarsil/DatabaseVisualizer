@@ -924,7 +924,9 @@ export function Canvas() {
     const onCut = (e: ClipboardEvent) => {
       if (isEditable(e.target) || !useStore.getState().selection.tableIds.length) return;
       e.preventDefault();
-      writeSelectionToEvent(e);
+      // Nothing reached the clipboard (a stale selection, say) — deleting now
+      // would destroy the tables with no copy of them anywhere.
+      if (!writeSelectionToEvent(e)) return;
       cutSelection({ alreadyOnClipboard: true });
     };
     const onPaste = (e: ClipboardEvent) => {

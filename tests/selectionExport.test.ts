@@ -4,8 +4,7 @@ import { emptyDiagram, createRelationship } from '../src/lib/model';
 import { importSql } from '../src/lib/sql/import';
 import { markdownToHtml } from '../src/lib/markdownToHtml';
 import { decodeClipboard } from '../src/lib/clipboard';
-import { selectionFlavors } from '../src/lib/canvasActions';
-import { selectionHtml, selectionMarkdown, selectionSql, sliceSelection } from '../src/lib/selectionExport';
+import { selectionFlavors, selectionHtml, selectionMarkdown, selectionSql, sliceSelection } from '../src/lib/selectionExport';
 
 const SHOP = `
 CREATE TYPE order_status AS ENUM ('new', 'paid');
@@ -217,5 +216,66 @@ describe('anchors in the HTML flavor', () => {
     const html = markdownToHtml('**Referenced by** [addresses](#addresses)');
     expect(html).toContain('<strong>Referenced by</strong> addresses');
     expect(html).not.toContain('<a ');
+  });
+});
+
+describe('cell text that looks like markup', () => {
+  const withCheck = (): Diagram => {
+    const d = shop();
+    const orders = d.tables.find((t) => t.name === 'orders')!;
+    orders.columns.find((c) => c.name === 'total')!.check = 'total * 2 * 3 > 0';
+    orders.columns.find((c) => c.name === 'total')!.comment = 'uses `total` and a | pipe';
+    return d;
+  };
+
+  it('survives a markdown renderer: the asterisks are escaped, not emphasis', () => {
+    const d = withCheck();
+    const md = selectionMarkdown(d, [idOf(d, 'orders')]);
+    expect(md).toContain('CHECK (total \\* 2 \\* 3 > 0)');
+    expect(md).toContain('\\`total\\`');
+  });
+
+  it('reaches the HTML flavor with the expression intact', () => {
+    const d = withCheck();
+    const html = selectionHtml(d, [idOf(d, 'orders')]);
+    expect(html).toContain('<td>CHECK (total * 2 * 3 &gt; 0)</td>');
+    expect(html).toContain('<td>uses `total` and a | pipe</td>');
+    // The only emphasis in the fragment is the note about what was left out.
+    expect(html.slice(0, html.indexOf('</table>'))).not.toContain('<em>');
+  });
+
+  it('does not carry a javascript: link into whatever the user pastes into', () => {
+    expect(markdownToHtml('see [docs](javascript:alert)')).toBe('<p>see docs</p>');
+    expect(markdownToHtml('see [docs](data:text/html;base64,x)')).not.toContain('<a ');
+    expect(markdownToHtml('see [docs](https://example.com)')).toContain('<a href="https://example.com">docs</a>');
+  });
+
+  it('stops a table at the first line that is not a row', () => {
+    const html = markdownToHtml('| a | b |\n| --- | --- |\n| x | y |\ntrailing | pipe line');
+    expect(html).toContain('<tbody><tr><td>x</td><td>y</td></tr></tbody>');
+    expect(html).toContain('<p>trailing | pipe line</p>');
+  });
+});
+
+describe('one table on its own', () => {
+  it('is runnable: the enum comes along and the foreign key that would dangle does not', () => {
+    const d = shop();
+    const { text } = selectionSql(d, [idOf(d, 'orders')]);
+    expect(text).toContain('CREATE TYPE order_status');
+    expect(text).toContain('CREATE TABLE orders');
+    expect(text).not.toContain('REFERENCES customers');
+    expect(text).toContain('customers is not part of this copy');
+  });
+});
+
+describe('generator warnings', () => {
+  it('are written into the script instead of being dropped on the floor', () => {
+    const d = shop();
+    d.dialect = 'sqlite';
+    d.tables.find((t) => t.name === 'orders')!.schema = 'shop';
+    const out = selectionSql(d, [idOf(d, 'orders')]);
+    expect(out.warnings.length).toBeGreaterThan(0);
+    expect(out.text).toContain('-- Worth knowing:');
+    expect(out.text).toContain('SQLite has no schemas');
   });
 });

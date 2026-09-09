@@ -57,7 +57,6 @@ import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type Tabl
 import { flowDerivations } from '@/lib/derivation';
 import { createGroup, customTypeByName, relationshipKindPatch, uniqueGroupName } from '@/lib/model';
 import { emptySelection, selectionSize, type Selection } from '@/lib/selection';
-import { generateTableSql } from '@/lib/sql/generator';
 import { selectionMarkdown, selectionSql } from '@/lib/selectionExport';
 import { encodeClipboard } from '@/lib/clipboard';
 import { alignTables, distributeTables, groupBySchema, type AlignMode } from '@/lib/canvasOps';
@@ -201,41 +200,26 @@ function displayItems(store: Store, tableIds: string[]): MenuNode[] {
  *
  * Every format here covers exactly `tableIds` and the connections between them;
  * anything pointing at a table that did not come along is left out, and the text
- * says so rather than dropping it silently. The one exception is a single
- * table's own DDL, which is the table as the diagram has it, foreign keys and all.
+ * says so rather than dropping it silently. That holds for a single table too:
+ * its own DDL would carry a foreign key to a table you did not copy, which does
+ * not run on its own.
  */
 function copyAsItems(env: MenuEnv, tableIds: string[], what: string): MenuNode[] {
   const d = env.store.diagram;
   const only = tableIds.length === 1 ? d.tables.find((t) => t.id === tableIds[0]) : undefined;
   const sqlLabel = only ? (only.kind === 'view' ? 'CREATE VIEW' : 'CREATE TABLE') : 'SQL script';
-  const sql = () => (only ? generateTableSql(d, only.id) : selectionSql(d, tableIds).text);
   return [
     { kind: 'caption', id: 'copy-as-caption', text: 'Copy as' },
-    { kind: 'action', id: 'copy-sql', label: sqlLabel, icon: Code2, disabled: !tableIds.length, run: () => env.copy(sql(), `Copied the SQL for ${what}.`) },
-    {
-      kind: 'action',
-      id: 'copy-markdown',
-      label: 'Markdown',
-      icon: FileText,
-      disabled: !tableIds.length,
-      run: () => env.copy(selectionMarkdown(d, tableIds), `Copied ${what} as a Markdown table.`),
-    },
+    { kind: 'action', id: 'copy-sql', label: sqlLabel, icon: Code2, run: () => env.copy(selectionSql(d, tableIds).text, `Copied the SQL for ${what}.`) },
+    { kind: 'action', id: 'copy-markdown', label: 'Markdown', icon: FileText, run: () => env.copy(selectionMarkdown(d, tableIds), `Copied ${what} as a Markdown table.`) },
     {
       kind: 'action',
       id: 'copy-markdown-sql',
       label: 'Markdown + SQL',
       icon: FileText,
-      disabled: !tableIds.length,
       run: () => env.copy(selectionMarkdown(d, tableIds, { includeSql: true }), `Copied ${what} as Markdown with the SQL below it.`),
     },
-    {
-      kind: 'action',
-      id: 'copy-json',
-      label: 'Diagram JSON',
-      icon: Braces,
-      disabled: !tableIds.length,
-      run: () => env.copy(encodeClipboard(d, tableIds), `Copied ${what} as diagram JSON.`),
-    },
+    { kind: 'action', id: 'copy-json', label: 'Diagram JSON', icon: Braces, run: () => env.copy(encodeClipboard(d, tableIds), `Copied ${what} as diagram JSON.`) },
   ];
 }
 

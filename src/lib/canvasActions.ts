@@ -12,43 +12,32 @@
  * - a private flavor carries the diagram fragment itself, so pasting back onto
  *   a canvas restores positions, colours and the connections DDL cannot express.
  *
- * Not every browser lets us write or read that private flavor, so paste falls
- * back to the last in-app copy and finally to importing whatever text arrived.
+ * The private flavor is spelled two ways because the two write paths are two
+ * different APIs: a `copy` event takes any format through `setData`, while
+ * `navigator.clipboard.write` only accepts a custom one behind the `web `
+ * prefix. Both are read back on paste. A browser that supports neither still
+ * gets the DDL, and a paste there falls back to the last in-app copy and then
+ * to importing whatever text arrived.
  */
 import { useStore } from '@/store/useStore';
 import { useConnection } from '@/store/useConnection';
-import { classifyPastedText, decodeClipboard, encodeClipboard } from './clipboard';
+import { classifyPastedText, decodeClipboard } from './clipboard';
 import { importSql } from './sql/import';
 import { parseDiagramFile } from './io';
 import { getSqliteEngine } from './sqlite/engine';
 import { introspectionToDiagram } from './introspectImport';
 import { estimateNodeSize } from './geometry';
-import { selectionHtml, selectionSql } from './selectionExport';
+import { selectionFlavors, type ClipboardFlavors } from './selectionExport';
 import { confirmDialog } from '@/components/ui/Modal';
-import type { Diagram, Table } from '@shared/types';
+import type { Table } from '@shared/types';
 
-/** The clipboard flavor holding the diagram fragment, when the browser allows one. */
+/** The diagram-fragment flavor as a `copy` event spells it. */
 export const DBVIZ_FLAVOR = 'application/x-dbviz';
-
-export interface ClipboardFlavors {
-  /** The diagram fragment: full fidelity when pasted back onto a canvas. */
-  json: string;
-  /** What a plain-text target gets: the DDL for the copied tables. */
-  text: string;
-  /** What a rich-text target gets: the Markdown data dictionary, as HTML. */
-  html: string;
-}
+/** The same flavor as the async clipboard API spells it; custom formats need the prefix. */
+export const DBVIZ_FLAVOR_WEB = `web ${DBVIZ_FLAVOR}`;
 
 /** In-memory fallback for browsers that refuse clipboard reads. */
 let lastCopied: ClipboardFlavors | null = null;
-
-/** Every rendering of `tableIds`, or null when none of them is a table in this diagram. */
-export function selectionFlavors(d: Diagram, tableIds: string[]): ClipboardFlavors | null {
-  if (!tableIds.length) return null;
-  const sql = selectionSql(d, tableIds).text;
-  if (!sql) return null;
-  return { json: encodeClipboard(d, tableIds), text: sql, html: selectionHtml(d, tableIds, { includeSql: true }) };
-}
 
 function flavorsFor(tableIds?: string[]): ClipboardFlavors | null {
   const s = useStore.getState();
@@ -56,33 +45,115 @@ function flavorsFor(tableIds?: string[]): ClipboardFlavors | null {
 }
 
 /**
- * Fill a copy/cut event with every flavor. Synchronous `setData` is the only
- * way to offer more than plain text on Safari, and the only way to offer a
- * private flavor at all, so the keyboard path uses this rather than
- * `copySelectionToClipboard`.
+ * The fragment also rides inside the HTML flavor, as a trailing comment.
+ *
+ * The two clipboard APIs cannot see each other's private formats: a paste event
+ * reads what `setData` wrote, `navigator.clipboard.read` reads what
+ * `ClipboardItem` wrote, and neither sees the other's. `text/html` is the one
+ * flavor both can read, and every rich-text target drops comments on the way in,
+ * so hiding the fragment there is what makes the context-menu Paste as good as
+ * Ctrl+V no matter which way the copy was made. Base64 keeps `-->` out of a
+ * table name and out of the comment.
+ */
+const FRAGMENT_OPEN = '<!--dbviz:';
+const FRAGMENT_CLOSE = '-->';
+
+function toBase64(text: string): string {
+  let binary = '';
+  for (const byte of new TextEncoder().encode(text)) binary += String.fromCharCode(byte);
+  return btoa(binary);
+}
+
+function fromBase64(encoded: string): string {
+  const binary = atob(encoded);
+  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+
+function htmlWithFragment(flavors: ClipboardFlavors): string {
+  try {
+    return `${flavors.html}\n${FRAGMENT_OPEN}${toBase64(flavors.json)}${FRAGMENT_CLOSE}`;
+  } catch {
+    return flavors.html;
+  }
+}
+
+/**
+ * Pull the fragment back out of an HTML flavor we wrote, or '' for anyone
+ * else's HTML. `atob` is lenient about junk, so what comes out is only returned
+ * once it reads as a fragment.
+ */
+export function fragmentFromHtml(html: string): string {
+  const start = html.lastIndexOf(FRAGMENT_OPEN);
+  if (start < 0) return '';
+  const end = html.indexOf(FRAGMENT_CLOSE, start);
+  if (end < 0) return '';
+  try {
+    const json = fromBase64(html.slice(start + FRAGMENT_OPEN.length, end).trim());
+    return decodeClipboard(json) ? json : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Put every flavor on a copy/cut event. The fragment goes under both names: a paste event reads the bare one, the async API the prefixed one. */
+function fillEvent(data: DataTransfer, flavors: ClipboardFlavors): void {
+  data.setData('text/plain', flavors.text);
+  // Each extra flavor stands on its own: a browser that refuses one should
+  // still get the others, and every target has the DDL either way.
+  for (const [type, value] of [
+    ['text/html', htmlWithFragment(flavors)],
+    [DBVIZ_FLAVOR, flavors.json],
+    [DBVIZ_FLAVOR_WEB, flavors.json],
+  ] as const) {
+    try {
+      data.setData(type, value);
+    } catch {
+      /* not supported here */
+    }
+  }
+}
+
+/**
+ * Fill a copy/cut event with every flavor, and report how many tables went.
+ * Synchronous `setData` is the only way to offer more than plain text on
+ * Safari, so the keyboard path uses this rather than `copySelectionToClipboard`.
  */
 export function writeSelectionToEvent(e: ClipboardEvent, tableIds?: string[]): number {
   const flavors = flavorsFor(tableIds);
   if (!flavors || !e.clipboardData) return 0;
   lastCopied = flavors;
-  e.clipboardData.setData('text/plain', flavors.text);
-  // Each extra flavor stands on its own: a browser that refuses one should
-  // still get the other, and every target has the DDL either way.
-  for (const [type, value] of [
-    ['text/html', flavors.html],
-    [DBVIZ_FLAVOR, flavors.json],
-  ] as const) {
-    try {
-      e.clipboardData.setData(type, value);
-    } catch {
-      /* not supported here */
-    }
-  }
-  return countTables(flavors.json);
+  fillEvent(e.clipboardData, flavors);
+  return flavors.tableCount;
 }
 
-function countTables(json: string): number {
-  return decodeClipboard(json)?.tables.length ?? 0;
+/**
+ * Copy by driving a synthetic copy event.
+ *
+ * Not nostalgia for `execCommand`: a private format written through
+ * `navigator.clipboard.write` is invisible to paste events — only `text/plain`
+ * survives — so a menu copy read back with Ctrl+V would lose the fragment and
+ * fall back to importing DDL. Driving the event is what makes both copy paths
+ * leave the same thing on the clipboard. Must run inside the click that asked
+ * for it, or the browser refuses.
+ */
+function writeViaCopyEvent(flavors: ClipboardFlavors): boolean {
+  if (typeof document === 'undefined' || typeof document.execCommand !== 'function') return false;
+  let wrote = false;
+  const onCopy = (e: ClipboardEvent) => {
+    if (!e.clipboardData) return;
+    e.preventDefault();
+    fillEvent(e.clipboardData, flavors);
+    wrote = true;
+  };
+  document.addEventListener('copy', onCopy, true);
+  try {
+    return document.execCommand('copy') && wrote;
+  } catch {
+    return false;
+  } finally {
+    document.removeEventListener('copy', onCopy, true);
+  }
 }
 
 /** The toast after a copy: it says where each flavor lands so the change is discoverable. */
@@ -90,20 +161,32 @@ export function copiedMessage(n: number): string {
   return `Copied ${n} table${n === 1 ? '' : 's'}: SQL as plain text, Markdown in a rich-text editor, tables here.`;
 }
 
+function blob(text: string, type: string): Blob {
+  return new Blob([text], { type });
+}
+
+/**
+ * Write every flavor from a menu or palette action. The synthetic copy event is
+ * tried first because it is the only write a later paste event can read in
+ * full; the async API is the fallback, and its custom format still feeds the
+ * context-menu Paste. A browser that rejects custom formats rejects the whole
+ * `write`, so that attempt is retried without one before falling back to text.
+ */
 async function writeFlavors(flavors: ClipboardFlavors): Promise<void> {
   lastCopied = flavors;
-  try {
-    if (typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
-      await navigator.clipboard.write([
-        new ClipboardItem({
-          'text/plain': new Blob([flavors.text], { type: 'text/plain' }),
-          'text/html': new Blob([flavors.html], { type: 'text/html' }),
-        }),
-      ]);
+  if (writeViaCopyEvent(flavors)) return;
+  const standard = {
+    'text/plain': blob(flavors.text, 'text/plain'),
+    'text/html': blob(htmlWithFragment(flavors), 'text/html'),
+  };
+  for (const items of [{ ...standard, [DBVIZ_FLAVOR_WEB]: blob(flavors.json, DBVIZ_FLAVOR_WEB) }, standard]) {
+    try {
+      if (typeof ClipboardItem === 'undefined' || !navigator.clipboard?.write) break;
+      await navigator.clipboard.write([new ClipboardItem(items)]);
       return;
+    } catch {
+      /* try the next, smaller, set */
     }
-  } catch {
-    /* older browsers, or one that refuses text/html: fall back to plain text */
   }
   try {
     await navigator.clipboard.writeText(flavors.text);
@@ -127,7 +210,7 @@ export async function copySelectionToClipboard(tableIds?: string[]): Promise<boo
   const flavors = flavorsFor(tableIds);
   if (!flavors) return false;
   await writeFlavors(flavors);
-  useStore.getState().toast('success', copiedMessage(countTables(flavors.json)));
+  useStore.getState().toast('success', copiedMessage(flavors.tableCount));
   return true;
 }
 
@@ -206,8 +289,9 @@ export function pasteText(text: string, at?: { x: number; y: number }): 'clipboa
 
 /**
  * The diagram fragment behind `text`, when this is our own copy coming back:
- * either the private flavor survived, or the plain text is byte-for-byte the
- * DDL we last wrote and the fragment is still in memory.
+ * either a private flavor survived, or — on a browser that has none — the plain
+ * text is byte-for-byte the DDL we last wrote and the fragment is still in
+ * memory from this tab.
  */
 function fragmentFor(text: string, flavor?: string): string | null {
   if (flavor && decodeClipboard(flavor)) return flavor;
@@ -215,16 +299,19 @@ function fragmentFor(text: string, flavor?: string): string | null {
   return null;
 }
 
+function readFlavor(data: DataTransfer, type: string): string {
+  try {
+    return data.getData(type);
+  } catch {
+    return ''; // browsers that reject unknown flavors
+  }
+}
+
 /** Paste from a clipboard event, preferring the diagram fragment over the DDL. Returns true when something landed. */
 export function pasteFromEvent(e: ClipboardEvent, at?: { x: number; y: number }): boolean {
   const data = e.clipboardData;
   if (!data) return false;
-  let flavor = '';
-  try {
-    flavor = data.getData(DBVIZ_FLAVOR);
-  } catch {
-    /* browsers that reject unknown flavors */
-  }
+  const flavor = readFlavor(data, DBVIZ_FLAVOR) || readFlavor(data, DBVIZ_FLAVOR_WEB) || fragmentFromHtml(readFlavor(data, 'text/html'));
   const text = data.getData('text/plain') ?? '';
   const fragment = fragmentFor(text, flavor);
   if (fragment) return pasteText(fragment, at) !== 'unknown';
@@ -232,15 +319,34 @@ export function pasteFromEvent(e: ClipboardEvent, at?: { x: number; y: number })
   return pasteText(text, at) !== 'unknown';
 }
 
+/** Read the clipboard through the async API: the fragment if it is there, else the plain text. */
+async function readClipboard(): Promise<{ text: string; flavor: string }> {
+  let flavor = '';
+  try {
+    for (const item of await navigator.clipboard.read()) {
+      const type = item.types.find((t) => t === DBVIZ_FLAVOR_WEB || t === DBVIZ_FLAVOR);
+      if (type) {
+        flavor = await (await item.getType(type)).text();
+        break;
+      }
+      if (!item.types.includes('text/html')) continue;
+      flavor = fragmentFromHtml(await (await item.getType('text/html')).text());
+      if (flavor) break;
+    }
+  } catch {
+    /* no read permission, or a browser without custom formats */
+  }
+  try {
+    return { text: await navigator.clipboard.readText(), flavor };
+  } catch {
+    return { text: '', flavor };
+  }
+}
+
 /** Paste from the system clipboard (falls back to the last in-app copy). */
 export async function pasteFromClipboard(at?: { x: number; y: number }): Promise<void> {
-  let text = '';
-  try {
-    text = await navigator.clipboard.readText();
-  } catch {
-    text = '';
-  }
-  const fragment = fragmentFor(text) ?? (!text && lastCopied ? lastCopied.json : null);
+  const { text, flavor } = await readClipboard();
+  const fragment = fragmentFor(text, flavor) ?? (!text && lastCopied ? lastCopied.json : null);
   if (fragment) {
     pasteText(fragment, at);
     return;

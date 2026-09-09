@@ -20,14 +20,17 @@ function attr(v: string): string {
   return esc(v).replace(/"/g, '&quot;');
 }
 
-/** Table cells arrive with their pipes backslash-escaped; HTML needs them plain. */
-function unescapePipes(v: string): string {
-  return v.replace(/\\\|/g, '|');
-}
+/** Only these schemes ride along to whatever the user pastes into. */
+const SAFE_HREF = /^(?:https?:|mailto:|\/|\.{1,2}\/)/i;
 
-// The underscore rule only fires at word boundaries: column names such as
-// `customer_id | order_id` must not turn into one italic run.
-const INLINE = /`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|(?<![A-Za-z0-9_])_([^_\n]+)_(?![A-Za-z0-9_])|\[([^\]]+)\]\(([^)\s]+)\)/;
+/**
+ * A backslash escape comes first so a cell markdownExport escaped — `qty \* 2` —
+ * emits its literal character instead of opening emphasis. The underscore rule
+ * only fires at word boundaries: column names such as `customer_id | order_id`
+ * must not turn into one italic run.
+ */
+const INLINE =
+  /\\([\\|*`_[\]()])|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*]+)\*|(?<![A-Za-z0-9_])_([^_\n]+)_(?![A-Za-z0-9_])|\[([^\]]+)\]\(([^)\s]+)\)/;
 
 function inline(text: string): string {
   let out = '';
@@ -39,20 +42,23 @@ function inline(text: string): string {
       break;
     }
     out += esc(rest.slice(0, m.index));
-    if (m[1] !== undefined) out += `<code>${esc(m[1])}</code>`;
-    else if (m[2] !== undefined) out += `<strong>${inline(m[2])}</strong>`;
-    else if (m[3] !== undefined) out += `<em>${inline(m[3])}</em>`;
+    if (m[1] !== undefined) out += esc(m[1]);
+    else if (m[2] !== undefined) out += `<code>${esc(m[2])}</code>`;
+    else if (m[3] !== undefined) out += `<strong>${inline(m[3])}</strong>`;
     else if (m[4] !== undefined) out += `<em>${inline(m[4])}</em>`;
-    // A same-page anchor means nothing once the HTML is on the clipboard, and
-    // the browser rewrites it to about:blank#… on the way; keep just the label.
-    else if (m[6].startsWith('#')) out += inline(m[5]);
-    else out += `<a href="${attr(m[6])}">${inline(m[5])}</a>`;
+    else if (m[5] !== undefined) out += `<em>${inline(m[5])}</em>`;
+    // A same-page anchor means nothing once the HTML is on the clipboard (the
+    // browser rewrites it to about:blank#… on the way), and a javascript: or
+    // data: URL has no business travelling to whatever the user pastes into.
+    // Either way the label alone is what survives.
+    else if (SAFE_HREF.test(m[7])) out += `<a href="${attr(m[7])}">${inline(m[6])}</a>`;
+    else out += inline(m[6]);
     rest = rest.slice(m.index + m[0].length);
   }
   return out;
 }
 
-/** Split a table row on unescaped pipes, dropping the leading and trailing one. */
+/** Split a table row on unescaped pipes, dropping the leading and trailing one. Escapes are left for `inline`. */
 function cells(line: string): string[] {
   const trimmed = line.trim().replace(/^\|/, '').replace(/\|$/, '');
   const out: string[] = [];
@@ -70,7 +76,7 @@ function cells(line: string): string[] {
     }
   }
   out.push(cell.trim());
-  return out.map(unescapePipes);
+  return out;
 }
 
 function isRule(line: string): boolean {
@@ -112,12 +118,12 @@ export function markdownToHtml(md: string): string {
       continue;
     }
 
-    if (line.includes('|') && i + 1 < lines.length && isRule(lines[i + 1])) {
+    if (line.trim().startsWith('|') && i + 1 < lines.length && isRule(lines[i + 1])) {
       flush();
       const head = cells(line);
       i += 2;
       const rows: string[][] = [];
-      while (i < lines.length && lines[i].includes('|') && lines[i].trim()) rows.push(cells(lines[i++]));
+      while (i < lines.length && lines[i].trim().startsWith('|')) rows.push(cells(lines[i++]));
       const thead = `<thead><tr>${head.map((c) => `<th>${inline(c)}</th>`).join('')}</tr></thead>`;
       const tbody = rows.map((r) => `<tr>${r.map((c) => `<td>${inline(c)}</td>`).join('')}</tr>`).join('');
       out.push(`<table>${thead}<tbody>${tbody}</tbody></table>`);

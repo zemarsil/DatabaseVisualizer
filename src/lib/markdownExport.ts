@@ -2,8 +2,18 @@ import { describeRelationship, dialectLabel, type Diagram, type Relationship, ty
 import { derivationSummaries } from './derivation';
 import { exportMermaid } from './export/mermaid';
 
+/**
+ * Cell text is data, not markup. A CHECK expression like `qty * 2 * 3` or a
+ * comment holding a backtick has to survive a Markdown renderer and the HTML
+ * mirror alike, so the characters that would turn into emphasis or a code span
+ * are escaped. Underscores are left alone: neither GFM nor markdownToHtml reads
+ * one inside a word as emphasis, and escaping them would litter every column name.
+ */
 function esc(v: string): string {
-  return v.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  return v
+    .replace(/([\\*`])/g, '\\$1')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ');
 }
 
 function mdTable(headers: string[], rows: string[][]): string {
