@@ -2,15 +2,29 @@ import { create } from 'zustand';
 
 /**
  * UI-only state that is not part of the diagram: the command palette, the
- * diagram library dialog, focus mode, canvas preferences, and hand-offs to the
- * Query tab. Kept out of useStore so it never lands in undo history or
- * autosave. (Right-click menus have their own store in ui/ContextMenu.tsx.)
+ * diagram library dialog, focus mode, the derived-column lens, canvas
+ * preferences, and hand-offs to the Query tab. Kept out of useStore so it never
+ * lands in undo history or autosave. (Right-click menus have their own store in
+ * ui/ContextMenu.tsx.)
  */
 
 /** Neighborhood focus: dim everything further than `hops` from the table. */
 export interface FocusState {
   tableId: string;
   hops: number;
+}
+
+/**
+ * The derived lens: a way of reading the canvas where what matters is whether a
+ * column is computed or stored, not how the tables connect. `column` narrows it
+ * further to one column's own lineage — the chain of flows that fills it and the
+ * chain that reads it — and is what the Derived tab sets when you pick a column.
+ */
+export interface DerivedLens {
+  /** Column whose lineage is highlighted, or null for the whole diagram at once. */
+  columnId: string | null;
+  /** Follow what the column feeds as well as what feeds it. */
+  downstream: boolean;
 }
 
 export interface PendingQuery {
@@ -29,6 +43,13 @@ interface UiState {
 
   focus: FocusState | null;
   setFocus: (focus: FocusState | null) => void;
+
+  /** Null when the lens is off. */
+  derived: DerivedLens | null;
+  setDerived: (lens: DerivedLens | null) => void;
+  toggleDerived: () => void;
+  /** Turn the lens on (if it is off) and point it at one column; null widens it back to the diagram. */
+  showLineage: (columnId: string | null) => void;
 
   /** Table whose header is being renamed in place on the canvas. */
   renamingTableId: string | null;
@@ -96,6 +117,11 @@ export const useUi = create<UiState>()((set, get) => {
 
     focus: null,
     setFocus: (focus) => set({ focus }),
+
+    derived: null,
+    setDerived: (derived) => set({ derived }),
+    toggleDerived: () => set({ derived: get().derived ? null : { columnId: null, downstream: true } }),
+    showLineage: (columnId) => set({ derived: { ...(get().derived ?? { downstream: true }), columnId } }),
 
     renamingTableId: null,
     setRenamingTableId: (id) => set({ renamingTableId: id }),

@@ -22,7 +22,7 @@ below carries where it came from so you can re-check it after the app changes.
 ```
 
 The **inspector** on the right always shows whatever is selected: a table, a
-connection, a note, or a group region. The **bottom drawer** holds the nine
+connection, a note, or a group region. The **bottom drawer** holds the ten
 tabs. The **sidebar** on the left is the table list. All three toggle from the
 **View** menu or the icon buttons at the far right of the top bar.
 
@@ -96,7 +96,7 @@ Source: `src/components/TopBar.tsx`
 | Command palette button | *Command palette: jump to a table or run any action* (`Ctrl+K`). |
 | **Database** | Opens the **Database** drawer tab. |
 | **File** menu | *New diagram in this workspace*, *New workspace*, *Open…* `Ctrl+O`, *Open recent workspace…*, *Save as .dbviz.json* `Ctrl+S` (reads *Save workspace as .dbviz.json* with more than one diagram), *Save checkpoint…*, *Export PNG*, *Export SVG*, *Export SQL script*, *Export Markdown*, *Export Mermaid ER diagram*, *Export DBML*, *Copy share link*, *Load example diagram*. |
-| **View** menu | Checkboxes *Table list*, *Inspector*, *Bottom drawer*, *Dark theme*, *Cardinality labels*, *Snap to grid*, *Warn before closing unsaved*; then under *All tables*: *Show every column*, *Keys only*, *Headers only*. |
+| **View** menu | Checkboxes *Table list*, *Inspector*, *Bottom drawer*, *Dark theme*, *Derived-column lens (D)*, *Cardinality labels*, *Snap to grid*, *Warn before closing unsaved*; then under *All tables*: *Show every column*, *Keys only*, *Headers only*. |
 | Panel toggles + theme + **?** | Table list, drawer, inspector, theme, help (`?`). |
 
 ---
@@ -113,6 +113,7 @@ Source: `src/components/drawer/Drawer.tsx` and the panels beside it
 | **Import SQL** | Paste or load a `.sql` file; *Add to the current diagram* or replace; optionally drop everything into a new group. |
 | **Trace** | *From table…* / *To table…*, the hop list, and *Join along the path*. |
 | **Simulate** | *Simulate data flow*: the stage list, the source and target grids, row lineage, and editable raw-input cells. |
+| **Derived** | *Derived columns*: every column the schema computes rather than stores, grouped by table with its formula, and — for whichever one you pick — *What it is computed from* and *What is computed from it*. Carries **Lens on** / **Lens off** (the same lens as `D`) and **Clear**. Badge reads *lens* while the lens is on, otherwise the count of computed columns. |
 | **Problems** | Lint findings with one-click fixes, filterable (*All severities*, *Errors only*, *Warnings only*, *Notes only*), plus *Suggested foreign keys*. Badge shows the error count. |
 | **Query** | Read-only `SELECT`s against the connected database. `Ctrl+Enter` runs, `Tab` indents; snippets, history, CSV/JSON copy. |
 | **Database** | Left column *Docker* (containers: *Container name*, *Image*, *Host port*, *Engine*), right column *Connection* (*Engine* — a dialect selector independent of the diagram's — *Host*, *Port*, *Database*, *User*, *Password*), then *Create the schema*, *Import from the database*, **Migrate** and *Seed data*. |
@@ -199,7 +200,8 @@ spelling other than the one in the left column.
 | `Shift+click` | Add a table or note to the selection |
 | `Shift+drag` | Box-select everything the box touches |
 | `Delete` / `Backspace` | Delete the selection |
-| `Esc` | Clear focus, selection, trace picking or simulation |
+| `D` | Derived-column lens on / off |
+| `Esc` | Clear focus, the derived lens, selection, trace picking or simulation. With a column's lineage on screen the first `Esc` widens it back to the whole diagram and the second puts the lens away |
 | `?` | Help |
 
 ---
@@ -217,10 +219,14 @@ Sources: `src/components/ui/contextMenuItems.ts`, which wires in the operations 
   *Copy table*, *Cut table*, a **Copy as** group (*CREATE TABLE* / *CREATE VIEW*,
   *Markdown*, *Markdown + SQL*, *Diagram JSON*, *Table name*), *Show in SQL tab*,
   *All columns* / *Keys only* / *Header only*, *Zoom to table*,
-  *Trace from here…*, *Simulate*, *Delete table*.
+  *Trace from here…*, *Simulate*, *Show the N derived columns* (a table with
+  none gets *Derived-column lens*, or *Turn the derived lens off* while it is
+  on), *Delete table*.
 - **Column row**: *Primary key*, *Not null*, *Unique*, *Auto-increment*,
   *Add column below*, *Create index on this column*, *Move up*, *Move down*,
-  *Copy column name*, *Delete column*.
+  *Copy column name*, then *Show where this comes from* on a computed column
+  (*Show what this feeds (N)* on a stored one that some derivation reads, and
+  nothing at all on a column neither applies to), *Delete column*.
 - **Connection**: *Swap direction*, the four kinds, *Copy tagged query*,
   *Edit in inspector*, *Delete connection*.
 - **Group region**: *Edit group…*, *In another database*, *Select its N table(s)*,
@@ -310,6 +316,19 @@ Expressions, keys and filters may name a column of another table as
 `table.column` when the source reaches it through foreign keys in the diagram
 (`orders.status` from `order_items` follows `order_items.order_id → orders.id`).
 Use the bare table name, never `schema.table`.
+
+### Reading them back: computed vs. stored
+
+Source: `src/lib/lineage.ts`
+
+A column is **computed** when an entry fills it, when a group-by key spelled like
+a column of the target is carried into it (so a rollup keyed on `product_id`
+fills the target's own `product_id` with no entry of its own), or when it belongs
+to a view. Everything else is **stored**. A computed column carries a `Σ` mark on
+the canvas and a green name box in the inspector's column grid, its table a
+`Σ n` badge, and the Markdown data dictionary a `DERIVED` key plus a *Derived
+columns* table. The derived lens (`D`) colours the whole canvas by that
+distinction; pointing it at one column narrows it to that column's chain.
 
 ---
 

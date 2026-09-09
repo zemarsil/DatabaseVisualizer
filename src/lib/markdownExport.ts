@@ -1,5 +1,6 @@
 import { describeRelationship, dialectLabel, type Diagram, type Relationship, type Table } from '@shared/types';
 import { derivationSummaries } from './derivation';
+import { buildLineage, type Lineage } from './lineage';
 import { exportMermaid } from './export/mermaid';
 
 /**
@@ -26,7 +27,7 @@ function anchor(t: Table): string {
   return (t.schema ? `${t.schema}${t.name}` : t.name).toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
-function tableSection(d: Diagram, t: Table, rels: Relationship[], level: number): string {
+function tableSection(d: Diagram, t: Table, rels: Relationship[], level: number, lineage: Lineage): string {
   const parts: string[] = [];
   const heading = t.schema ? `${t.schema}.${t.name}` : t.name;
   parts.push(`${'#'.repeat(level)} ${heading}${t.kind === 'view' ? (t.materialized ? ' _(materialized view)_' : ' _(view)_') : ''}`);
@@ -47,6 +48,9 @@ function tableSection(d: Diagram, t: Table, rels: Relationship[], level: number)
     if (c.unique) keys.push('UNIQUE');
     if (c.autoIncrement) keys.push('AUTO');
     if (outgoingFks.has(c.id)) keys.push('FK');
+    // A reader of the dictionary needs to know a value is computed before they
+    // plan to insert it; the formula itself follows under the table.
+    if (lineage.filledBy.has(c.id)) keys.push('DERIVED');
     return [c.name, c.type, c.nullable ? 'yes' : 'no', c.defaultValue ?? '', keys.join(', '), c.check ? `CHECK (${c.check})` : '', c.comment ?? ''];
   });
   const colTable = mdTable(['Column', 'Type', 'Nullable', 'Default', 'Key', 'Check', 'Comment'], colRows);
@@ -62,6 +66,13 @@ function tableSection(d: Diagram, t: Table, rels: Relationship[], level: number)
 
   if (t.checks.length) {
     parts.push(`\n**Table checks**\n\n${t.checks.map((c) => `- \`${c}\``).join('\n')}`);
+  }
+
+  const derivedRows = t.columns.flatMap((c) =>
+    (lineage.filledBy.get(c.id) ?? []).map((e) => [c.name, e.summary, d.tables.find((x) => x.id === e.sourceTableId)?.name ?? '?']),
+  );
+  if (derivedRows.length) {
+    parts.push(`\n**Derived columns**\n\n${mdTable(['Column', 'Computed as', 'From'], derivedRows)}`);
   }
 
   const referencedBy = rels.filter((r) => r.kind === 'fk' && r.targetTableId === t.id && r.sourceTableId !== t.id);
@@ -174,7 +185,9 @@ export function generateMarkdown(d: Diagram, opts: MarkdownOptions = {}): string
       parts.push(summarySection(d, opts.includeMermaid ?? true));
       parts.push('## Tables');
     }
-    for (const t of d.tables) parts.push(tableSection(d, t, d.relationships, fragment ? 2 : 3));
+    // One scan of the data flows for the whole document rather than one per table.
+    const lineage = buildLineage(d);
+    for (const t of d.tables) parts.push(tableSection(d, t, d.relationships, fragment ? 2 : 3, lineage));
   }
 
   const types = customTypesSection(d);

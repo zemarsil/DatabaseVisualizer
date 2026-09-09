@@ -74,6 +74,7 @@ docker compose up --build
 | Any other connection | Drag the orange handle in a table header onto another table, then pick the kind in the inspector (data flow, serialized, dependency) |
 | Change how a connection reads | Select it; **Reads as** offers the verbs that fit its kind and previews the sentence in both directions |
 | Derived columns | On a data-flow edge, add one entry per target column: target column, aggregate, source expression, group-by keys, filter, and optionally a **sequence** operation (previous / next value, change since the previous row, running total or average, row number, rank) with its order-by and partition-by keys. Expressions are SQL and may name a column of any table the source points at through foreign keys as `table.column` (`orders.status` from `order_items`). The edge shows a `Σ` count and a per-column summary, and the script gets an `INSERT ... SELECT` skeleton with the `JOIN`s and window functions written for the current dialect |
+| See what is computed | Any column a data flow fills carries a **Σ** mark, and its table a **Σ n** badge that survives collapsing. `D` (or **View → Derived-column lens**) turns that into a way of reading the whole canvas: computed columns take the green rail, the columns feeding them the flow colour, foreign keys step back. The **Derived** drawer tab lists every one with its formula; pick a column — there, or by right-clicking it → *Show where this comes from* — and the canvas narrows to that column's chain: every column read to produce it, and everything computed from it in turn. `Esc` widens the chain back, then puts the lens away |
 | One source, several look-alike targets | On a data-flow edge, **Match by name** adds a plain passthrough derivation for every target column a source column of the same name can fill (case and underscores ignored; columns already derived are left alone). *Feed other tables the same way* then ticks off the other tables that share those column names and draws the same flow into each, its derivations re-pointed at the columns each table spells the same way. Five tables fed from one is five edges either way — a connection joins two tables — but not five sets of derivations typed by hand |
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express |
@@ -192,6 +193,18 @@ is one entry: target `key1`, aggregate `AVG`, expression `key2`, group by
 `key3 >= 4`" is one entry too: target `gap`, sequence *change since the previous
 row* over expression `ts` ordered by `ts`, filter `key3 >= 4`.
 
+Once a flow says that much, the app knows which columns are **computed** rather
+than stored, and marks them everywhere it shows a column: the canvas, the
+inspector's column grid, the Markdown data dictionary. A column counts as
+computed when an entry fills it, when a group-by key of the same name is carried
+into it (which is how a rollup keyed on `product_id` fills the target's own
+`product_id`), and when it belongs to a view, whose SELECT produces every one of
+its columns. Everything else is stored: rows arrive carrying the value. The
+**Derived** tab reads the chain in both directions — what a column is computed
+from, following each flow back through the ones before it, and what is computed
+from it — resolving `table.column` references through the same foreign keys the
+generator writes JOINs for.
+
 **Simulate** turns that description into rows you can watch. Pick the table you
 want to see fed and every flow upstream of it runs once over generated sample
 data, in dependency order: raw inputs are seeded (values a filter compares
@@ -218,6 +231,7 @@ src/lib/sql/             tokenizer, parser (DDL -> model), generator (model -> D
 src/lib/groups.ts        table groups: region geometry, membership, external tables
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
+src/lib/lineage.ts       which columns are computed rather than stored, what each one reads, and the chain in both directions
 src/lib/simulate/        expression.ts: SQL expression parser/evaluator; engine.ts: runs the data flows over sample rows with lineage
 src/lib/io.ts            .dbviz.json save/load (one diagram, or a workspace of several)
 src/lib/sheets.ts        add / rename / close a diagram tab, with the questions each one asks first
@@ -238,7 +252,7 @@ src/components/          React UI (canvas, inspector, drawer panels, command pal
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
 scripts/                 validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
 docs/                    ADVISOR_OUTPUT_FORMAT.md, EXTENSION_PACK_FORMAT.md, examples, and walkthroughs/
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format, the simulation, extensions, the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, column lineage, layout, file format, the simulation, extensions, the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
 ```
 
 ```bash

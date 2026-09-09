@@ -189,6 +189,15 @@ function HelpContent() {
         Simulate tab, click a produced row to see the rows it came from and how each value was computed; double-click a raw input cell to change it and
         watch the change propagate. <K k="Esc" /> leaves the mode.
       </p>
+      <h4>Stored or computed</h4>
+      <p>
+        Any column a data flow fills carries a <strong>Σ</strong> mark and its table a <strong>Σ n</strong> badge, so a column something else computes never
+        reads as one rows arrive carrying. <K k="D" /> (or <em>View → Derived-column lens</em>) turns that into a way of reading the whole canvas: computed
+        columns take the green rail, the columns feeding them take the flow colour, foreign keys step back, and a view's columns count as computed because its
+        SELECT produces every one of them. The <em>Derived</em> drawer tab lists them all with their formulas; pick one and the canvas narrows to that column's
+        own chain — every column read to produce it, and everything computed from it in turn — which is also what right-clicking a column and choosing{' '}
+        <em>Show where this comes from</em> does. <K k="Esc" /> widens the chain back to the diagram, and again puts the lens away.
+      </p>
       <h4>Database</h4>
       <p>
         The Database tab talks to the local API server: it can start a PostgreSQL or MariaDB container through Docker, run the generated schema against any
@@ -270,6 +279,12 @@ function HelpContent() {
         </span>
         <span>Simulate data flowing into the selected table (again, or <K k="Esc" />, to stop)</span>
         <span>
+          <K k="D" />
+        </span>
+        <span>
+          Derived-column lens: colour every column a data flow or a view computes rather than stores, and the columns feeding them (<K k="Esc" /> to leave)
+        </span>
+        <span>
           <K k="F2" />
         </span>
         <span>Rename the selected table in place</span>
@@ -315,7 +330,7 @@ function HelpContent() {
         <span>
           <K k="Esc" />
         </span>
-        <span>Clear focus / selection, cancel picking</span>
+        <span>Clear focus / the derived lens / selection, cancel picking</span>
         <span>
           <K k="?" />
         </span>

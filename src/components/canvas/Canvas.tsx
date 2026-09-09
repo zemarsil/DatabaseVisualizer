@@ -26,6 +26,7 @@ import { paletteHue } from '@/lib/palette';
 import { GROUP_STICKINESS, groupAtPoint, groupBounds, inflate, rectCenter, rectContains, tableRect, type Rect } from '@/lib/groups';
 import { effectiveDisplay, visibleColumns } from '@/lib/visibleColumns';
 import { isJoinTable, relationshipCardinality } from '@/lib/schemaInfo';
+import { buildLineage, derivedColumnIds, describeColumnOrigin, downstream, lineageReach, upstream } from '@/lib/lineage';
 import { reachableTables } from '@/lib/trace';
 import { copiedMessage, cutSelection, openDroppedFiles, pasteFromEvent, writeSelectionToEvent } from '@/lib/canvasActions';
 import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode';
@@ -34,6 +35,7 @@ import { GroupNode, GROUP_DRAG_HANDLE, type GroupNodeType } from './GroupNode';
 import { RelationEdge, type RelationEdgeData, type RelationEdgeType } from './RelationEdge';
 import { FocusBanner, MAX_FOCUS_HOPS } from './FocusBanner';
 import { SimulationBanner } from './SimulationBanner';
+import { DerivedBanner } from './DerivedBanner';
 import { DropOverlay } from './DropOverlay';
 import '@/styles/canvas-extras.css';
 
@@ -134,6 +136,7 @@ export function Canvas() {
   const simPlaying = useSimulation((s) => s.playing);
 
   const focus = useUi((s) => s.focus);
+  const derivedLens = useUi((s) => s.derived);
   const snapToGrid = useUi((s) => s.snapToGrid);
   const showCardinality = useUi((s) => s.showCardinality);
   const lodCollapsed = useUi((s) => s.lodCollapsed);
@@ -247,6 +250,45 @@ export function Canvas() {
 
   const joinTables = useMemo(() => new Set(diagram.tables.filter((t) => isJoinTable(diagram, t)).map((t) => t.id)), [diagram]);
 
+  /* ---------- derived columns ---------- */
+
+  // Always computed: the Σ mark on a column is part of reading the diagram, not
+  // part of the lens. The lens only adds the source colouring and the dimming.
+  const lineage = useMemo(() => buildLineage(diagram), [diagram]);
+  const derivedColumns = useMemo(() => {
+    const m = new Map<string, { ids: string[]; summaries: Record<string, string> }>();
+    for (const t of diagram.tables) {
+      const ids = derivedColumnIds(lineage, t);
+      const summaries: Record<string, string> = {};
+      for (const id of ids) {
+        const text = describeColumnOrigin(lineage, id);
+        if (text) summaries[id] = text;
+      }
+      m.set(t.id, { ids, summaries });
+    }
+    return m;
+  }, [diagram.tables, lineage]);
+
+  /**
+   * What one column's chain reaches, when the lens is pointed at a column: the
+   * flows that fill it, and (unless that is switched off) the flows that read
+   * it. Everything outside the chain steps back so the path is the only thing
+   * with colour in it.
+   */
+  const lensReach = useMemo(() => {
+    if (!derivedLens?.columnId) return null;
+    const up = lineageReach(upstream(lineage, derivedLens.columnId));
+    if (!derivedLens.downstream) return up;
+    const down = lineageReach(downstream(lineage, derivedLens.columnId));
+    return {
+      tableIds: new Set([...up.tableIds, ...down.tableIds]),
+      columnIds: new Set([...up.columnIds, ...down.columnIds]),
+      relationshipIds: new Set([...up.relationshipIds, ...down.relationshipIds]),
+    };
+  }, [derivedLens?.columnId, derivedLens?.downstream, lineage]);
+
+  const lensing = derivedLens !== null && !tracing && !simulating;
+
   const nodes = useMemo<CanvasNode[]>(() => {
     const tableNodes: TableNodeType[] = diagram.tables.map((t) => {
       const role = !trace.result
@@ -266,11 +308,24 @@ export function Canvas() {
           table: t,
           fkColumnIds: fkColumnsByTable.get(t.id) ?? [],
           embedColumnIds: embedColumnsByTable.get(t.id) ?? [],
+          derivedColumnIds: derivedColumns.get(t.id)?.ids ?? [],
+          derivedSummaries: derivedColumns.get(t.id)?.summaries ?? {},
+          lens: lensing
+            ? {
+                sourceColumnIds: lineage.sourceByTable.get(t.id) ?? [],
+                lineageColumnIds: lensReach ? t.columns.filter((c) => lensReach.columnIds.has(c.id)).map((c) => c.id) : [],
+                focusColumnId: derivedLens?.columnId ?? null,
+              }
+            : null,
           visibleColumns: shownColumns.get(t.id) ?? t.columns,
           display: effectiveDisplay(t, lodCollapsed),
           lod: lodCollapsed,
           joinTable: joinTables.has(t.id),
-          dimmed: (tracing && !traceTables.has(t.id)) || (focusSet !== null && !focusSet.has(t.id)) || (simulating && !simTables.has(t.id)),
+          dimmed:
+            (tracing && !traceTables.has(t.id)) ||
+            (focusSet !== null && !focusSet.has(t.id)) ||
+            (simulating && !simTables.has(t.id)) ||
+            (lensing && lensReach !== null && !lensReach.tableIds.has(t.id)),
           traceRole: role,
           picking: trace.picking,
           renaming: renamingTableId === t.id,
@@ -353,6 +408,11 @@ export function Canvas() {
     simActiveTables,
     simCurrent,
     simulating,
+    derivedColumns,
+    lineage,
+    lensing,
+    lensReach,
+    derivedLens,
   ]);
 
   const edges = useMemo<RelationEdgeType[]>(() => {
@@ -405,6 +465,9 @@ export function Canvas() {
         } else if (simLookupRels.has(r.id)) simulation = { state: 'lookup', packets: 0, nonce: simNonce, loop: false };
       }
       const simDim = simulating && simulation === null;
+      // The lens is about how data is computed, so a foreign key is context and a
+      // flow off the chain in view is noise.
+      const lensDim = lensing && (r.kind !== 'flow' || (lensReach !== null && !lensReach.relationshipIds.has(r.id)));
       out.push({
         id: r.id,
         type: 'relation',
@@ -416,7 +479,7 @@ export function Canvas() {
           sourceRow,
           targetRow,
           hue: paletteHue(src.color),
-          dimmed: (tracing && !traceRels.has(r.id)) || !inFocus || simDim,
+          dimmed: (tracing && !traceRels.has(r.id)) || !inFocus || simDim || lensDim,
           traced: traceRels.has(r.id),
           simulation,
           attached: selectedTableId !== null && (r.sourceTableId === selectedTableId || r.targetTableId === selectedTableId),
@@ -438,7 +501,7 @@ export function Canvas() {
       }
     }
     return out;
-  }, [diagram, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet, simResult, simFlowIndex, simStage, simNonce, simPlaying, simLookupRels, simulating]);
+  }, [diagram, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet, simResult, simFlowIndex, simStage, simNonce, simPlaying, simLookupRels, simulating, lensing, lensReach]);
 
   /* ---------- change handlers ---------- */
 
@@ -896,8 +959,11 @@ export function Canvas() {
         ui.setRenamingTableId(s.selection.tableIds[0]);
         return;
       }
-      if (e.key === 'Escape' && ui.focus && !s.trace.picking && !s.trace.result) {
-        ui.setFocus(null);
+      if (e.key === 'Escape' && !s.trace.picking && !s.trace.result && !useSimulation.getState().targetId) {
+        // One Esc widens a lineage back to the whole diagram; the next puts the lens away.
+        if (ui.derived?.columnId) ui.showLineage(null);
+        else if (ui.derived) ui.setDerived(null);
+        else if (ui.focus) ui.setFocus(null);
       }
     };
     window.addEventListener('keydown', onKey);
@@ -1032,7 +1098,8 @@ export function Canvas() {
           maskColor="rgba(0,0,0,0.25)"
         />
       </ReactFlow>
-      {!pickingLabel && !simulating && <FocusBanner />}
+      {!pickingLabel && !simulating && !lensing && <FocusBanner />}
+      {!pickingLabel && lensing && <DerivedBanner />}
       {!pickingLabel && <SimulationBanner />}
       <DropOverlay visible={dropping} />
       {pickingLabel && (

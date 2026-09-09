@@ -28,6 +28,9 @@
   --dep: #7dcfff;
   --trace: #4fd1c5;
   --trace-soft: rgba(79, 209, 197, 0.18);
+  /* Computed rather than stored: the Σ mark and the derived lens. */
+  --derived: #9ece6a;
+  --derived-soft: rgba(158, 206, 106, 0.16);
   --canvas-bg: #0c0e14;
   --canvas-dot: #2a3040;
   --node-bg: #1a1e2a;
@@ -72,6 +75,8 @@
   --dep: #0f7ea8;
   --trace: #109e91;
   --trace-soft: rgba(16, 158, 145, 0.16);
+  --derived: #3f9d4c;
+  --derived-soft: rgba(63, 157, 76, 0.14);
   --canvas-bg: #eaedf3;
   --canvas-dot: #c6ccd9;
   --node-bg: #ffffff;
@@ -980,6 +985,9 @@ a {
 }
 .col-icon--embed {
   color: var(--embed);
+}
+.col-icon--derived {
+  color: var(--derived);
 }
 .col-name {
   overflow: hidden;

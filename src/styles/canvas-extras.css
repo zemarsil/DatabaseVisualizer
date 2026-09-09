@@ -211,3 +211,89 @@
 .canvas__sim-banner .simulate__progress {
   color: var(--text-muted);
 }
+
+/* ---- derived-column lens ---------------------------------------------- */
+
+/* The Σ badge is on whether or not the lens is: a table whose columns are
+   computed says so even when it is collapsed to its header. */
+.table-node__badge--derived {
+  color: var(--derived);
+  background: var(--derived-soft);
+}
+
+/* With the lens on, a row's colour is its origin: computed rows carry a tinted
+   rail, rows that feed a computation carry the flow colour, and everything
+   else steps back without disappearing. */
+.table-node--lens .table-node__row {
+  box-shadow: inset 2px 0 0 transparent;
+}
+.table-node--lens .table-node__row--feeds {
+  box-shadow: inset 2px 0 0 var(--flow);
+  background: color-mix(in srgb, var(--flow) 7%, transparent);
+}
+.table-node--lens .table-node__row--derived {
+  box-shadow: inset 2px 0 0 var(--derived);
+  background: var(--derived-soft);
+}
+/* Computed here and read elsewhere: both, so neither claim is lost. */
+.table-node--lens .table-node__row--derived.table-node__row--feeds {
+  box-shadow: inset 2px 0 0 var(--derived), inset -2px 0 0 var(--flow);
+}
+.table-node--lens .table-node__row--offchain {
+  opacity: 0.3;
+  background: transparent;
+  box-shadow: none;
+}
+.table-node--lens .table-node__row--lineage-root {
+  outline: 1px solid var(--derived);
+  outline-offset: -1px;
+  opacity: 1;
+}
+
+/* Centred by margin rather than by a 50% offset, so the pill may use the whole
+   canvas width: shrink-to-fit from left:50% would stop it halfway and clip the
+   counts. */
+.canvas__derived-banner {
+  left: 12px;
+  right: 12px;
+  transform: none;
+  width: max-content;
+  max-width: calc(100% - 24px);
+  margin: 0 auto;
+  border-color: var(--derived);
+  color: var(--derived);
+}
+.canvas__derived-banner > span:first-of-type {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.canvas__derived-banner strong {
+  font-weight: 700;
+}
+.derived-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.derived-legend__key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+}
+.derived-legend__key--derived {
+  color: var(--derived);
+  background: var(--derived-soft);
+}
+.derived-legend__key--feeds {
+  color: var(--flow);
+  background: color-mix(in srgb, var(--flow) 16%, transparent);
+}

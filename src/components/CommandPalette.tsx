@@ -31,6 +31,7 @@ import {
   Shapes,
   ShieldAlert,
   Shuffle,
+  Sigma,
   Sparkles,
   StickyNote,
   Sun,
@@ -114,6 +115,7 @@ const TABS: { id: DrawerTab; label: string; icon: LucideIcon }[] = [
   { id: 'import', label: 'Import SQL', icon: FileDown },
   { id: 'trace', label: 'Trace', icon: Route },
   { id: 'simulate', label: 'Simulate', icon: Play },
+  { id: 'derived', label: 'Derived', icon: Sigma },
   { id: 'problems', label: 'Problems', icon: ShieldAlert },
   { id: 'query', label: 'Query', icon: Terminal },
   { id: 'database', label: 'Database', icon: Database },
@@ -218,6 +220,17 @@ function buildItems(): PaletteItem[] {
     s.openDrawer('trace');
     s.setTracePicking(true);
   }, { icon: Route });
+
+  act('derived-lens', 'Derived', `${ui.derived ? 'Turn off' : 'Turn on'} the derived-column lens`, () => ui.toggleDerived(), {
+    icon: Sigma,
+    hint: 'D',
+    keywords: ['computed', 'stored', 'lineage', 'dependency', 'rollup'],
+  });
+  act('derived-tab', 'Derived', 'List every derived column…', () => s.openDrawer('derived'), {
+    icon: Sigma,
+    keywords: ['computed', 'lineage', 'dependency', 'where does this come from'],
+  });
+  if (ui.derived?.columnId) act('derived-all', 'Derived', 'Show every derived column instead of one lineage', () => ui.showLineage(null), { icon: Sigma, hint: 'Esc' });
 
   const sim = useSimulation.getState();
   const fed = simulationTargets(d);

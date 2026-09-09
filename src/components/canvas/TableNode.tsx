@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Handle, Position, type NodeProps, type Node } from '@xyflow/react';
-import { Braces, ChevronDown, ChevronRight, ChevronUp, Eye, KeyRound, Link2 } from 'lucide-react';
+import { Braces, ChevronDown, ChevronRight, ChevronUp, Eye, KeyRound, Link2, Sigma } from 'lucide-react';
 import type { Column, Table } from '@shared/types';
 import { paletteHue } from '@/lib/palette';
 import { nextDisplay, type TableDisplayMode } from '@/lib/visibleColumns';
@@ -12,6 +12,12 @@ export interface TableNodeData extends Record<string, unknown> {
   fkColumnIds: string[];
   /** Columns holding another table serialized inside them. */
   embedColumnIds: string[];
+  /** Columns a data flow fills, so they carry the Σ mark instead of reading as stored. */
+  derivedColumnIds: string[];
+  /** What fills each of those, one line per formula, for the mark's own tooltip. */
+  derivedSummaries: Record<string, string>;
+  /** How the derived lens paints this table, or null while the lens is off. */
+  lens?: NodeLens | null;
   /** Columns actually drawn (all, keys only, or none when collapsed to the header). */
   visibleColumns: Column[];
   display: TableDisplayMode;
@@ -24,6 +30,21 @@ export interface TableNodeData extends Record<string, unknown> {
   renaming: boolean;
   /** How the table takes part in the running data-flow simulation, if one is on. */
   simulation?: NodeSimulation | null;
+}
+
+/**
+ * The derived lens, per table: which of its columns feed somebody else's
+ * computation, and — while the lens is pointed at one column — which of them sit
+ * on that column's chain. (Which columns are *computed* is `derivedColumnIds`,
+ * because that mark is on whether the lens is or not.)
+ */
+export interface NodeLens {
+  /** Columns a derivation reads. A column can be both read and computed. */
+  sourceColumnIds: string[];
+  /** Columns on the focused column's own chain; empty when the lens is showing the whole diagram. */
+  lineageColumnIds: string[];
+  /** The one column the lineage was asked about. */
+  focusColumnId: string | null;
 }
 
 /** input -> seeded raw rows, derived -> filled by flows, lookup -> read through a foreign key. */
@@ -88,10 +109,14 @@ function RenameInput({ table }: { table: Table }) {
 }
 
 function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
-  const { table, fkColumnIds, embedColumnIds, visibleColumns, display, lod, joinTable, dimmed, traceRole, picking, renaming } = data;
+  const { table, fkColumnIds, embedColumnIds, derivedColumnIds, derivedSummaries, visibleColumns, display, lod, joinTable, dimmed, traceRole, picking, renaming } = data;
   const sim = data.simulation ?? null;
+  const lens = data.lens ?? null;
   const fkSet = new Set(fkColumnIds);
   const embedSet = new Set(embedColumnIds);
+  const derivedSet = new Set(derivedColumnIds);
+  const sourceSet = new Set(lens?.sourceColumnIds ?? []);
+  const lineageSet = lens?.lineageColumnIds.length ? new Set(lens.lineageColumnIds) : null;
   const readSet = new Set(sim?.active ? sim.readColumnIds : []);
   const writtenSet = new Set(sim?.active ? sim.writtenColumnIds : []);
   const isView = table.kind === 'view';
@@ -101,6 +126,7 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
   if (sim) classes.push(`table-node--sim-${sim.role}`);
   if (sim?.active) classes.push('table-node--sim-active');
   if (sim?.isTarget) classes.push('table-node--sim-target');
+  if (lens) classes.push('table-node--lens');
   if (dimmed) classes.push('table-node--dim');
   if (picking) classes.push('table-node--pick');
   if (isView) classes.push('table-node--view');
@@ -130,6 +156,14 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
           {joinTable && !isView && (
             <span className="table-node__badge table-node__badge--join" title="Join table: every key column references another table (many-to-many)">
               N:M
+            </span>
+          )}
+          {derivedColumnIds.length > 0 && !isView && (
+            <span
+              className="table-node__badge table-node__badge--derived"
+              title={`${derivedColumnIds.length} of ${table.columns.length} columns are computed by a data flow rather than stored`}
+            >
+              Σ {derivedColumnIds.length}
             </span>
           )}
           {traceRole && <span className="table-node__badge">{traceRole === 'from' ? 'FROM' : traceRole === 'to' ? 'TO' : 'VIA'}</span>}
@@ -171,17 +205,53 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
         {visibleColumns.map((c) => {
           const isFk = fkSet.has(c.id);
           const isEmbed = !c.primaryKey && !isFk && embedSet.has(c.id);
+          const isDerived = derivedSet.has(c.id);
+          const isSource = sourceSet.has(c.id);
+          // Off the chain the lens is following, so the row steps back rather than disappearing.
+          const offChain = Boolean(lineageSet && !lineageSet.has(c.id));
+          const classes = ['table-node__row'];
+          if (c.primaryKey) classes.push('table-node__row--pk');
+          if (readSet.has(c.id)) classes.push('table-node__row--read');
+          if (writtenSet.has(c.id)) classes.push('table-node__row--written');
+          if (lens) {
+            if (isDerived) classes.push('table-node__row--derived');
+            if (isSource) classes.push('table-node__row--feeds');
+            if (offChain) classes.push('table-node__row--offchain');
+            if (c.id === lens.focusColumnId) classes.push('table-node__row--lineage-root');
+          }
+          // While the lens is on, a row says where its value comes from; the
+          // column's own comment follows it rather than being displaced by it.
+          const lensRole = !lens
+            ? null
+            : isDerived && isSource
+              ? 'computed here, and read by another flow'
+              : isDerived
+                ? 'computed by a data flow'
+                : isSource
+                  ? 'read by a data flow to compute something else'
+                  : 'stored';
+          const lensTitle = lensRole ? [`${c.name}: ${lensRole}`, c.comment].filter(Boolean).join('\n') : undefined;
           return (
             <div
               key={c.id}
-              className={`table-node__row${c.primaryKey ? ' table-node__row--pk' : ''}${readSet.has(c.id) ? ' table-node__row--read' : ''}${writtenSet.has(c.id) ? ' table-node__row--written' : ''}`}
-              title={readSet.has(c.id) ? `${c.name}: read by the flow in play` : writtenSet.has(c.id) ? `${c.name}: written by the flow in play` : c.comment || undefined}
+              className={classes.join(' ')}
+              title={
+                readSet.has(c.id)
+                  ? `${c.name}: read by the flow in play`
+                  : writtenSet.has(c.id)
+                    ? `${c.name}: written by the flow in play`
+                    : (lensTitle ?? c.comment ?? undefined) || undefined
+              }
               /* Read by the canvas so a right-click on this row opens the column menu. */
               data-column-id={c.id}
             >
               {!isView && <Handle type="source" position={Position.Left} id={`${c.id}|l`} className="col-handle col-handle--left" />}
-              <span className={`col-icon${c.primaryKey ? ' col-icon--pk' : isFk ? ' col-icon--fk' : isEmbed ? ' col-icon--embed' : ''}`}>
-                {c.primaryKey ? <KeyRound /> : isFk ? <Link2 /> : isEmbed ? <Braces /> : null}
+              <span
+                className={`col-icon${c.primaryKey ? ' col-icon--pk' : isFk ? ' col-icon--fk' : isEmbed ? ' col-icon--embed' : isDerived ? ' col-icon--derived' : ''}`}
+                /* The Σ explains itself on hover, so the formula is one pointer away without opening a panel. */
+                title={isDerived && !c.primaryKey && !isFk ? derivedSummaries[c.id] : undefined}
+              >
+                {c.primaryKey ? <KeyRound /> : isFk ? <Link2 /> : isEmbed ? <Braces /> : isDerived ? <Sigma /> : null}
               </span>
               <span className="col-name">{c.name}</span>
               <span className="col-type">{c.type}</span>

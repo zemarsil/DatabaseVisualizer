@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useStore } from '@/store/useStore';
 import { useSimulation } from '@/store/useSimulation';
+import { useUi } from '@/store/useUi';
 import { simulationTargets } from '@/lib/simulate/engine';
 import { stepSheet } from '@/lib/sheets';
 import { TopBar } from './components/TopBar';
@@ -109,6 +110,12 @@ export default function App() {
           else s.openDrawer('simulate');
           break;
         }
+        case 'd':
+        case 'D':
+          // The derived lens: what is computed rather than stored, everywhere at once.
+          e.preventDefault();
+          useUi.getState().toggleDerived();
+          break;
         case '?':
           e.preventDefault();
           useDialogStore.getState().setHelp(true);
@@ -127,7 +134,9 @@ export default function App() {
           if (s.trace.picking) s.setTracePicking(false);
           else if (s.trace.result) s.clearTrace();
           else if (useSimulation.getState().targetId) useSimulation.getState().stop();
-          else s.clearSelection();
+          // The canvas peels the derived lens back a layer at a time; until it is
+          // gone, Esc is about the lens rather than about the selection.
+          else if (!useUi.getState().derived) s.clearSelection();
           break;
         default:
           break;
