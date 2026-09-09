@@ -10,8 +10,10 @@ import {
   type Index,
   type Note,
   type Relationship,
+  type Sheet,
   type Table,
   type TableDisplay,
+  type Workspace,
 } from '@shared/types';
 import { layoutDiagram, type LayoutDirection } from '@/lib/layout';
 import {
@@ -24,10 +26,14 @@ import {
   createRelationship,
   createTable,
   emptyDiagram,
+  emptyWorkspace,
+  newSheetId,
   pruneRelationships,
+  singleSheetWorkspace,
   uniqueColumnName,
   uniqueCustomTypeName,
   uniqueGroupName,
+  uniqueSheetName,
   uniqueTableName,
 } from '@/lib/model';
 import { nextGroupPosition } from '@/lib/groups';
@@ -35,7 +41,8 @@ import { placementSizes, type SizeMap } from '@/lib/geometry';
 import { PALETTE } from '@/lib/palette';
 import { translateType } from '@/lib/sql/dialect';
 import { findPath, type TraceResult } from '@/lib/trace';
-import { parseDiagramFile, serializeDiagram } from '@/lib/io';
+import { parseWorkspaceFile, serializeWorkspace } from '@/lib/io';
+import { getCurrentWorkspaceId } from '@/lib/currentId';
 import { applyEdgeSelectionChanges, applyNodeSelectionChanges, emptySelection, type Selection, type SelectionChange } from '@/lib/selection';
 import { sampleDiagram } from '@/lib/sample';
 import { newId } from '@/lib/ids';
@@ -65,6 +72,22 @@ export interface Toast {
 export interface NodeSize {
   width: number;
   height: number;
+}
+
+/**
+ * Everything that makes one diagram tab what it is while you are away from it:
+ * the diagram plus the working state you expect to find unchanged when you come
+ * back — its own undo history, what was selected, the trace you had run, the
+ * measured node sizes.
+ */
+export interface SheetSnapshot {
+  id: string;
+  diagram: Diagram;
+  past: Diagram[];
+  future: Diagram[];
+  selection: Selection;
+  trace: TraceState;
+  nodeSizes: Record<string, NodeSize>;
 }
 
 const AUTOSAVE_KEY = 'dbviz:autosave';
@@ -112,6 +135,13 @@ const PANEL_SIZE_LIMITS: Record<keyof PanelSizes, [number, number]> = {
 const DEFAULT_PANEL_SIZES: PanelSizes = { sidebarW: 240, inspectorW: 360, drawerH: 320 };
 
 interface State {
+  /**
+   * The diagram of the sheet you are on. Sheets are the tabs above the canvas:
+   * several diagrams in one workspace, the way a spreadsheet holds several
+   * worksheets. The active one is live here — `diagram`, `past`, `future`,
+   * `selection`, `trace` and `nodeSizes` are its state — and the others wait in
+   * `parked`, so nothing that reads the diagram has to know about sheets at all.
+   */
   diagram: Diagram;
   past: Diagram[];
   future: Diagram[];
@@ -145,6 +175,15 @@ interface State {
   focusRelationshipId: string | null;
   /** Column id the inspector should focus (set by addColumn so Enter-to-add keeps typing flowing). */
   focusColumnId: string | null;
+
+  /* ---- sheets: several diagrams in one workspace ---- */
+  /** Name of the workspace as a whole: what it saves as, whatever its sheets are called. */
+  workspaceName: string;
+  /** Sheet ids in tab order. Never empty, and always holds `activeSheetId`. */
+  sheetIds: string[];
+  activeSheetId: string;
+  /** Every sheet except the active one, whose state is live at the top of this object. */
+  parked: Record<string, SheetSnapshot>;
 }
 
 interface Actions {
@@ -152,9 +191,23 @@ interface Actions {
   undo: () => void;
   redo: () => void;
   mutate: (fn: (d: Diagram) => void, opts?: MutateOptions) => void;
-  setDiagram: (d: Diagram, opts?: { fileBacked?: boolean }) => void;
-  newDiagram: (dialect?: Dialect) => void;
+  /** Replace the diagram of the sheet you are on, history and all. Other sheets are untouched. */
+  setDiagram: (d: Diagram) => void;
   loadSample: () => void;
+
+  // workspace and sheets
+  /** Replace the whole workspace: every sheet, the name, which one is open. */
+  setWorkspace: (ws: Workspace, opts?: { fileBacked?: boolean }) => void;
+  newWorkspace: (dialect?: Dialect) => void;
+  setWorkspaceName: (name: string) => void;
+  /** Add a diagram as a new sheet and, unless told otherwise, switch to it. Returns the sheet id. */
+  addSheet: (opts?: { diagram?: Diagram; name?: string; dialect?: Dialect; after?: string; activate?: boolean }) => string;
+  switchSheet: (id: string) => void;
+  renameSheet: (id: string, name: string) => void;
+  duplicateSheet: (id: string) => string;
+  /** Close a sheet. Closing the last one leaves an empty diagram rather than nothing. */
+  closeSheet: (id: string) => void;
+  moveSheet: (id: string, toIndex: number) => void;
 
   // diagram metadata
   setDiagramName: (name: string) => void;
@@ -277,14 +330,44 @@ interface Actions {
 
 export type Store = State & Actions;
 
-function loadInitialDiagram(): Diagram {
+function loadInitialWorkspace(): Workspace {
   try {
     const raw = localStorage.getItem(AUTOSAVE_KEY);
-    if (raw) return parseDiagramFile(raw);
+    // An autosave written before workspaces existed is a bare diagram. It
+    // becomes a workspace of one whose sheet keeps the id the library already
+    // knows it by, so the checkpoints saved against it are still its own.
+    if (raw) return parseWorkspaceFile(raw, { sheetId: getCurrentWorkspaceId() });
   } catch {
     /* fall through to sample */
   }
-  return sampleDiagram();
+  return singleSheetWorkspace(sampleDiagram());
+}
+
+const emptyTrace = (): TraceState => ({ fromId: null, toId: null, result: null, searched: false, picking: false });
+
+/** A sheet nobody has edited yet: the diagram, and working state that starts clean. */
+function freshSheet(id: string, diagram: Diagram): SheetSnapshot {
+  return { id, diagram, past: [], future: [], selection: emptySelection(), trace: emptyTrace(), nodeSizes: {} };
+}
+
+/** The diagram on a given sheet, live or parked. */
+export function sheetDiagram(s: State, id: string): Diagram | undefined {
+  return id === s.activeSheetId ? s.diagram : s.parked[id]?.diagram;
+}
+
+/** The workspace as it stands right now — what gets saved, autosaved and put in the library. */
+export function currentWorkspace(s: State): Workspace {
+  const sheets: Sheet[] = [];
+  for (const id of s.sheetIds) {
+    const diagram = sheetDiagram(s, id);
+    if (diagram) sheets.push({ id, diagram });
+  }
+  return { version: 1, name: s.workspaceName, activeSheetId: s.activeSheetId, sheets };
+}
+
+/** Every sheet name in tab order — what a new or renamed sheet has to stay clear of. */
+function sheetNames(s: State): string[] {
+  return s.sheetIds.map((id) => sheetDiagram(s, id)?.name ?? '');
 }
 
 function loadTheme(): Theme {
@@ -343,6 +426,55 @@ export const useStore = create<Store>()(
       s.trace.searched = false;
     };
 
+    /* ---------------- sheets ---------------- */
+
+    /** The live sheet, packed up so it can be set aside while another one is edited. */
+    const liveSheet = (s: State): SheetSnapshot => ({
+      id: s.activeSheetId,
+      diagram: s.diagram,
+      past: s.past,
+      future: s.future,
+      selection: s.selection,
+      trace: s.trace,
+      nodeSizes: s.nodeSizes,
+    });
+
+    /** Make `entering` the live sheet. Parking whatever was live is the caller's job. */
+    const hydrate = (s: State, entering: SheetSnapshot) => {
+      delete s.parked[entering.id];
+      s.activeSheetId = entering.id;
+      s.diagram = entering.diagram;
+      s.past = entering.past;
+      s.future = entering.future;
+      s.selection = entering.selection;
+      s.trace = entering.trace;
+      s.nodeSizes = entering.nodeSizes;
+      if (entering.diagram.viewport) s.viewportNonce++;
+      else s.fitViewNonce++;
+    };
+
+    /** Whatever followed the diagram on screen belongs to the sheet you just left. */
+    const leaveSheetUi = () => {
+      const ui = useUi.getState();
+      ui.setFocus(null);
+      ui.setRenamingTableId(null);
+    };
+
+    /**
+     * Park the live sheet, bring `entering` in, and optionally rearrange the
+     * tabs (adding the new sheet's id, dropping a closed one) in the same step.
+     */
+    const showSheet = (entering: SheetSnapshot, place?: (ids: string[]) => string[]) => {
+      const leaving = liveSheet(get());
+      lastCoalesce.key = null;
+      set((s) => {
+        if (leaving.id !== entering.id) s.parked[leaving.id] = leaving;
+        hydrate(s, entering);
+        if (place) s.sheetIds = place(s.sheetIds);
+      });
+      leaveSheetUi();
+    };
+
     const removeElements: Actions['removeElements'] = ({ tableIds = [], noteIds = [], relationshipIds = [] }) => {
       const tables = new Set(tableIds);
       const notes = new Set(noteIds);
@@ -369,13 +501,20 @@ export const useStore = create<Store>()(
       });
     };
 
+    const boot = loadInitialWorkspace();
+    const bootActive = boot.sheets.find((sh) => sh.id === boot.activeSheetId) ?? boot.sheets[0];
+
     return {
-      diagram: loadInitialDiagram(),
+      diagram: bootActive.diagram,
       past: [],
       future: [],
       nodeSizes: {},
       selection: emptySelection(),
-      trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
+      trace: emptyTrace(),
+      workspaceName: boot.name,
+      sheetIds: boot.sheets.map((sh) => sh.id),
+      activeSheetId: bootActive.id,
+      parked: Object.fromEntries(boot.sheets.filter((sh) => sh.id !== bootActive.id).map((sh) => [sh.id, freshSheet(sh.id, sh.diagram)])),
       theme: loadTheme(),
       drawer: { open: false, tab: 'sql' },
       activeWalkthroughSlug: null,
@@ -418,26 +557,136 @@ export const useStore = create<Store>()(
         });
       },
       mutate,
-      setDiagram: (d, opts) => {
+      setDiagram: (d) => {
+        const s = get();
+        // Replacing one sheet of several still leaves the workspace changed;
+        // replacing the only one is a fresh document with nothing to save yet.
+        const others = s.sheetIds.filter((id) => id !== s.activeSheetId);
+        const diagram = others.length ? { ...d, name: uniqueSheetName(others.map((id) => sheetDiagram(s, id)?.name ?? ''), d.name) } : d;
         lastCoalesce.key = null;
-        set((s) => {
-          s.diagram = d;
-          s.past = [];
-          s.future = [];
-          s.selection = emptySelection();
-          s.trace = { fromId: null, toId: null, result: null, searched: false, picking: false };
-          s.nodeSizes = {};
-          s.dirty = false;
-          s.fileBacked = opts?.fileBacked ?? false;
-          if (d.viewport) s.viewportNonce++;
-          else s.fitViewNonce++;
+        set((st) => {
+          hydrate(st, freshSheet(st.activeSheetId, diagram));
+          st.dirty = others.length > 0;
+          if (!others.length) {
+            st.fileBacked = false;
+            st.workspaceName = diagram.name;
+          }
         });
+        leaveSheetUi();
       },
-      newDiagram: (dialect = 'postgresql') => get().setDiagram(emptyDiagram(dialect)),
       loadSample: () => get().setDiagram(sampleDiagram()),
 
+      /* ---------------- workspace and sheets ---------------- */
+      setWorkspace: (ws, opts) => {
+        if (ws.sheets.length === 0) return;
+        const active = ws.sheets.find((sh) => sh.id === ws.activeSheetId) ?? ws.sheets[0];
+        lastCoalesce.key = null;
+        set((s) => {
+          s.workspaceName = ws.name;
+          s.sheetIds = ws.sheets.map((sh) => sh.id);
+          s.parked = Object.fromEntries(ws.sheets.filter((sh) => sh.id !== active.id).map((sh) => [sh.id, freshSheet(sh.id, sh.diagram)]));
+          hydrate(s, freshSheet(active.id, active.diagram));
+          s.dirty = false;
+          s.fileBacked = opts?.fileBacked ?? false;
+        });
+        leaveSheetUi();
+      },
+      newWorkspace: (dialect) => get().setWorkspace(emptyWorkspace(dialect ?? get().diagram.dialect)),
+      setWorkspaceName: (name) =>
+        set((s) => {
+          s.workspaceName = name;
+          // A workspace of one diagram is that diagram: naming either names both.
+          if (s.sheetIds.length === 1) s.diagram.name = name;
+          s.dirty = true;
+        }),
+
+      addSheet: ({ diagram, name, dialect, after, activate = true } = {}) => {
+        const s = get();
+        const id = newSheetId();
+        const d = { ...(diagram ?? emptyDiagram(dialect ?? s.diagram.dialect)) };
+        d.name = uniqueSheetName(sheetNames(s), name ?? d.name);
+        const entering = freshSheet(id, d);
+        const at = s.sheetIds.indexOf(after ?? s.activeSheetId);
+        const place = (ids: string[]) => {
+          const next = [...ids];
+          next.splice(at < 0 ? next.length : at + 1, 0, id);
+          return next;
+        };
+        if (activate) showSheet(entering, place);
+        else
+          set((st) => {
+            st.parked[id] = entering;
+            st.sheetIds = place(st.sheetIds);
+          });
+        set((st) => void (st.dirty = true));
+        return id;
+      },
+
+      switchSheet: (id) => {
+        const s = get();
+        if (id === s.activeSheetId) return;
+        const entering = s.parked[id];
+        if (!entering) return;
+        showSheet(entering);
+      },
+
+      renameSheet: (id, name) => {
+        const next = name.trim();
+        if (!next) return;
+        set((s) => {
+          if (id === s.activeSheetId) s.diagram.name = next;
+          else if (s.parked[id]) s.parked[id].diagram.name = next;
+          else return;
+          if (s.sheetIds.length === 1) s.workspaceName = next;
+          s.dirty = true;
+        });
+      },
+
+      duplicateSheet: (id) => {
+        const source = sheetDiagram(get(), id);
+        if (!source) return id;
+        return get().addSheet({ diagram: structuredClone(source), name: `${source.name} copy`, after: id });
+      },
+
+      closeSheet: (id) => {
+        const s = get();
+        const at = s.sheetIds.indexOf(id);
+        if (at < 0) return;
+        if (s.sheetIds.length === 1) {
+          // The last sheet cannot go: it empties instead, so there is always a
+          // canvas — and the workspace keeps the name it was saved under.
+          get().setDiagram(emptyDiagram(s.diagram.dialect, s.workspaceName));
+          set((st) => void (st.dirty = true));
+          return;
+        }
+        const entering = id === s.activeSheetId ? s.parked[s.sheetIds[at + 1] ?? s.sheetIds[at - 1]] : null;
+        lastCoalesce.key = null;
+        set((st) => {
+          st.sheetIds = st.sheetIds.filter((x) => x !== id);
+          delete st.parked[id];
+          if (entering) hydrate(st, entering);
+          st.dirty = true;
+        });
+        if (entering) leaveSheetUi();
+      },
+
+      moveSheet: (id, toIndex) =>
+        set((s) => {
+          const from = s.sheetIds.indexOf(id);
+          if (from < 0) return;
+          const to = Math.max(0, Math.min(s.sheetIds.length - 1, toIndex));
+          if (to === from) return;
+          s.sheetIds.splice(from, 1);
+          s.sheetIds.splice(to, 0, id);
+          s.dirty = true;
+        }),
+
       /* ---------------- metadata ---------------- */
-      setDiagramName: (name) => mutate((d) => void (d.name = name), { history: false }),
+      setDiagramName: (name) => {
+        mutate((d) => void (d.name = name), { history: false });
+        // A workspace of one diagram is that diagram: naming either names both.
+        if (get().sheetIds.length === 1) set((s) => void (s.workspaceName = name));
+      },
       setDialect: (dialect, translateTypes) =>
         mutate((d) => {
           const from = d.dialect;
@@ -1088,13 +1337,25 @@ export const useStore = create<Store>()(
 );
 
 /* ---------------- autosave ---------------- */
+
+/** True when the saved shape of the workspace changed: any sheet, the tabs, the name. */
+export function workspaceChanged(state: State, prev: State): boolean {
+  return (
+    state.diagram !== prev.diagram ||
+    state.parked !== prev.parked ||
+    state.sheetIds !== prev.sheetIds ||
+    state.activeSheetId !== prev.activeSheetId ||
+    state.workspaceName !== prev.workspaceName
+  );
+}
+
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 useStore.subscribe((state, prev) => {
-  if (state.diagram === prev.diagram) return;
+  if (!workspaceChanged(state, prev)) return;
   if (saveTimer) clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try {
-      localStorage.setItem(AUTOSAVE_KEY, serializeDiagram(useStore.getState().diagram));
+      localStorage.setItem(AUTOSAVE_KEY, serializeWorkspace(currentWorkspace(useStore.getState())));
     } catch {
       /* storage full or unavailable */
     }

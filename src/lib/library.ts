@@ -1,36 +1,48 @@
 /**
- * The diagram library: every diagram you have worked on, kept in IndexedDB
+ * The workspace library: every workspace you have worked on, kept in IndexedDB
  * with a thumbnail, plus named checkpoints per diagram. The autosave in
- * useStore still writes the current diagram to localStorage for a fast boot;
+ * useStore still writes the open workspace to localStorage for a fast boot;
  * this adds the "open recent" list and snapshots you can go back to.
+ *
+ * A record holds a whole workspace — every sheet — while a checkpoint holds one
+ * diagram, and hangs off that sheet's id rather than the workspace's, so a
+ * snapshot follows the diagram it was taken of.
  */
-import type { Diagram } from '@shared/types';
-import { parseDiagramFile, serializeDiagram } from './io';
+import type { Diagram, Workspace } from '@shared/types';
+import { parseDiagramFile, parseWorkspaceFile, serializeDiagram, serializeWorkspace } from './io';
 import { diagramThumbnail } from './thumbnail';
 import { newId } from './ids';
-import { useStore } from '@/store/useStore';
+import { currentWorkspace, useStore, workspaceChanged } from '@/store/useStore';
+import { getCurrentWorkspaceId, newWorkspaceId, setCurrentWorkspaceId } from './currentId';
+
+export { getCurrentWorkspaceId, newWorkspaceId, setCurrentWorkspaceId };
 
 const DB_NAME = 'dbviz';
 const DB_VERSION = 1;
 const DIAGRAMS = 'diagrams';
 const CHECKPOINTS = 'checkpoints';
-const CURRENT_KEY = 'dbviz:currentId';
 const AUTOSAVE_MS = 1500;
 
-export interface DiagramRecord {
+export interface WorkspaceRecord {
   id: string;
   name: string;
+  /** Dialect of the sheet that was open, for the one-line summary. */
   dialect: Diagram['dialect'];
+  /** Tables across every sheet. */
   tableCount: number;
+  sheetCount: number;
+  /** Sheet ids, so the checkpoints belonging to this workspace can be found without parsing it. */
+  sheetIds: string[];
   updatedAt: number;
-  /** SVG data URL. */
+  /** SVG data URL of the sheet that was open. */
   thumbnail: string;
-  /** serializeDiagram output. */
+  /** serializeWorkspace output. */
   data: string;
 }
 
 export interface CheckpointRecord {
   id: string;
+  /** The sheet this snapshot was taken of. */
   diagramId: string;
   name: string;
   createdAt: number;
@@ -40,8 +52,19 @@ export interface CheckpointRecord {
 
 /* ---------------- pure helpers ---------------- */
 
-export function diagramRecord(d: Diagram, id: string, updatedAt = Date.now()): DiagramRecord {
-  return { id, name: d.name || 'Untitled diagram', dialect: d.dialect, tableCount: d.tables.length, updatedAt, thumbnail: diagramThumbnail(d), data: serializeDiagram(d) };
+export function workspaceRecord(ws: Workspace, id: string, updatedAt = Date.now()): WorkspaceRecord {
+  const active = ws.sheets.find((s) => s.id === ws.activeSheetId) ?? ws.sheets[0];
+  return {
+    id,
+    name: ws.name || 'Untitled diagram',
+    dialect: active.diagram.dialect,
+    tableCount: ws.sheets.reduce((n, s) => n + s.diagram.tables.length, 0),
+    sheetCount: ws.sheets.length,
+    sheetIds: ws.sheets.map((s) => s.id),
+    updatedAt,
+    thumbnail: diagramThumbnail(active.diagram),
+    data: serializeWorkspace(ws),
+  };
 }
 
 export function checkpointRecord(d: Diagram, diagramId: string, name: string, createdAt = Date.now()): CheckpointRecord {
@@ -54,8 +77,13 @@ export function defaultCheckpointName(at = Date.now()): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+/** A checkpoint's payload: one diagram. */
 export function recordToDiagram(r: { data: string }): Diagram {
   return parseDiagramFile(r.data);
+}
+
+export function recordToWorkspace(r: { data: string }): Workspace {
+  return parseWorkspaceFile(r.data);
 }
 
 export function relativeTime(at: number, now = Date.now()): string {
@@ -68,32 +96,6 @@ export function relativeTime(at: number, now = Date.now()): string {
   const days = Math.round(h / 24);
   if (days < 30) return `${days} day${days === 1 ? '' : 's'} ago`;
   return new Date(at).toLocaleDateString();
-}
-
-/* ---------------- current diagram identity ---------------- */
-
-export function newDiagramId(): string {
-  return newId('dgm');
-}
-
-export function getCurrentDiagramId(): string {
-  try {
-    const id = localStorage.getItem(CURRENT_KEY);
-    if (id) return id;
-    const fresh = newDiagramId();
-    localStorage.setItem(CURRENT_KEY, fresh);
-    return fresh;
-  } catch {
-    return 'dgm_session';
-  }
-}
-
-export function setCurrentDiagramId(id: string): void {
-  try {
-    localStorage.setItem(CURRENT_KEY, id);
-  } catch {
-    /* ignore */
-  }
 }
 
 /* ---------------- IndexedDB ---------------- */
@@ -136,27 +138,35 @@ function request<T>(store: string, mode: IDBTransactionMode, fn: (s: IDBObjectSt
   );
 }
 
-export async function listDiagrams(): Promise<DiagramRecord[]> {
+export async function listWorkspaces(): Promise<WorkspaceRecord[]> {
   if (!hasIdb()) return [];
-  const all = await request<DiagramRecord[]>(DIAGRAMS, 'readonly', (s) => s.getAll());
-  return all.sort((a, b) => b.updatedAt - a.updatedAt);
+  const all = await request<WorkspaceRecord[]>(DIAGRAMS, 'readonly', (s) => s.getAll());
+  return all.map(migrateRecord).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
-export async function getDiagram(id: string): Promise<DiagramRecord | undefined> {
+export async function getWorkspace(id: string): Promise<WorkspaceRecord | undefined> {
   if (!hasIdb()) return undefined;
-  return request<DiagramRecord | undefined>(DIAGRAMS, 'readonly', (s) => s.get(id));
+  const r = await request<WorkspaceRecord | undefined>(DIAGRAMS, 'readonly', (s) => s.get(id));
+  return r ? migrateRecord(r) : undefined;
 }
 
-export async function putDiagram(record: DiagramRecord): Promise<void> {
+/** An entry written before workspaces existed holds one diagram, whose sheet id is the entry's own. */
+function migrateRecord(r: WorkspaceRecord): WorkspaceRecord {
+  return r.sheetIds ? r : { ...r, sheetCount: 1, sheetIds: [r.id] };
+}
+
+export async function putWorkspace(record: WorkspaceRecord): Promise<void> {
   if (!hasIdb()) return;
   await request(DIAGRAMS, 'readwrite', (s) => s.put(record));
 }
 
-export async function deleteDiagram(id: string): Promise<void> {
+export async function deleteWorkspace(record: Pick<WorkspaceRecord, 'id' | 'sheetIds'>): Promise<void> {
   if (!hasIdb()) return;
-  await request(DIAGRAMS, 'readwrite', (s) => s.delete(id));
-  const cks = await listCheckpoints(id);
-  for (const c of cks) await deleteCheckpoint(c.id);
+  await request(DIAGRAMS, 'readwrite', (s) => s.delete(record.id));
+  // Checkpoints hang off sheets; an entry from before workspaces used its own id as the sheet's.
+  for (const sheetId of record.sheetIds?.length ? record.sheetIds : [record.id]) {
+    for (const c of await listCheckpoints(sheetId)) await deleteCheckpoint(c.id);
+  }
 }
 
 export async function listCheckpoints(diagramId: string): Promise<CheckpointRecord[]> {
@@ -179,39 +189,39 @@ export async function deleteCheckpoint(id: string): Promise<void> {
 
 let installed = false;
 
-/** Keeps the current diagram's library record fresh (debounced). Call once. */
+/** Keeps the open workspace's library record fresh (debounced). Call once. */
 export function installLibraryAutosave(): void {
   if (installed || !hasIdb()) return;
   installed = true;
   let timer: ReturnType<typeof setTimeout> | null = null;
   const save = () => {
-    const d = useStore.getState().diagram;
-    void putDiagram(diagramRecord(d, getCurrentDiagramId())).catch(() => undefined);
+    void putWorkspace(workspaceRecord(currentWorkspace(useStore.getState()), getCurrentWorkspaceId())).catch(() => undefined);
   };
   useStore.subscribe((state, prev) => {
-    if (state.diagram === prev.diagram) return;
+    if (!workspaceChanged(state, prev)) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(save, AUTOSAVE_MS);
   });
-  // Make sure the diagram that was already open shows up in the library.
+  // Make sure the workspace that was already open shows up in the library.
   setTimeout(save, 500);
 }
 
-/** Save the current diagram immediately under the current id (used before switching diagrams). */
-export function flushCurrentDiagram(): Promise<void> {
+/** Save the open workspace immediately under the current id (used before opening another one). */
+export function flushCurrentWorkspace(): Promise<void> {
   if (!hasIdb()) return Promise.resolve();
-  return putDiagram(diagramRecord(useStore.getState().diagram, getCurrentDiagramId())).catch(() => undefined);
+  return putWorkspace(workspaceRecord(currentWorkspace(useStore.getState()), getCurrentWorkspaceId())).catch(() => undefined);
 }
 
-/** Every "replace the whole diagram" path calls this first, so the diagram it is leaving gets its own library entry instead of being overwritten by what replaces it. */
-export async function startFreshDiagramEntry(): Promise<void> {
-  await flushCurrentDiagram();
-  setCurrentDiagramId(newDiagramId());
+/** Every "replace the whole workspace" path calls this first, so what it is leaving gets its own library entry instead of being overwritten by what replaces it. */
+export async function startFreshWorkspaceEntry(): Promise<void> {
+  await flushCurrentWorkspace();
+  setCurrentWorkspaceId(newWorkspaceId());
 }
 
+/** Snapshot the diagram on the sheet you are on. */
 export async function saveCheckpoint(name: string): Promise<CheckpointRecord> {
-  const d = useStore.getState().diagram;
-  const record = checkpointRecord(d, getCurrentDiagramId(), name);
+  const s = useStore.getState();
+  const record = checkpointRecord(s.diagram, s.activeSheetId, name);
   await putCheckpoint(record);
   return record;
 }

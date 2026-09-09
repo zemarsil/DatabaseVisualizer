@@ -10,6 +10,7 @@ import { PALETTE } from '@/lib/palette';
 import { useStore } from '@/store/useStore';
 import { buildContextMenu, describeElements, hasActions, type ContextTarget, type MenuEnv, type MenuNode } from './contextMenuItems';
 import { copyTextToClipboard, pasteFromClipboard } from '@/lib/canvasActions';
+import { addSheet, closeSheetWithConfirm, renameSheetWithPrompt } from '@/lib/sheets';
 import { confirmDialog, promptDialog } from './Modal';
 
 interface OpenMenu {
@@ -71,6 +72,9 @@ function ContextMenuView({ menu }: { menu: OpenMenu }) {
     return {
       store: s,
       pasteAt: (at) => void pasteFromClipboard(at),
+      renameSheet: (id) => void renameSheetWithPrompt(id),
+      closeSheet: (id) => void closeSheetWithConfirm(id),
+      addSheet,
       copy: (text, message) => void copyTextToClipboard(text, message),
       renameTable: (tableId) => {
         const table = s.diagram.tables.find((t) => t.id === tableId);

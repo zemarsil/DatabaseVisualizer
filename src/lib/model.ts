@@ -12,12 +12,37 @@ import {
   type Relationship,
   type RelationshipKind,
   type Table,
+  type Workspace,
 } from '@shared/types';
 import { newId } from './ids';
 import { colorForName } from './palette';
 
 export function emptyDiagram(dialect: Dialect = 'postgresql', name = 'Untitled diagram'): Diagram {
   return { version: 1, name, dialect, tables: [], relationships: [], notes: [], groups: [], customTypes: [] };
+}
+
+export function newSheetId(): string {
+  return newId('sht');
+}
+
+/** A workspace holding one diagram — what every file written before workspaces existed becomes. */
+export function singleSheetWorkspace(d: Diagram, id: string = newSheetId()): Workspace {
+  return { version: 1, name: d.name, sheets: [{ id, diagram: d }], activeSheetId: id };
+}
+
+/** A new workspace: one empty diagram, named the same, so it still saves as a plain diagram file. */
+export function emptyWorkspace(dialect: Dialect = 'postgresql', name = 'Untitled diagram'): Workspace {
+  return singleSheetWorkspace(emptyDiagram(dialect, name));
+}
+
+/** "Untitled diagram 2" — a name no other sheet in the workspace is using. */
+export function uniqueSheetName(taken: string[], base: string): string {
+  const used = new Set(taken);
+  if (!used.has(base)) return base;
+  for (let i = 2; ; i++) {
+    const next = `${base} ${i}`;
+    if (!used.has(next)) return next;
+  }
 }
 
 export function isView(t: Pick<Table, 'kind'>): boolean {

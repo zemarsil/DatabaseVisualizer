@@ -11,7 +11,8 @@
  */
 import type { Dialect } from '@shared/types';
 import { parseDiagramFile } from '@/lib/io';
-import { startFreshDiagramEntry } from '@/lib/library';
+import { emptyDiagram } from '@/lib/model';
+import { startFreshWorkspaceEntry } from '@/lib/library';
 import { useStore } from '@/store/useStore';
 import { confirmDialog } from '@/components/ui/Modal';
 
@@ -33,9 +34,8 @@ async function replaceCanvas(r: Replacement): Promise<boolean> {
   try {
     const d = r.json ? parseDiagramFile(r.json) : null;
     if (s.diagram.tables.length && !(await confirmDialog({ title: r.title, message: r.message, confirmLabel: r.confirmLabel }))) return false;
-    await startFreshDiagramEntry();
-    if (d) s.setDiagram(d);
-    else s.newDiagram(r.dialect);
+    await startFreshWorkspaceEntry();
+    s.setDiagram(d ?? emptyDiagram(r.dialect));
     s.toast('success', r.done(d?.name ?? 'a blank canvas'));
     return true;
   } catch (e) {

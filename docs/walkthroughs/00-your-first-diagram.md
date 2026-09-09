@@ -67,7 +67,7 @@ erDiagram
 This is the first walkthrough in the series, so there is nothing to have done
 first — just open the app. Press **Set up the canvas** at the top of this
 walkthrough (in the drawer's **Walkthrough** tab) and it clears the canvas for
-you, which is where this one starts; **File → New diagram** does the same
+you, which is where this one starts; **File → New workspace** does the same
 thing. Check that **PostgreSQL** is selected in the dialect selector
 at the top of the window (it is the default). Everything below is spelled the
 PostgreSQL way because of that selector; pick a different dialect later and

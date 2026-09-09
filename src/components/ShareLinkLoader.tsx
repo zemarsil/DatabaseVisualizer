@@ -1,35 +1,28 @@
 import { useEffect } from 'react';
 import { useStore } from '@/store/useStore';
 import { clearSharedPayloadFromLocation, decodeDiagramFromUrl, readSharedPayloadFromLocation } from '@/lib/share';
-import { flushCurrentDiagram, newDiagramId, setCurrentDiagramId } from '@/lib/library';
-import { confirmDialog } from './ui/Modal';
 
 let handling = false;
 
-/** Opens a diagram passed in the URL hash (`#d=…`). Renders nothing. */
+/** Opens a diagram passed in the URL hash (`#d=…`) as a new sheet. Renders nothing. */
 export function ShareLinkLoader() {
   useEffect(() => {
     const run = async () => {
       const payload = readSharedPayloadFromLocation();
       if (!payload || handling) return;
       handling = true;
-      const { setDiagram, toast } = useStore.getState();
+      const { addSheet, setDiagram, toast } = useStore.getState();
       try {
         const decoded = await decodeDiagramFromUrl(payload);
-        const current = useStore.getState().diagram;
-        const ok =
-          current.tables.length === 0 ||
-          (await confirmDialog({
-            title: 'Open shared diagram?',
-            message: `"${decoded.name}" (${decoded.tables.length} table${decoded.tables.length === 1 ? '' : 's'}) was shared with you. Your current diagram stays in this browser.`,
-            confirmLabel: 'Open',
-          }));
-        if (ok) {
-          // keep whatever was open as its own library entry; the shared copy gets a new one
-          await flushCurrentDiagram();
-          setCurrentDiagramId(newDiagramId());
+        // A shared diagram arrives as a sheet of its own, so nothing you had
+        // open is replaced — unless the canvas is an untouched blank one.
+        const current = useStore.getState();
+        if (current.sheetIds.length === 1 && current.diagram.tables.length === 0) {
           setDiagram(decoded);
           toast('success', `Opened "${decoded.name}" from the link.`);
+        } else {
+          addSheet({ diagram: decoded });
+          toast('success', `Opened "${decoded.name}" from the link, in a new tab of this workspace.`);
         }
       } catch (e) {
         toast('error', e instanceof Error ? e.message : 'The shared link could not be opened.');

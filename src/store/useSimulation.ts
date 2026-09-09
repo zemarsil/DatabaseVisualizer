@@ -203,6 +203,8 @@ let lastSignature: string | null = null;
 let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
 useStore.subscribe((state, prev) => {
+  // A simulation belongs to the diagram it runs on; moving to another sheet leaves it.
+  if (state.activeSheetId !== prev.activeSheetId && useSimulation.getState().targetId) useSimulation.getState().stop();
   if (state.diagram === prev.diagram) return;
   const sim = useSimulation.getState();
   if (!sim.targetId) {
