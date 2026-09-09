@@ -15,6 +15,7 @@ import {
   type Table,
   type Workspace,
 } from '@shared/types';
+import { columnNameKey, matchColumnsByName } from './derivation';
 import { newId } from './ids';
 import { colorForName } from './palette';
 
@@ -236,6 +237,69 @@ export function embeddedColumnIds(d: Diagram, tableId: string): Set<string> {
     if (r.kind === 'embed' && r.sourceTableId === tableId && r.sourceColumnIds[0]) ids.add(r.sourceColumnIds[0]);
   }
   return ids;
+}
+
+/**
+ * Derivations that fill a flow's still-unmapped target columns from source
+ * columns of the same name: plain passthroughs, no aggregate, carrying forward
+ * the grouping and filter of the entries already there so the generator can
+ * still write the whole set as one INSERT ... SELECT.
+ */
+export function derivationsMatchedByName(src: Table, tgt: Table, existing: Derivation[]): Derivation[] {
+  // A table feeding itself would match every column to itself, which says nothing.
+  if (src.id === tgt.id) return [];
+  // Same "the next column is rolled up like the last one" assumption the
+  // inspector's Add button makes; the aggregate is deliberately not copied,
+  // because a name match is a column carried across, not a rollup.
+  const like = existing[existing.length - 1];
+  return matchColumnsByName(src.columns, tgt.columns, existing).map((m) =>
+    createDerivation({
+      targetColumnId: m.targetColumnId,
+      expression: m.sourceColumnName,
+      groupBy: [...(like?.groupBy ?? [])],
+      filter: like?.filter,
+    }),
+  );
+}
+
+/**
+ * The same data flow aimed at another table: one source feeding five tables
+ * that share a shape is five relationships, and this builds the other four from
+ * the one already filled in.
+ *
+ * Each derivation is re-pointed at the column of `to` that carries the same
+ * name as the column it filled in `from`; a derivation with no counterpart
+ * there is dropped rather than left pointing at a column of another table. The
+ * tagged query is not carried over — it names the old target table, so copying
+ * it would produce SQL that quietly writes to the wrong place.
+ */
+export function flowCopyForTable(r: Relationship, from: Table, to: Table): Omit<Relationship, 'id'> {
+  const byKey = new Map<string, Column>();
+  for (const c of to.columns) {
+    const key = columnNameKey(c.name);
+    if (key && !byKey.has(key)) byKey.set(key, c);
+  }
+  const derivations: Derivation[] = [];
+  for (const dv of r.derivations ?? []) {
+    const name = from.columns.find((c) => c.id === dv.targetColumnId)?.name;
+    const column = name ? (to.columns.find((c) => c.name.trim() === name.trim()) ?? byKey.get(columnNameKey(name))) : undefined;
+    if (!column) continue;
+    const { id: _id, ...rest } = dv;
+    derivations.push(createDerivation({ ...rest, targetColumnId: column.id, groupBy: [...dv.groupBy] }));
+  }
+  return {
+    kind: 'flow',
+    ...(r.verb ? { verb: r.verb } : {}),
+    sourceTableId: r.sourceTableId,
+    // The source end can keep its anchor column; the target end's belongs to the
+    // table being copied away from, so the new edge meets the header instead.
+    sourceColumnIds: [...r.sourceColumnIds],
+    targetTableId: to.id,
+    targetColumnIds: [],
+    ...(r.name ? { name: r.name } : {}),
+    ...(r.note ? { note: r.note } : {}),
+    ...(derivations.length ? { derivations } : {}),
+  };
 }
 
 /** Remove dangling references after tables/columns are deleted. */

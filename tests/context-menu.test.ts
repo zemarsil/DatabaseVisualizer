@@ -5,6 +5,7 @@ import { sampleDiagram } from '../src/lib/sample';
 import { decodeClipboard } from '../src/lib/clipboard';
 import type { Store } from '../src/store/useStore';
 import { placementSizes } from '../src/lib/geometry';
+import { createColumn } from '../src/lib/model';
 
 /** A store stub: real state, recorded actions. */
 function makeEnv(diagram: Diagram, over: Partial<Store> = {}) {
@@ -25,6 +26,7 @@ function makeEnv(diagram: Diagram, over: Partial<Store> = {}) {
     duplicateTable: vi.fn(),
     duplicateNote: vi.fn(),
     swapRelationship: vi.fn(),
+    fillFlowByName: vi.fn(() => 2),
     moveColumn: vi.fn(),
     applyLayout: vi.fn(),
     requestFitView: vi.fn(),
@@ -307,6 +309,24 @@ describe('connection menu', () => {
       sourceColumnIds: [src.columns[0].id],
       targetColumnIds: [(tgt.columns.find((c) => c.primaryKey) ?? tgt.columns[0]).id],
     });
+  });
+
+  it("offers to match a flow's remaining columns by name, and only when some match", () => {
+    const d = sampleDiagram();
+    const flow = d.relationships.find((r) => r.kind === 'flow')!;
+    const src = d.tables.find((t) => t.id === flow.sourceTableId)!;
+    const tgt = d.tables.find((t) => t.id === flow.targetTableId)!;
+    // A column of the target spelled exactly like one of the source, with nothing deriving it yet.
+    tgt.columns.push(createColumn({ name: src.columns[1].name, type: src.columns[1].type }));
+    const { env, actions } = makeEnv(d);
+    const items = buildContextMenu({ type: 'relationship', relationshipId: flow.id }, env);
+    expect(action(items, 'match-by-name').disabled).toBeFalsy();
+    action(items, 'match-by-name').run();
+    expect(actions.fillFlowByName).toHaveBeenCalledWith(flow.id);
+
+    // A foreign key has no derivations at all, so it is not offered the item.
+    const fk = d.relationships.find((r) => r.kind === 'fk')!;
+    expect(ids(buildContextMenu({ type: 'relationship', relationshipId: fk.id }, env))).not.toContain('match-by-name');
   });
 
   it('says how many columns a flow derives', () => {

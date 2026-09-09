@@ -51,12 +51,13 @@ import {
   StickyNote,
   Trash2,
   Undo2,
+  Wand2,
   Waypoints,
   X,
   type LucideIcon,
 } from 'lucide-react';
 import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
-import { flowDerivations } from '@/lib/derivation';
+import { flowDerivations, matchColumnsByName } from '@/lib/derivation';
 import { createGroup, customTypeByName, relationshipKindPatch, uniqueGroupName } from '@/lib/model';
 import { emptySelection, selectionSize, type Selection } from '@/lib/selection';
 import { selectionMarkdown, selectionSql } from '@/lib/selectionExport';
@@ -715,6 +716,11 @@ function relationshipMenu(relationshipId: string, env: MenuEnv): MenuNode[] {
     selectOnly(s, { relationshipId: r.id });
     s.setInspectorOpen(true);
   };
+  // Target columns a source column of the same name could fill: the repetitive
+  // half of a passthrough flow, offered here as one click.
+  const src = s.diagram.tables.find((t) => t.id === r.sourceTableId);
+  const tgt = s.diagram.tables.find((t) => t.id === r.targetTableId);
+  const matches = r.kind === 'flow' && src && tgt && src.id !== tgt.id ? matchColumnsByName(src.columns, tgt.columns, r.derivations ?? []) : [];
   return [
     {
       kind: 'heading',
@@ -732,6 +738,22 @@ function relationshipMenu(relationshipId: string, env: MenuEnv): MenuNode[] {
             icon: Play,
             hint: derived ? undefined : 'add derived columns first',
             run: () => useSimulation.getState().start(r.targetTableId),
+          },
+        ]
+      : []),
+    ...(r.kind === 'flow'
+      ? [
+          {
+            kind: 'action' as const,
+            id: 'match-by-name',
+            label: 'Match columns by name',
+            icon: Wand2,
+            disabled: matches.length === 0,
+            hint: matches.length ? plural(matches.length, 'column') : derived ? 'all mapped' : 'no matching names',
+            run: () => {
+              const n = s.fillFlowByName(r.id);
+              if (n > 0) s.toast('success', `Filled ${plural(n, 'column')} of ${name(r.targetTableId)} from ${name(r.sourceTableId)}.`);
+            },
           },
         ]
       : []),
