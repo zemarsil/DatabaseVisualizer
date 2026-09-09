@@ -42,7 +42,7 @@ export interface PackParseResult {
 
 const STORAGE_KEY = 'dbviz.extensionPacks';
 /** A pack is prose and names; anything this size is not that, and would crowd out other storage. */
-const MAX_PACK_BYTES = 2_000_000;
+const MAX_PACK_CHARS = 2_000_000;
 
 const DIALECTS = new Set<string>(['postgresql', 'mariadb', 'sqlite']);
 const INSTALLS = new Set<string>(['create-extension', 'install-soname', 'client-loaded', 'built-in']);
@@ -136,8 +136,8 @@ function parseDef(raw: unknown, index: number, fallbackDialect: Dialect | undefi
 export function parseExtensionPack(json: string, opts: { origin?: string; id?: string } = {}): PackParseResult {
   const errors: string[] = [];
   const warnings: string[] = [];
-  if (json.length > MAX_PACK_BYTES) {
-    return { pack: null, errors: [`The file is ${Math.round(json.length / 1000)} kB; extension packs are capped at ${MAX_PACK_BYTES / 1000} kB.`], warnings };
+  if (json.length > MAX_PACK_CHARS) {
+    return { pack: null, errors: [`The file is ${Math.round(json.length / 1000)}k characters; extension packs are capped at ${MAX_PACK_CHARS / 1000}k.`], warnings };
   }
   let raw: unknown;
   try {
@@ -243,6 +243,9 @@ export function loadPacks(): ExtensionPack[] {
     const o = entry as Record<string, unknown>;
     const id = text(o.id);
     if (!id || !Array.isArray(o.extensions)) continue;
+    // Errors are collected and dropped: this is our own storage being re-read,
+    // not a file someone just handed us, so a stale entry is skipped quietly
+    // rather than shown as a problem the user cannot act on.
     const errors: string[] = [];
     const defs = o.extensions
       .map((e, i) => parseDef(e, i, undefined, errors))

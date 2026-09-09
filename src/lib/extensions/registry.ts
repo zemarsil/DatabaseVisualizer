@@ -28,6 +28,8 @@ let packs: ExtensionPack[] | null = null;
 /** Definitions learned from a live database this session; not persisted. */
 let learned: ExtensionDef[] = [];
 let merged: Map<string, ExtensionDef> | null = null;
+/** base type name -> the definitions that provide it, per dialect. Built with `merged`. */
+let byType: Map<string, ExtensionDef[]> | null = null;
 let version = 0;
 const listeners = new Set<() => void>();
 
@@ -49,8 +51,29 @@ function index(): Map<string, ExtensionDef> {
   return merged;
 }
 
+/**
+ * The reverse index the linter needs: "which extension provides a type called
+ * this?". Built once per catalog change rather than per column, because
+ * lintDiagram asks it for every column whose type is not one the engine has.
+ */
+function typeIndex(): Map<string, ExtensionDef[]> {
+  if (!byType) {
+    byType = new Map();
+    for (const def of index().values()) {
+      for (const t of def.types ?? []) {
+        const k = key(def.dialect, baseTypeName(t.name));
+        const list = byType.get(k);
+        if (list) list.push(def);
+        else byType.set(k, [def]);
+      }
+    }
+  }
+  return byType;
+}
+
 function invalidate(): void {
   merged = null;
+  byType = null;
   version++;
   for (const l of listeners) l();
 }
@@ -167,7 +190,7 @@ export function baseTypeName(type: string): string {
 export function extensionsProvidingType(typeName: string, dialect: Dialect): ExtensionDef[] {
   const base = baseTypeName(typeName);
   if (!base) return [];
-  return extensionDefs(dialect).filter((def) => (def.types ?? []).some((t) => t.name.toLowerCase() === base));
+  return typeIndex().get(key(dialect, base)) ?? [];
 }
 
 /** Type names contributed by the extensions this diagram enables, ready for a datalist. */

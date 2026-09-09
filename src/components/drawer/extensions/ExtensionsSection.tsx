@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, ExternalLink, Plus, Puzzle, Trash2 } from 'l
 import { dialectLabel, type DiagramExtension } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import {
+  diagramText,
   extensionCatalogVersion,
   extensionDefs,
   extensionIsUsed,
@@ -42,7 +43,7 @@ function Chips({ label, items, title }: { label: string; items: string[]; title?
   );
 }
 
-function ExtensionCard({ e }: { e: DiagramExtension }) {
+function ExtensionCard({ e, usageText }: { e: DiagramExtension; usageText: string }) {
   const dialect = useStore((s) => s.diagram.dialect);
   const diagram = useStore((s) => s.diagram);
   const updateExtension = useStore((s) => s.updateExtension);
@@ -51,7 +52,7 @@ function ExtensionCard({ e }: { e: DiagramExtension }) {
   const [open, setOpen] = useState(false);
 
   const def = findExtensionDef(e.name, dialect);
-  const used = def ? extensionIsUsed(diagram, def) : true;
+  const used = def ? extensionIsUsed(diagram, def, usageText) : true;
   const plan = extensionInstallPlan(dialect, e);
 
   const onDelete = async () => {
@@ -236,7 +237,11 @@ function AddExtension() {
  */
 export function ExtensionsSection() {
   const dialect = useStore((s) => s.diagram.dialect);
-  const extensions = useStore((s) => s.diagram.extensions);
+  const diagram = useStore((s) => s.diagram);
+  const extensions = diagram.extensions;
+  // Scanning the whole diagram for names an extension provides is the expensive
+  // part of "is this one used?", so every card shares one scan.
+  const usageText = useMemo(() => diagramText(diagram), [diagram]);
 
   return (
     <div className="ext-section">
@@ -259,7 +264,7 @@ export function ExtensionsSection() {
       ) : (
         <div className="ext-list">
           {extensions.map((e) => (
-            <ExtensionCard key={e.id} e={e} />
+            <ExtensionCard key={e.id} e={e} usageText={usageText} />
           ))}
         </div>
       )}
