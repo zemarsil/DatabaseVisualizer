@@ -1224,10 +1224,6 @@ a {
   color: var(--accent-contrast);
   border-color: var(--accent);
 }
-.edge-label--hover {
-  color: var(--accent);
-  border-color: var(--accent);
-}
 .edge-label--trace {
   color: var(--trace);
   border-color: var(--trace);
