@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowLeftRight, ChevronDown, ChevronRight, Play, Plus, Trash2 } from 'lucide-react';
+import { ArrowLeftRight, ChevronDown, ChevronRight, CopyPlus, Play, Plus, Trash2, Wand2 } from 'lucide-react';
 import {
   AGGREGATE_FUNCTIONS,
   REFERENTIAL_ACTIONS,
@@ -20,12 +20,17 @@ import {
   type Table,
   type WindowFunction,
 } from '@shared/types';
-import { derivationSummary } from '@/lib/derivation';
+import { columnNameKey, derivationSummary, matchColumnsByName } from '@/lib/derivation';
 import { createDerivation, relationshipKindPatch } from '@/lib/model';
 import { generateFlowSql } from '@/lib/sql/generator';
 import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
+
+/** "a, b, c and 2 more": enough of a list to recognise without filling the panel. */
+function listNames(names: string[], max = 4): string {
+  return names.length <= max ? names.join(', ') : `${names.slice(0, max).join(', ')} and ${names.length - max} more`;
+}
 
 /**
  * One grouping key. Usually a source column, so the picker leads; anything else
@@ -155,6 +160,11 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
   const deleteRelationship = useStore((s) => s.deleteRelationship);
   const swapRelationship = useStore((s) => s.swapRelationship);
   const setSelection = useStore((s) => s.setSelection);
+  const fillFlowByName = useStore((s) => s.fillFlowByName);
+  const copyFlowToTables = useStore((s) => s.copyFlowToTables);
+  const toast = useStore((s) => s.toast);
+  /** Tables ticked in "Feed other tables the same way", cleared once they are drawn. */
+  const [feedPicks, setFeedPicks] = useState<string[]>([]);
 
   const flowSql = useMemo(() => (r.kind === 'flow' ? generateFlowSql(diagram, r.id) : ''), [diagram, r.id, r.kind]);
   const simulatingThis = useSimulation((s) => s.targetId === r.targetTableId);
@@ -162,6 +172,32 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
   const src = tables.find((t) => t.id === r.sourceTableId);
   const tgt = tables.find((t) => t.id === r.targetTableId);
   const reachable = useMemo(() => (src && r.kind === 'flow' ? reachableColumns(tables, diagram.relationships, src) : []), [tables, diagram.relationships, src, r.kind]);
+
+  // Target columns a source column of the same name could fill outright, and
+  // the other tables this flow could be repeated onto. Both are the answer to
+  // "one table feeds five that look alike": neither should be typed out by hand.
+  const nameMatches = useMemo(
+    () => (r.kind === 'flow' && src && tgt && src.id !== tgt.id ? matchColumnsByName(src.columns, tgt.columns, r.derivations ?? []) : []),
+    [r.kind, r.derivations, src, tgt],
+  );
+  const feedCandidates = useMemo(() => {
+    if (r.kind !== 'flow' || !src || !tgt) return [];
+    const wanted = (r.derivations ?? [])
+      .map((dv) => tgt.columns.find((c) => c.id === dv.targetColumnId)?.name)
+      .filter((name): name is string => Boolean(name))
+      .map(columnNameKey);
+    if (wanted.length === 0) return [];
+    const fed = new Set(diagram.relationships.filter((x) => x.kind === 'flow' && x.sourceTableId === src.id).map((x) => x.targetTableId));
+    return tables
+      .filter((t) => t.id !== src.id && !fed.has(t.id))
+      .map((t) => {
+        const keys = new Set(t.columns.map((c) => columnNameKey(c.name)));
+        return { table: t, matches: wanted.filter((k) => keys.has(k)).length, of: wanted.length };
+      })
+      .filter((c) => c.matches > 0)
+      .sort((a, b) => b.matches - a.matches || a.table.name.localeCompare(b.table.name));
+  }, [r.kind, r.derivations, src, tgt, tables, diagram.relationships]);
+
   if (!src || !tgt) return <div className="danger">This connection points at a table that no longer exists.</div>;
 
   const meta = kindMeta(r.kind);
@@ -206,6 +242,18 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
   const appendToExpression = (dv: Derivation, text: string) => {
     const cur = dv.expression;
     updateDerivation(dv.id, { expression: cur && !/[\s(]$/.test(cur) ? `${cur} ${text}` : `${cur}${text}` });
+  };
+  /** Fill every still-unmapped target column that a source column of the same name can fill. */
+  const matchByName = () => {
+    const n = fillFlowByName(r.id);
+    if (n > 0) toast('success', `Filled ${n} column${n === 1 ? '' : 's'} of ${tgt.name} from ${src.name}.`);
+  };
+  const feedPicked = () => {
+    const wanted = feedPicks.filter((id) => feedCandidates.some((c) => c.table.id === id));
+    const made = copyFlowToTables(r.id, wanted);
+    setFeedPicks([]);
+    if (made.length > 0) toast('success', `Drew ${made.length} more flow${made.length === 1 ? '' : 's'} out of ${src.name}.`);
+    else toast('info', `Nothing to draw: ${src.name} already feeds those tables.`);
   };
   const addDerivation = () => {
     const taken = new Set(derivations.map((dv) => dv.targetColumnId));
@@ -396,6 +444,17 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
               over rows in order. The app summarises it on the edge, generates the INSERT skeleton, and can simulate the rows moving.
             </div>
           )}
+          {nameMatches.length > 0 && (
+            <div className="row" style={{ marginBottom: 6, alignItems: 'flex-start' }}>
+              <span className="faint small grow">
+                {nameMatches.length === 1 ? '1 column' : `${nameMatches.length} columns`} of {tgt.name} ({listNames(nameMatches.map((m) => m.targetColumnName))})
+                {nameMatches.length === 1 ? ' matches a column' : ' match columns'} of {src.name} by name.
+              </span>
+              <button className="btn btn--sm" onClick={matchByName} title={`Add a plain passthrough derivation for each: ${nameMatches.map((m) => `${m.targetColumnName} = ${m.sourceColumnName}`).join(', ')}`}>
+                <Wand2 /> Match by name
+              </button>
+            </div>
+          )}
           {derivations.map((dv) => {
             const targetColumn = tgt.columns.find((c) => c.id === dv.targetColumnId);
             return (
@@ -554,6 +613,33 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
               </div>
             );
           })}
+          {feedCandidates.length > 0 && (
+            <div className="field" style={{ marginTop: 8 }}>
+              <span className="field__label">Feed other tables the same way</span>
+              <div className="chip-list">
+                {feedCandidates.map((c) => (
+                  <button
+                    key={c.table.id}
+                    className={`chip${feedPicks.includes(c.table.id) ? ' chip--on' : ''}`}
+                    title={`${c.table.name} spells ${c.matches} of the ${c.of} derived column${c.of === 1 ? '' : 's'} the same way`}
+                    onClick={() => setFeedPicks((p) => (p.includes(c.table.id) ? p.filter((x) => x !== c.table.id) : [...p, c.table.id]))}
+                  >
+                    {c.table.name} · {c.matches}/{c.of}
+                  </button>
+                ))}
+              </div>
+              <div>
+                <button className="btn btn--sm" disabled={feedPicks.length === 0} onClick={feedPicked}>
+                  <CopyPlus /> {feedPicks.length === 0 ? 'Draw more flows' : `Draw ${feedPicks.length} more flow${feedPicks.length === 1 ? '' : 's'}`}
+                </button>
+              </div>
+              <span className="field__hint">
+                A connection joins two tables, so five targets are five edges. Each ticked table gets its own from {src.name}, carrying these derivations
+                re-pointed at the columns it spells the same way; ones it has no column for are dropped. The tagged query is not copied — it names{' '}
+                {tgt.name}.
+              </span>
+            </div>
+          )}
           {flowSql && (
             <div className="field" style={{ marginTop: 8 }}>
               <span className="field__label">Generated from these derivations</span>

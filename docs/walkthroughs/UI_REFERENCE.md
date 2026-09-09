@@ -149,7 +149,12 @@ serialized one, *Source → target* otherwise), *Column pairs* (or *Anchor colum
 (optional)*), *Constraint name* / *Label*, *Reverse label*, *On delete*,
 *On update*, *Tagged query*, a free-text *Note* beside it, *Derived columns (N)* — each with *Expression on
 {source}*, *Group by*, *Filter (WHERE)* and *Sequence (window)* — and
-*Generated from these derivations*.
+*Generated from these derivations*. On a data flow two shortcuts sit beside
+them: **Match by name**, which adds a plain passthrough derivation for every
+target column a source column of the same name can fill (also on the edge's
+right-click menu as *Match columns by name*), and *Feed other tables the same
+way*, which ticks off other tables and draws the same flow into each, its
+derivations re-pointed at the columns those tables spell the same way.
 
 **Group** (`GroupEditor.tsx`) — *Name*, the checkbox *These tables live in
 another database*, *Note*, *Colour*, counts of tables and crossing connections,

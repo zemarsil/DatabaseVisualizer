@@ -25,8 +25,10 @@ import {
   createNote,
   createRelationship,
   createTable,
+  derivationsMatchedByName,
   emptyDiagram,
   emptyWorkspace,
+  flowCopyForTable,
   newSheetId,
   pruneRelationships,
   singleSheetWorkspace,
@@ -252,6 +254,18 @@ interface Actions {
   updateRelationship: (id: string, patch: Partial<Omit<Relationship, 'id'>>) => void;
   deleteRelationship: (id: string) => void;
   swapRelationship: (id: string) => void;
+  /**
+   * Fill a data flow's still-unmapped target columns from source columns of the
+   * same name. Returns how many derivations were added; nothing already there
+   * is touched.
+   */
+  fillFlowByName: (id: string) => number;
+  /**
+   * Draw the same data flow into more target tables, re-pointing its
+   * derivations at the columns those tables spell the same way. Tables the
+   * source already feeds are skipped. Returns the new relationship ids.
+   */
+  copyFlowToTables: (id: string, targetTableIds: string[]) => string[];
 
   // groups
   addGroup: (opts?: { name?: string; tableIds?: string[]; external?: boolean; color?: string; note?: string }) => string;
@@ -950,6 +964,45 @@ export const useStore = create<Store>()(
           },
           { coalesce: textPatchKey(`rel:${id}`, patch) },
         ),
+      fillFlowByName: (id) => {
+        const d = get().diagram;
+        const r = d.relationships.find((x) => x.id === id);
+        if (!r || r.kind !== 'flow') return 0;
+        const src = d.tables.find((t) => t.id === r.sourceTableId);
+        const tgt = d.tables.find((t) => t.id === r.targetTableId);
+        if (!src || !tgt) return 0;
+        const made = derivationsMatchedByName(src, tgt, r.derivations ?? []);
+        if (made.length === 0) return 0;
+        mutate((draft) => {
+          const rel = draft.relationships.find((x) => x.id === id);
+          if (rel) rel.derivations = [...(rel.derivations ?? []), ...made];
+        });
+        return made.length;
+      },
+      copyFlowToTables: (id, targetTableIds) => {
+        const d = get().diagram;
+        const r = d.relationships.find((x) => x.id === id);
+        if (!r || r.kind !== 'flow') return [];
+        const from = d.tables.find((t) => t.id === r.targetTableId);
+        if (!from) return [];
+        const made: Relationship[] = [];
+        for (const tableId of new Set(targetTableIds)) {
+          const to = d.tables.find((t) => t.id === tableId);
+          if (!to || to.id === r.sourceTableId || to.id === from.id) continue;
+          // A second flow between the same pair would draw on top of the first
+          // and say the same thing twice.
+          if (d.relationships.some((x) => x.kind === 'flow' && x.sourceTableId === r.sourceTableId && x.targetTableId === to.id)) continue;
+          made.push(createRelationship(flowCopyForTable(r, from, to)));
+        }
+        if (made.length === 0) return [];
+        mutate((draft) => {
+          draft.relationships.push(...made);
+        });
+        set((s) => {
+          invalidateTrace(s);
+        });
+        return made.map((x) => x.id);
+      },
       deleteRelationship: (id) => removeElements({ relationshipIds: [id] }),
       swapRelationship: (id) =>
         mutate((d) => {

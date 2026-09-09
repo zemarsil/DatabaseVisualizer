@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
-import type { Derivation } from '../src/shared/types';
-import { derivationSummaries, derivationSummary, derivationValue, flowDerivations, groupDerivations, isDerivationComplete } from '../src/lib/derivation';
-import { createDerivation, createRelationship, pruneRelationships } from '../src/lib/model';
+import { beforeEach, describe, expect, it } from 'vitest';
+import type { Derivation, Diagram, Table } from '../src/shared/types';
+import { derivationSummaries, derivationSummary, derivationValue, flowDerivations, groupDerivations, isDerivationComplete, matchColumnsByName } from '../src/lib/derivation';
+import { createColumn, createDerivation, createRelationship, createTable, derivationsMatchedByName, emptyDiagram, flowCopyForTable, pruneRelationships } from '../src/lib/model';
+import { useStore } from '../src/store/useStore';
 import { parseDiagramFile, serializeDiagram } from '../src/lib/io';
 import { sampleDiagram } from '../src/lib/sample';
 
@@ -130,5 +131,148 @@ describe('pruneRelationships', () => {
       "day = CAST(orders.placed_at AS DATE) GROUP BY product_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'",
       "units_sold = SUM(quantity) GROUP BY product_id, CAST(orders.placed_at AS DATE) WHERE orders.status = 'paid'",
     ]);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* One source feeding several look-alike tables                        */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The shape this is all for: a `runs` table whose columns several other tables
+ * repeat verbatim, so every flow out of it is the same four passthroughs.
+ */
+function lookAlikeDiagram() {
+  const shape = () => [
+    createColumn({ name: 'start_time', type: 'TIMESTAMPTZ' }),
+    createColumn({ name: 'stop_time', type: 'TIMESTAMPTZ' }),
+    createColumn({ name: 'name', type: 'TEXT' }),
+    createColumn({ name: 'size', type: 'BIGINT' }),
+  ];
+  const runs = createTable({ name: 'runs', columns: [createColumn({ name: 'id', type: 'BIGSERIAL', primaryKey: true }), ...shape()] });
+  const uploads = createTable({ name: 'uploads', columns: shape() });
+  const renders = createTable({ name: 'renders', columns: shape() });
+  // Same four columns under a different house style, plus one nothing feeds.
+  const backups = createTable({
+    name: 'backups',
+    columns: [
+      createColumn({ name: 'startTime', type: 'TIMESTAMPTZ' }),
+      createColumn({ name: 'stopTime', type: 'TIMESTAMPTZ' }),
+      createColumn({ name: 'Name', type: 'TEXT' }),
+      createColumn({ name: 'checksum', type: 'TEXT' }),
+    ],
+  });
+  const flow = createRelationship({ kind: 'flow', sourceTableId: runs.id, sourceColumnIds: [], targetTableId: uploads.id, targetColumnIds: [] });
+  const d: Diagram = { ...emptyDiagram(), tables: [runs, uploads, renders, backups], relationships: [flow] };
+  return { d, runs, uploads, renders, backups, flow };
+}
+
+const colId = (t: Table, name: string) => t.columns.find((c) => c.name === name)!.id;
+
+describe("matching a flow's columns by name", () => {
+  it('pairs every target column a source column of the same name can fill', () => {
+    const { runs, uploads } = lookAlikeDiagram();
+    const matches = matchColumnsByName(runs.columns, uploads.columns, []);
+    expect(matches.map((m) => `${m.targetColumnName} = ${m.sourceColumnName}`)).toEqual([
+      'start_time = start_time',
+      'stop_time = stop_time',
+      'name = name',
+      'size = size',
+    ]);
+    expect(matches.every((m) => m.exact)).toBe(true);
+  });
+
+  it('sees through case and word separators, and says when it did', () => {
+    const { runs, backups } = lookAlikeDiagram();
+    const matches = matchColumnsByName(runs.columns, backups.columns, []);
+    expect(matches.map((m) => [m.targetColumnName, m.sourceColumnName, m.exact])).toEqual([
+      ['startTime', 'start_time', false],
+      ['stopTime', 'stop_time', false],
+      ['Name', 'name', false],
+    ]);
+  });
+
+  it('leaves columns a derivation already fills alone, so a second run adds nothing', () => {
+    const { runs, uploads } = lookAlikeDiagram();
+    const existing = [createDerivation({ targetColumnId: colId(uploads, 'size'), expression: 'size * 2' })];
+    expect(matchColumnsByName(runs.columns, uploads.columns, existing).map((m) => m.targetColumnName)).toEqual(['start_time', 'stop_time', 'name']);
+    const all = matchColumnsByName(runs.columns, uploads.columns, []).map((m) => createDerivation({ targetColumnId: m.targetColumnId, expression: m.sourceColumnName }));
+    expect(matchColumnsByName(runs.columns, uploads.columns, all)).toEqual([]);
+  });
+
+  it('refuses to guess when two source columns normalize to the same name', () => {
+    const source = [createColumn({ name: 'stop_time' }), createColumn({ name: 'stopTime' }), createColumn({ name: 'size' })];
+    const target = [createColumn({ name: 'stoptime' }), createColumn({ name: 'stop_time' }), createColumn({ name: 'size' })];
+    // "stoptime" could be either spelling, so it is left for the user; the exact
+    // spelling next to it is unambiguous and still matched.
+    expect(matchColumnsByName(source, target, []).map((m) => m.targetColumnName)).toEqual(['stop_time', 'size']);
+  });
+
+  it('builds plain passthroughs that share the grouping and filter already there', () => {
+    const { runs, uploads } = lookAlikeDiagram();
+    const existing = [createDerivation({ targetColumnId: colId(uploads, 'size'), expression: 'size', aggregate: 'SUM', groupBy: ['name'], filter: 'size > 0' })];
+    const made = derivationsMatchedByName(runs, uploads, existing);
+    expect(made).toHaveLength(3);
+    expect(made[0]).toMatchObject({ targetColumnId: colId(uploads, 'start_time'), expression: 'start_time', groupBy: ['name'], filter: 'size > 0' });
+    // The aggregate is not inherited: a name match carries a column across, it does not roll one up.
+    expect(made.every((m) => m.aggregate === undefined)).toBe(true);
+    expect(new Set(made.map((m) => m.id)).size).toBe(3);
+  });
+});
+
+describe('copying a flow onto another table', () => {
+  it('re-points the derivations at the columns the new table spells the same way', () => {
+    const { runs, uploads, backups, flow } = lookAlikeDiagram();
+    flow.derivations = derivationsMatchedByName(runs, uploads, []);
+    flow.query = 'INSERT INTO uploads ...';
+    flow.name = 'nightly copy';
+    const copy = flowCopyForTable(flow, uploads, backups);
+    expect(copy.targetTableId).toBe(backups.id);
+    expect(copy.name).toBe('nightly copy');
+    // The tagged query names the old target table, so it is deliberately dropped.
+    expect(copy.query).toBeUndefined();
+    expect(copy.derivations!.map((dv) => [backups.columns.find((c) => c.id === dv.targetColumnId)!.name, dv.expression])).toEqual([
+      ['startTime', 'start_time'],
+      ['stopTime', 'stop_time'],
+      ['Name', 'name'],
+    ]);
+    // `size` has no counterpart on backups, so that derivation is dropped rather
+    // than left pointing at a column of another table.
+    expect(copy.derivations).toHaveLength(3);
+    expect(copy.derivations!.some((dv) => dv.id === flow.derivations![0].id)).toBe(false);
+  });
+});
+
+describe('the store actions behind both', () => {
+  beforeEach(() => {
+    useStore.setState({ past: [], future: [] });
+  });
+
+  it('fills a flow once and then has nothing left to add', () => {
+    const { d, flow, uploads } = lookAlikeDiagram();
+    useStore.setState({ diagram: d, past: [], future: [] });
+    expect(useStore.getState().fillFlowByName(flow.id)).toBe(4);
+    expect(useStore.getState().fillFlowByName(flow.id)).toBe(0);
+    const after = useStore.getState().diagram.relationships[0];
+    expect(after.derivations).toHaveLength(4);
+    expect(derivationSummaries(after, uploads)).toEqual(['start_time = start_time', 'stop_time = stop_time', 'name = name', 'size = size']);
+    // One history entry, so one undo puts the four back where they were.
+    expect(useStore.getState().past).toHaveLength(1);
+  });
+
+  it('draws the same flow into the other tables, skipping the ones already fed', () => {
+    const { d, flow, runs, renders, backups } = lookAlikeDiagram();
+    useStore.setState({ diagram: d, past: [], future: [] });
+    useStore.getState().fillFlowByName(flow.id);
+    // uploads is the flow's own target and runs is its source: neither can be a copy.
+    const made = useStore.getState().copyFlowToTables(flow.id, [renders.id, backups.id, runs.id, d.tables[1].id]);
+    expect(made).toHaveLength(2);
+    const rels = useStore.getState().diagram.relationships;
+    expect(rels).toHaveLength(3);
+    expect(rels.filter((r) => r.sourceTableId === runs.id)).toHaveLength(3);
+    expect(rels.find((r) => r.targetTableId === renders.id)!.derivations).toHaveLength(4);
+    expect(rels.find((r) => r.targetTableId === backups.id)!.derivations).toHaveLength(3);
+    // Running it again would only duplicate edges that already exist.
+    expect(useStore.getState().copyFlowToTables(flow.id, [renders.id, backups.id])).toEqual([]);
   });
 });
