@@ -2,6 +2,9 @@
   "version": 1,
   "name": "Orders rollup — advisor recommendation",
   "dialect": "postgresql",
+  "extensions": [
+    { "id": "ext_citext", "name": "citext", "comment": "customers.email compares case-insensitively." }
+  ],
   "customTypes": [
     {
       "id": "typ_order_status",

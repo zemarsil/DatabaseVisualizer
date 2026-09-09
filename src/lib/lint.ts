@@ -537,6 +537,8 @@ export function lintDiagram(d: Diagram): LintFinding[] {
     for (const c of t.columns) {
       const base = baseTypeName(c.type);
       if (!base || builtinTypeNames(d.dialect).has(base)) continue;
+      // Matched on the raw text, arguments and all: SQL has no parameterised
+      // CREATE TYPE, so "vector(1536)" is never a custom type named "vector".
       if (customTypeByName(d, c.type)) continue;
       const providers = extensionsProvidingType(c.type, d.dialect).filter((p) => !enabledNames.has(p.name.toLowerCase()));
       if (providers.length === 0) continue;
