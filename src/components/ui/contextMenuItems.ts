@@ -45,6 +45,7 @@ import {
   Scissors,
   Shapes,
   Shuffle,
+  Sigma,
   SquareDashedMousePointer,
   TextCursorInput,
   Ungroup,
@@ -58,6 +59,7 @@ import {
 } from 'lucide-react';
 import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
 import { flowDerivations, matchColumnsByName } from '@/lib/derivation';
+import { buildLineage, columnOrigin, derivedColumnIds, type Lineage } from '@/lib/lineage';
 import { createGroup, customTypeByName, relationshipKindPatch, uniqueGroupName } from '@/lib/model';
 import { emptySelection, selectionSize, type Selection } from '@/lib/selection';
 import { selectionMarkdown, selectionSql } from '@/lib/selectionExport';
@@ -461,6 +463,48 @@ function simulateItem(store: Store, table: Table): MenuAction {
   };
 }
 
+/** "Show the N derived columns" for a table that has some; the plain lens toggle otherwise. */
+function derivedTableItem(store: Store, table: Table): MenuAction {
+  const n = derivedColumnIds(buildLineage(store.diagram), table).length;
+  const ui = useUi.getState();
+  return {
+    kind: 'action',
+    id: 'derived-table',
+    label: n ? `Show the ${n} derived column${n === 1 ? '' : 's'}` : ui.derived ? 'Turn the derived lens off' : 'Derived-column lens',
+    icon: Sigma,
+    hint: n ? undefined : 'D',
+    run: () => {
+      if (!n) return ui.toggleDerived();
+      ui.setDerived({ columnId: null, downstream: true });
+      selectOnly(store, { tableIds: [table.id] });
+      store.openDrawer('derived');
+    },
+  };
+}
+
+/**
+ * "Show where this comes from" for one column, which is the lens pointed at it.
+ * A stored column nothing reads has no lineage worth opening, so it gets nothing.
+ */
+function derivedColumnItems(store: Store, lineage: Lineage, column: Column): MenuNode[] {
+  const origin = columnOrigin(lineage, column.id);
+  const readers = lineage.feeds.get(column.id)?.length ?? 0;
+  if (origin === 'stored' && readers === 0) return [];
+  return [
+    sep('s-derived'),
+    {
+      kind: 'action',
+      id: 'lineage',
+      label: origin === 'stored' ? `Show what this feeds (${readers})` : 'Show where this comes from',
+      icon: Sigma,
+      run: () => {
+        useUi.getState().showLineage(column.id);
+        store.openDrawer('derived');
+      },
+    },
+  ];
+}
+
 function tableMenu(table: Table, env: MenuEnv): MenuNode[] {
   const s = env.store;
   const connected = connectedTableIds(s, table.id);
@@ -530,6 +574,7 @@ function tableMenu(table: Table, env: MenuEnv): MenuNode[] {
     },
     traceItem(table, env),
     simulateItem(s, table),
+    derivedTableItem(s, table),
     sep('s4'),
     { kind: 'action', id: 'delete', label: 'Delete table', icon: Trash2, danger: true, hint: 'Del', run: () => env.remove({ tableIds: [table.id] }) },
   ];
@@ -545,12 +590,16 @@ function columnMenu(table: Table, column: Column, env: MenuEnv): MenuNode[] {
   const index = table.columns.findIndex((c) => c.id === column.id);
   const isFk = s.diagram.relationships.some((r) => r.kind === 'fk' && r.sourceColumnIds.includes(column.id));
   const customType = customTypeByName(s.diagram, column.type);
+  const lineage = buildLineage(s.diagram);
+  const origin = columnOrigin(lineage, column.id);
   return [
     {
       kind: 'heading',
       id: 'head',
       label: `${table.name}.${column.name}`,
-      detail: [column.type, customType && (customType.kind === 'enum' ? 'enum' : 'struct'), isFk && 'foreign key'].filter(Boolean).join(' · '),
+      detail: [column.type, customType && (customType.kind === 'enum' ? 'enum' : 'struct'), isFk && 'foreign key', origin === 'derived' && 'computed', origin === 'view' && 'from the view’s SELECT']
+        .filter(Boolean)
+        .join(' · '),
     },
     { kind: 'action', id: 'pk', label: 'Primary key', icon: KeyRound, checked: column.primaryKey, run: () => patch({ primaryKey: !column.primaryKey }) },
     { kind: 'action', id: 'nn', label: 'Not null', checked: !column.nullable, run: () => patch({ nullable: !column.nullable }) },
@@ -572,6 +621,7 @@ function columnMenu(table: Table, column: Column, env: MenuEnv): MenuNode[] {
     ...(customType
       ? [{ kind: 'action' as const, id: 'edit-type', label: `Edit type "${customType.name}"`, icon: Shapes, run: () => s.openDrawer('types') }]
       : []),
+    ...derivedColumnItems(s, lineage, column),
     sep('s2'),
     {
       kind: 'action',

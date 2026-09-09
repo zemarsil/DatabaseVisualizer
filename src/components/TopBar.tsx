@@ -137,6 +137,8 @@ export function TopBar() {
   const snapToGrid = useUi((s) => s.snapToGrid);
   const setSnapToGrid = useUi((s) => s.setSnapToGrid);
   const showCardinality = useUi((s) => s.showCardinality);
+  const derivedLens = useUi((s) => s.derived !== null);
+  const toggleDerived = useUi((s) => s.toggleDerived);
   const setShowCardinality = useUi((s) => s.setShowCardinality);
   const warnOnClose = useUi((s) => s.warnOnClose);
   const setWarnOnClose = useUi((s) => s.setWarnOnClose);
@@ -488,6 +490,7 @@ export function TopBar() {
               <CheckItem on={drawerOpen} label="Bottom drawer" onToggle={() => toggleDrawer()} />
               <CheckItem on={theme === 'dark'} label="Dark theme" onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
               <div className="menu__sep" />
+              <CheckItem on={derivedLens} label="Derived-column lens (D)" onToggle={() => toggleDerived()} />
               <CheckItem on={showCardinality} label="Cardinality labels" onToggle={() => setShowCardinality(!showCardinality)} />
               <CheckItem on={snapToGrid} label="Snap to grid" onToggle={() => setSnapToGrid(!snapToGrid)} />
               <CheckItem on={warnOnClose} label="Warn before closing unsaved" onToggle={() => setWarnOnClose(!warnOnClose)} />

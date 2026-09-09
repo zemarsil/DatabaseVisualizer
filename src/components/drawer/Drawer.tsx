@@ -1,10 +1,11 @@
-import { BookOpen, ChevronDown, ChevronUp, Code2, Database, FileDown, Play, Route, Shapes, ShieldAlert, Terminal } from 'lucide-react';
+import { BookOpen, ChevronDown, ChevronUp, Code2, Database, FileDown, Play, Route, Shapes, ShieldAlert, Sigma, Terminal } from 'lucide-react';
 import { useStore, type DrawerTab } from '@/store/useStore';
 import { SqlPanel } from './SqlPanel';
 import { ImportPanel } from './ImportPanel';
 import { DatabasePanel } from './DatabasePanel';
 import { TracePanel } from './TracePanel';
 import { SimulatePanel } from './SimulatePanel';
+import { DerivedPanel } from './DerivedPanel';
 import { WalkthroughPanel } from './WalkthroughPanel';
 import { useSimulation } from '@/store/useSimulation';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
@@ -13,6 +14,8 @@ import { ProblemsPanel } from './ProblemsPanel';
 import { QueryPanel } from './QueryPanel';
 import { useMemo } from 'react';
 import { lintDiagram } from '@/lib/lint';
+import { buildLineage, lineageTotals } from '@/lib/lineage';
+import { useUi } from '@/store/useUi';
 
 const TABS: { id: DrawerTab; label: string; icon: React.ReactNode }[] = [
   { id: 'walkthrough', label: 'Walkthrough', icon: <BookOpen /> },
@@ -21,6 +24,7 @@ const TABS: { id: DrawerTab; label: string; icon: React.ReactNode }[] = [
   { id: 'import', label: 'Import SQL', icon: <FileDown /> },
   { id: 'trace', label: 'Trace', icon: <Route /> },
   { id: 'simulate', label: 'Simulate', icon: <Play /> },
+  { id: 'derived', label: 'Derived', icon: <Sigma /> },
   { id: 'problems', label: 'Problems', icon: <ShieldAlert /> },
   { id: 'query', label: 'Query', icon: <Terminal /> },
   { id: 'database', label: 'Database', icon: <Database /> },
@@ -40,6 +44,8 @@ export function Drawer() {
   const activeWalkthroughSlug = useStore((s) => s.activeWalkthroughSlug);
   const diagram = useStore((s) => s.diagram);
   const errorCount = useMemo(() => lintDiagram(diagram).filter((f) => f.severity === 'error').length, [diagram]);
+  const derivedCount = useMemo(() => lineageTotals(buildLineage(diagram), diagram).derived, [diagram]);
+  const lensOn = useUi((s) => s.derived !== null);
 
   return (
     <section className={`drawer${open ? '' : ' drawer--collapsed'}`}>
@@ -53,6 +59,7 @@ export function Drawer() {
             {t.id === 'simulate' && simOn && <span className="badge badge--flow">{simStages ? `${Math.max(0, simStage + 1)}/${simStages}` : 'on'}</span>}
             {t.id === 'types' && typeCount > 0 && <span className="badge">{typeCount}</span>}
             {t.id === 'problems' && errorCount > 0 && <span className="badge badge--danger">{errorCount}</span>}
+            {t.id === 'derived' && (lensOn ? <span className="badge badge--flow">lens</span> : derivedCount > 0 ? <span className="badge">{derivedCount}</span> : null)}
             {t.id === 'walkthrough' && activeWalkthroughSlug && !(open && tab === 'walkthrough') && <span className="badge badge--accent">•</span>}
           </button>
         ))}
@@ -69,6 +76,7 @@ export function Drawer() {
           {tab === 'import' && <ImportPanel />}
           {tab === 'trace' && <TracePanel />}
           {tab === 'simulate' && <SimulatePanel />}
+          {tab === 'derived' && <DerivedPanel />}
           {tab === 'problems' && <ProblemsPanel />}
           {tab === 'query' && <QueryPanel />}
           {tab === 'database' && <DatabasePanel />}

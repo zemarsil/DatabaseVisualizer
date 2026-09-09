@@ -54,7 +54,7 @@ import { newId } from '@/lib/ids';
 import { useUi } from '@/store/useUi';
 
 export type Theme = 'dark' | 'light';
-export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'simulate' | 'types' | 'problems' | 'query' | 'walkthrough';
+export type DrawerTab = 'sql' | 'import' | 'database' | 'trace' | 'simulate' | 'derived' | 'types' | 'problems' | 'query' | 'walkthrough';
 /** A place in the table inspector another part of the app can hand the cursor to. */
 export type InspectorField = 'name' | 'schema' | 'columns';
 

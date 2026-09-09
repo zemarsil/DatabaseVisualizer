@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, Braces, ChevronDown, ChevronRight, Code2, Copy, Database, Eye, GitBranch, GripVertical, Link2, Plus, Table2, Trash2, Waypoints } from 'lucide-react';
+import { ArrowDown, ArrowUp, Braces, ChevronDown, ChevronRight, Code2, Copy, Database, Eye, GitBranch, GripVertical, Link2, Plus, Sigma, Table2, Trash2, Waypoints } from 'lucide-react';
 import { verbLabel, type Column, type Index, type RelationshipKind, type Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { ViewEditor } from './ViewEditor';
 import { flowDerivations } from '@/lib/derivation';
+import { buildLineage, columnOrigin, describeColumnOrigin, type ColumnOrigin } from '@/lib/lineage';
+import { useUi } from '@/store/useUi';
 import { columnKeyAction, rovingIndex, FLAG_SHORTCUT, type ColumnField, type ColumnFlag } from '@/lib/editorKeys';
 import { PALETTE, paletteHue } from '@/lib/palette';
 import { embeddedColumnIds, foreignKeyColumnIds } from '@/lib/model';
@@ -47,6 +49,10 @@ interface ColumnRowProps {
   index: number;
   fk: boolean;
   embed: boolean;
+  /** How the column gets its value; 'stored' is the ordinary case and shows nothing extra. */
+  origin: ColumnOrigin;
+  /** The formulas that fill it, one per line, or null when nothing does. */
+  originText: string | null;
   register: (id: string, field: 'name' | 'type', el: HTMLInputElement | null) => void;
   /** Put the cursor in another row's name or type box; false if that row is not rendered. */
   focusField: (id: string, field: 'name' | 'type') => boolean;
@@ -54,7 +60,7 @@ interface ColumnRowProps {
   setDrag: (d: DragState | null) => void;
 }
 
-function ColumnRow({ table, column, index, fk, embed, register, focusField, drag, setDrag }: ColumnRowProps) {
+function ColumnRow({ table, column, index, fk, embed, origin, originText, register, focusField, drag, setDrag }: ColumnRowProps) {
   const updateColumn = useStore((s) => s.updateColumn);
   const deleteColumn = useStore((s) => s.deleteColumn);
   const moveColumn = useStore((s) => s.moveColumn);
@@ -165,8 +171,8 @@ function ColumnRow({ table, column, index, fk, embed, register, focusField, drag
           onKeyDown={(e) => onKeyDown(e, 'name')}
           placeholder="column"
           spellCheck={false}
-          title={fk ? 'Referenced by a foreign key' : embed ? 'Holds another table serialized' : undefined}
-          style={fk ? { borderColor: 'var(--accent)' } : embed ? { borderColor: 'var(--embed)' } : undefined}
+          title={fk ? 'Referenced by a foreign key' : embed ? 'Holds another table serialized' : (originText ?? undefined)}
+          style={fk ? { borderColor: 'var(--accent)' } : embed ? { borderColor: 'var(--embed)' } : origin !== 'stored' ? { borderColor: 'var(--derived)' } : undefined}
         />
       </div>
       <input
@@ -222,6 +228,23 @@ function ColumnRow({ table, column, index, fk, embed, register, focusField, drag
       </div>
       {open && (
         <div className="col-row__more">
+          {origin !== 'stored' && (
+            <div className="field field--full">
+              <span className="field__label">Computed</span>
+              <button
+                className="btn btn--sm"
+                style={{ justifyContent: 'flex-start', textAlign: 'left', whiteSpace: 'normal', height: 'auto', padding: '5px 8px' }}
+                title="Open the Derived tab on this column's lineage"
+                onClick={() => {
+                  useUi.getState().showLineage(column.id);
+                  useStore.getState().openDrawer('derived');
+                }}
+              >
+                <Sigma />
+                <span className="grow">{originText ?? (origin === 'view' ? 'Computed by the view’s SELECT' : 'Computed by a data flow')}</span>
+              </button>
+            </div>
+          )}
           <div className="field">
             <span className="field__label">Default</span>
             <input
@@ -356,6 +379,12 @@ export function TableEditor({ table }: { table: Table }) {
 
   const fkColumns = useMemo(() => foreignKeyColumnIds(diagram, table.id), [diagram, table.id]);
   const embedColumns = useMemo(() => embeddedColumnIds(diagram, table.id), [diagram, table.id]);
+  // Where each column's value comes from, so a computed one is not mistaken for
+  // something rows arrive carrying.
+  const origins = useMemo(() => {
+    const lineage = buildLineage(diagram);
+    return new Map(table.columns.map((c) => [c.id, { origin: columnOrigin(lineage, c.id), text: describeColumnOrigin(lineage, c.id) }]));
+  }, [diagram, table.columns]);
 
   const relationships = useMemo(() => diagram.relationships.filter((r) => r.sourceTableId === table.id || r.targetTableId === table.id), [diagram.relationships, table.id]);
   const group = diagram.groups.find((g) => g.id === table.groupId);
@@ -504,14 +533,28 @@ export function TableEditor({ table }: { table: Table }) {
         </div>
         <div className="col-editor">
           {table.columns.map((c, i) => (
-            <ColumnRow key={c.id} table={table} column={c} index={i} fk={fkColumns.has(c.id)} embed={embedColumns.has(c.id)} register={register} focusField={focusField} drag={drag} setDrag={setDrag} />
+            <ColumnRow
+              key={c.id}
+              table={table}
+              column={c}
+              index={i}
+              fk={fkColumns.has(c.id)}
+              embed={embedColumns.has(c.id)}
+              origin={origins.get(c.id)?.origin ?? 'stored'}
+              originText={origins.get(c.id)?.text ?? null}
+              register={register}
+              focusField={focusField}
+              drag={drag}
+              setDrag={setDrag}
+            />
           ))}
           {table.columns.length === 0 && <div className="faint small">No columns yet.</div>}
         </div>
         <div className="field__hint" style={{ marginTop: 6 }}>
           PK primary key · NN not null · UQ unique · AI auto-increment — toggle them from the name or type box with Alt+P, Alt+N, Alt+U and Alt+I. Enter adds
           the next column, Shift+Enter one above, ↑ and ↓ walk the rows, Ctrl+Backspace deletes an unnamed one, and the grip drags to reorder. Expand a row for
-          default, check and comment. Enter in Name and Schema above walks down to here.
+          default, check and comment. Enter in Name and Schema above walks down to here. A green name box means a data flow (or a view's SELECT) computes the
+          column rather than rows carrying it — expand the row to see the formula.
         </div>
       </div>
 

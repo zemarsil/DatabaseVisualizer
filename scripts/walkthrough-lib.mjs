@@ -145,7 +145,7 @@ export const STEP_KEYS = {
 };
 
 /** The drawer tabs a `tab:` or `panel:` target may name. Source: src/components/drawer/Drawer.tsx. */
-export const DRAWER_TABS = ['walkthrough', 'sql', 'types', 'import', 'trace', 'simulate', 'problems', 'query', 'database'];
+export const DRAWER_TABS = ['walkthrough', 'sql', 'types', 'import', 'trace', 'simulate', 'derived', 'problems', 'query', 'database'];
 
 /**
  * What a `target:` may start with, and what the rest of it means. Anything
