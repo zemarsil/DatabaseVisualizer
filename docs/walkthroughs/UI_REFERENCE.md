@@ -11,11 +11,11 @@ below carries where it came from so you can re-check it after the app changes.
 
 ```
 ┌──────────────────────────────────────────────────────── TopBar.tsx ─────────┐
-│ DB Visualizer · [diagram name] · [dialect ▾] · undo/redo · + Table ▾ · …    │
+│ DB Visualizer · [workspace name] · [dialect ▾] · undo/redo · + Table ▾ · …  │
 ├───────────┬───────────────────────────────────────────┬─────────────────────┤
-│ Sidebar   │                                           │ Inspector           │
-│ table     │              Canvas                       │ (selection-driven)  │
-│ list      │              (pan / zoom)                 │                     │
+│ Sidebar   │ Sheet tabs: one per diagram · +           │ Inspector           │
+│ table     ├───────────────────────────────────────────┤ (selection-driven)  │
+│ list      │              Canvas (pan / zoom)          │                     │
 ├───────────┴───────────────────────────────────────────┴─────────────────────┤
 │ Drawer: Walkthrough · SQL · Types · Import SQL · Trace · Simulate · … · DB   │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -25,6 +25,29 @@ The **inspector** on the right always shows whatever is selected: a table, a
 connection, a note, or a group region. The **bottom drawer** holds the nine
 tabs. The **sidebar** on the left is the table list. All three toggle from the
 **View** menu or the icon buttons at the far right of the top bar.
+
+The **sheet tabs** between the top bar and the canvas are the diagrams of this
+workspace — one per database, saved together in one file. Everything else on
+screen (sidebar, inspector, drawer, the top bar's dialect selector) describes
+the diagram of the tab you are on. Walkthroughs work on one tab and never need
+a second; say "the canvas" as before.
+
+---
+
+## Sheet tabs (the diagrams of the workspace)
+
+Source: `src/components/SheetTabs.tsx`, `src/lib/sheets.ts`
+
+| Control | Notes |
+| --- | --- |
+| A tab | The diagram's name and its table count. Click to switch, double-click (or `F2`) to rename in place, drag to reorder, middle-click to close. |
+| The `×` on a tab | *Close "name"*; asks first when the diagram has tables. Closing the last tab empties it rather than leaving no canvas. |
+| **+** at the end of the strip | *Add another diagram to this workspace*. |
+| Right-click a tab | *Rename…*, *Duplicate*, *Move left*, *Move right*, *New diagram in this workspace*, *Close "name"*. |
+| `Ctrl+PgUp` / `Ctrl+PgDn` | Previous / next tab, wrapping around. Works while a field has focus. |
+
+Each tab keeps its own dialect, undo history, selection, trace and viewport.
+`Ctrl+S` saves every tab into the one `.dbviz.json` file.
 
 ---
 
@@ -59,7 +82,7 @@ Source: `src/components/TopBar.tsx`
 
 | Control | Notes |
 | --- | --- |
-| Diagram name field | Placeholder *Diagram name*. |
+| Workspace name field | Placeholder *Diagram name* while the workspace holds one diagram, *Workspace name* once it holds more. With one diagram the name is the diagram's name too, so renaming either renames both; with several, each diagram is named on its own tab. |
 | Dialect selector | *PostgreSQL*, *MariaDB*, *SQLite (in browser)*. Switching translates known column types; undo reverts it. |
 | Undo / Redo | `Ctrl+Z`, `Ctrl+Shift+Z` (also `Ctrl+Y`). |
 | **+ Table** | Adds a table (`T`). |
@@ -72,7 +95,7 @@ Source: `src/components/TopBar.tsx`
 | Fit icon button | *Fit to window* (`F`). |
 | Command palette button | *Command palette: jump to a table or run any action* (`Ctrl+K`). |
 | **Database** | Opens the **Database** drawer tab. |
-| **File** menu | *New diagram*, *Open…* `Ctrl+O`, *Open recent…*, *Save as .dbviz.json* `Ctrl+S`, *Save checkpoint…*, *Export PNG*, *Export SVG*, *Export SQL script*, *Export Markdown*, *Export Mermaid ER diagram*, *Export DBML*, *Copy share link*, *Load example diagram*. |
+| **File** menu | *New diagram in this workspace*, *New workspace*, *Open…* `Ctrl+O`, *Open recent workspace…*, *Save as .dbviz.json* `Ctrl+S` (reads *Save workspace as .dbviz.json* with more than one diagram), *Save checkpoint…*, *Export PNG*, *Export SVG*, *Export SQL script*, *Export Markdown*, *Export Mermaid ER diagram*, *Export DBML*, *Copy share link*, *Load example diagram*. |
 | **View** menu | Checkboxes *Table list*, *Inspector*, *Bottom drawer*, *Dark theme*, *Cardinality labels*, *Snap to grid*, *Warn before closing unsaved*; then under *All tables*: *Show every column*, *Keys only*, *Headers only*. |
 | Panel toggles + theme + **?** | Table list, drawer, inspector, theme, help (`?`). |
 

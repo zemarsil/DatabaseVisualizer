@@ -1,0 +1,143 @@
+/* ------------------------------------------------------------------ */
+/* Sheet tabs: the diagrams of one workspace, above the canvas          */
+/* ------------------------------------------------------------------ */
+.sheets {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  height: 32px;
+  padding: 0 6px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  flex-shrink: 0;
+}
+.sheets__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 0 6px 0 10px;
+  margin: 3px 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+.sheets__tab:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.sheets__tab--active {
+  background: var(--accent-soft);
+  border-color: var(--border);
+  color: var(--accent);
+}
+.sheets__tab--drop {
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.sheets__tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+.sheets__icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.sheets__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sheets__count {
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--bg-hover);
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+.sheets__tab--active .sheets__count {
+  color: var(--accent);
+}
+.sheets__close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  opacity: 0;
+  cursor: pointer;
+}
+.sheets__close svg {
+  width: 12px;
+  height: 12px;
+}
+.sheets__tab:hover .sheets__close,
+.sheets__tab--active .sheets__close {
+  opacity: 0.6;
+}
+.sheets__close:hover {
+  background: var(--danger-soft);
+  color: var(--danger);
+  opacity: 1;
+}
+.sheets__rename {
+  width: 140px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  background: var(--bg-elev);
+  color: var(--text);
+  font: inherit;
+}
+.sheets__add {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  margin: 3px 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.sheets__add:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.sheets__add svg {
+  width: 14px;
+  height: 14px;
+}
+.sheets__spacer {
+  flex: 1;
+  min-width: 8px;
+}
+.sheets__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-right: 4px;
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+}

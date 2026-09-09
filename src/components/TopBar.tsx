@@ -36,15 +36,16 @@ import {
   Undo2,
 } from 'lucide-react';
 import { DIALECTS, type Dialect } from '@shared/types';
-import { useStore } from '@/store/useStore';
+import { currentWorkspace, useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
 import { simulationTargets } from '@/lib/simulate/engine';
-import { downloadDataUrl, downloadText, fileSlug, parseDiagramFile, serializeDiagram, FILE_EXTENSION } from '@/lib/io';
+import { downloadDataUrl, downloadText, fileSlug, parseWorkspaceFile, serializeWorkspace, FILE_EXTENSION } from '@/lib/io';
 import { exportDiagramImage } from '@/lib/exportImage';
 import { EXPORT_FORMATS, exportDiagram, type ExportFormat } from '@/lib/export';
 import { copyShareLink } from '@/lib/share';
-import { defaultCheckpointName, installLibraryAutosave, saveCheckpoint, startFreshDiagramEntry } from '@/lib/library';
+import { addSheet as addSheetToWorkspace } from '@/lib/sheets';
+import { defaultCheckpointName, installLibraryAutosave, saveCheckpoint, startFreshWorkspaceEntry } from '@/lib/library';
 import { useBeforeUnload } from '@/hooks/useBeforeUnload';
 import { confirmDialog, promptDialog, useDialogStore } from './ui/Modal';
 import { CommandPalette, type PaletteBridge } from './CommandPalette';
@@ -92,6 +93,8 @@ function CheckItem({ on, label, onToggle, hint }: { on: boolean; label: string; 
 
 export function TopBar() {
   const diagram = useStore((s) => s.diagram);
+  const workspaceName = useStore((s) => s.workspaceName);
+  const sheetCount = useStore((s) => s.sheetIds.length);
   const dirty = useStore((s) => s.dirty);
   const fileBacked = useStore((s) => s.fileBacked);
   const canUndo = useStore((s) => s.past.length > 0);
@@ -107,7 +110,6 @@ export function TopBar() {
 
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
-  const setDiagramName = useStore((s) => s.setDiagramName);
   const setDialect = useStore((s) => s.setDialect);
   const addTable = useStore((s) => s.addTable);
   const addNote = useStore((s) => s.addNote);
@@ -120,8 +122,9 @@ export function TopBar() {
   const setInspectorOpen = useStore((s) => s.setInspectorOpen);
   const toggleDrawer = useStore((s) => s.toggleDrawer);
   const openDrawer = useStore((s) => s.openDrawer);
-  const setDiagram = useStore((s) => s.setDiagram);
-  const newDiagram = useStore((s) => s.newDiagram);
+  const setWorkspace = useStore((s) => s.setWorkspace);
+  const setWorkspaceName = useStore((s) => s.setWorkspaceName);
+  const newWorkspace = useStore((s) => s.newWorkspace);
   const loadSample = useStore((s) => s.loadSample);
   const markSaved = useStore((s) => s.markSaved);
   const toast = useStore((s) => s.toast);
@@ -156,9 +159,10 @@ export function TopBar() {
   };
 
   const saveFile = () => {
-    downloadText(`${fileSlug(diagram.name)}${FILE_EXTENSION}`, serializeDiagram(diagram));
+    const ws = currentWorkspace(useStore.getState());
+    downloadText(`${fileSlug(ws.name)}${FILE_EXTENSION}`, serializeWorkspace(ws));
     markSaved();
-    toast('success', 'Diagram saved.');
+    toast('success', ws.sheets.length === 1 ? 'Diagram saved.' : `Workspace saved — all ${ws.sheets.length} diagrams in one file.`);
   };
 
   const openFile = () => fileInput.current?.click();
@@ -168,10 +172,11 @@ export function TopBar() {
     e.target.value = '';
     if (!file) return;
     try {
-      const d = parseDiagramFile(await file.text());
-      await startFreshDiagramEntry();
-      setDiagram(d, { fileBacked: true });
-      toast('success', `Loaded "${d.name}" (${d.tables.length} tables).`);
+      const ws = parseWorkspaceFile(await file.text());
+      await startFreshWorkspaceEntry();
+      setWorkspace(ws, { fileBacked: true });
+      const tables = ws.sheets.reduce((n, sh) => n + sh.diagram.tables.length, 0);
+      toast('success', ws.sheets.length === 1 ? `Loaded "${ws.name}" (${tables} tables).` : `Loaded "${ws.name}" — ${ws.sheets.length} diagrams, ${tables} tables.`);
     } catch (err) {
       toast('error', err instanceof Error ? err.message : 'Could not load the file.');
     }
@@ -215,14 +220,18 @@ export function TopBar() {
   };
 
   const onNew = async () => {
-    if (diagram.tables.length && !(await confirmDialog({ title: 'Start a new diagram?', message: 'The current diagram stays in the diagram library (File → Open recent…); a new, empty one takes its place on the canvas.', confirmLabel: 'New diagram' }))) return;
-    await startFreshDiagramEntry();
-    newDiagram(diagram.dialect);
+    const hasWork = diagram.tables.length > 0 || sheetCount > 1;
+    if (hasWork && !(await confirmDialog({ title: 'Start a new workspace?', message: 'This one stays in the workspace library (File → Open recent…); a new, empty workspace takes its place.', confirmLabel: 'New workspace' }))) return;
+    await startFreshWorkspaceEntry();
+    newWorkspace(diagram.dialect);
   };
 
+  /** Another diagram alongside this one, in the same workspace and the same file. */
+  const onNewSheet = () => addSheetToWorkspace();
+
   const onLoadSample = async () => {
-    if (diagram.tables.length && !(await confirmDialog({ title: 'Load the example diagram?', message: 'The current diagram stays in the diagram library (File → Open recent…); the example takes its place on the canvas.', confirmLabel: 'Load example' }))) return;
-    await startFreshDiagramEntry();
+    if (diagram.tables.length && !(await confirmDialog({ title: 'Load the example diagram?', message: 'The current diagram stays in the workspace library (File → Open recent…); the example takes its place on this tab.', confirmLabel: 'Load example' }))) return;
+    await startFreshWorkspaceEntry();
     loadSample();
   };
 
@@ -274,7 +283,8 @@ export function TopBar() {
     const bridge: PaletteBridge = {
       saveFile,
       openFile,
-      newDiagram: () => void onNew(),
+      newWorkspace: () => void onNew(),
+      newSheet: onNewSheet,
       loadSample: () => void onLoadSample(),
       exportImage: (format) => void exportImage(format),
       exportAs,
@@ -300,7 +310,15 @@ export function TopBar() {
         <span>DB Visualizer</span>
       </div>
       {dirty && fileBacked && <span className="topbar__unsaved" title="Changed since the last save (Ctrl+S)" />}
-      <input data-tour="diagram-name" className="topbar__name" value={diagram.name} onChange={(e) => setDiagramName(e.target.value)} placeholder="Diagram name" spellCheck={false} />
+      <input
+        data-tour="diagram-name"
+        className="topbar__name"
+        value={workspaceName}
+        onChange={(e) => setWorkspaceName(e.target.value)}
+        placeholder={sheetCount > 1 ? 'Workspace name' : 'Diagram name'}
+        title={sheetCount > 1 ? `The name of this workspace and the file it saves as; its ${sheetCount} diagrams are named on their own tabs` : 'The name of this diagram and the file it saves as'}
+        spellCheck={false}
+      />
       <select data-tour="dialect" className="dialect-select select" value={diagram.dialect} onChange={(e) => onDialectChange(e.target.value as Dialect)} title="SQL dialect">
         {DIALECTS.map((d) => (
           <option key={d.id} value={d.id}>
@@ -414,17 +432,20 @@ export function TopBar() {
         <Menu label="File" icon={<Save />} data-tour="file-menu">
           {(close) => (
             <>
+              <button className="menu__item" onClick={() => void (close(), onNewSheet())}>
+                <Plus /> New diagram in this workspace
+              </button>
               <button className="menu__item" onClick={() => void (close(), onNew())}>
-                <FilePlus2 /> New diagram
+                <FilePlus2 /> New workspace
               </button>
               <button className="menu__item" onClick={() => void (close(), openFile())}>
                 <FolderOpen /> Open… <span className="kbd">Ctrl+O</span>
               </button>
               <button className="menu__item" onClick={() => void (close(), setLibraryOpen(true))}>
-                <Library /> Open recent…
+                <Library /> Open recent workspace…
               </button>
               <button className="menu__item" onClick={() => void (close(), saveFile())}>
-                <Save /> Save as .dbviz.json <span className="kbd">Ctrl+S</span>
+                <Save /> Save {sheetCount > 1 ? 'workspace' : ''} as .dbviz.json <span className="kbd">Ctrl+S</span>
               </button>
               <button className="menu__item" onClick={() => void (close(), onSaveCheckpoint())}>
                 <BookmarkPlus /> Save checkpoint…

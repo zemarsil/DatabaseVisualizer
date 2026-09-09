@@ -3,6 +3,7 @@ import {
   Boxes,
   BookmarkPlus,
   Code2,
+  Copy,
   Database,
   Download,
   Eye,
@@ -10,6 +11,7 @@ import {
   FileImage,
   FilePlus2,
   FileText,
+  Files,
   FolderOpen,
   Focus,
   HelpCircle,
@@ -39,12 +41,13 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { DIALECTS, type Dialect } from '@shared/types';
-import { useStore, type DrawerTab } from '@/store/useStore';
+import { sheetDiagram, useStore, type DrawerTab } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
 import { simulationTargets } from '@/lib/simulate/engine';
 import { fuzzyFilter } from '@/lib/fuzzy';
 import { copyTextToClipboard } from '@/lib/canvasActions';
+import { closeSheetWithConfirm } from '@/lib/sheets';
 import { selectionMarkdown, selectionSql } from '@/lib/selectionExport';
 import { isContextMenuOpen } from './ui/ContextMenu';
 import { useDialogStore } from './ui/Modal';
@@ -53,7 +56,8 @@ import { useDialogStore } from './ui/Modal';
 export interface PaletteBridge {
   saveFile: () => void;
   openFile: () => void;
-  newDiagram: () => void;
+  newWorkspace: () => void;
+  newSheet: () => void;
   loadSample: () => void;
   exportImage: (format: 'png' | 'svg') => void;
   exportAs: (format: 'sql' | 'mermaid' | 'dbml' | 'markdown') => void;
@@ -136,13 +140,24 @@ function buildItems(): PaletteItem[] {
     );
   }
   for (const g of d.groups) act(`group:${g.id}`, 'Go to', `Group: ${g.name}`, () => s.selectGroup(g.id), { icon: Boxes });
+  if (s.sheetIds.length > 1) {
+    for (const id of s.sheetIds) {
+      if (id === s.activeSheetId) continue;
+      const name = sheetDiagram(s, id)?.name ?? 'Untitled diagram';
+      act(`sheet:${id}`, 'Go to', `Diagram: ${name}`, () => s.switchSheet(id), { icon: Files, keywords: ['sheet', 'tab', 'workspace'] });
+    }
+  }
 
   const selected = s.selection.tableIds;
-  act('new', 'File', 'New diagram', () => bridge.newDiagram?.(), { icon: FilePlus2 });
+  act('new-sheet', 'File', 'New diagram in this workspace', () => bridge.newSheet?.(), { icon: Plus, keywords: ['sheet', 'tab', 'add database'] });
+  act('new', 'File', 'New workspace', () => bridge.newWorkspace?.(), { icon: FilePlus2 });
   act('open', 'File', 'Open file…', () => bridge.openFile?.(), { icon: FolderOpen, hint: 'Ctrl+O' });
   act('library', 'File', 'Open diagram library…', () => bridge.openLibrary?.(), { icon: Library, keywords: ['recent'] });
   act('save', 'File', 'Save as .dbviz.json', () => bridge.saveFile?.(), { icon: Save, hint: 'Ctrl+S' });
   act('checkpoint', 'File', 'Save checkpoint…', () => bridge.saveCheckpoint?.(), { icon: BookmarkPlus, keywords: ['snapshot', 'version'] });
+  act('sheet-duplicate', 'File', 'Duplicate this diagram into a new tab', () => s.duplicateSheet(s.activeSheetId), { icon: Copy, keywords: ['sheet', 'copy'] });
+  if (s.sheetIds.length > 1)
+    act('sheet-close', 'File', `Close the "${d.name}" tab`, () => void closeSheetWithConfirm(s.activeSheetId), { icon: Trash2, keywords: ['sheet', 'remove', 'delete'] });
   act('sample', 'File', 'Load example diagram', () => bridge.loadSample?.(), { icon: Sparkles });
   act('export-png', 'Export', 'Export PNG', () => bridge.exportImage?.('png'), { icon: FileImage });
   act('export-svg', 'Export', 'Export SVG', () => bridge.exportImage?.('svg'), { icon: FileImage });

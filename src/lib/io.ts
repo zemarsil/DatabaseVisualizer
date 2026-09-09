@@ -10,12 +10,14 @@ import {
   type Group,
   type Note,
   type Relationship,
+  type Sheet,
   type Table,
   type TableDisplay,
   type TableKind,
+  type Workspace,
 } from '@shared/types';
 import { pruneGroupIds } from './groups';
-import { emptyDiagram } from './model';
+import { emptyDiagram, newSheetId, singleSheetWorkspace } from './model';
 import { newId } from './ids';
 
 export const FILE_EXTENSION = '.dbviz.json';
@@ -66,14 +68,21 @@ function parseDerivations(v: unknown): Derivation[] | undefined {
     });
 }
 
-/** Parse and validate a saved file. Tolerant of missing optional fields so old files keep loading. */
-export function parseDiagramFile(text: string): Diagram {
-  let raw: unknown;
+function readJson(text: string): unknown {
   try {
-    raw = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
     throw new InvalidFile('The file is not valid JSON.');
   }
+}
+
+/** Parse and validate a saved file. Tolerant of missing optional fields so old files keep loading. */
+export function parseDiagramFile(text: string): Diagram {
+  return parseDiagramValue(readJson(text));
+}
+
+/** The diagram parser proper, over already-decoded JSON: a whole file, or one sheet of a workspace. */
+function parseDiagramValue(raw: unknown): Diagram {
   if (!raw || typeof raw !== 'object') throw new InvalidFile('The file does not contain a diagram.');
   const o = raw as Record<string, unknown>;
   if (!Array.isArray(o.tables)) throw new InvalidFile('The file has no "tables" array; is this a Database Visualizer file?');
@@ -221,6 +230,64 @@ export function parseDiagramFile(text: string): Diagram {
     d.viewport = { x: num(v.x), y: num(v.y), zoom: num(v.zoom, 1) || 1 };
   }
   return d;
+}
+
+/* ------------------------------------------------------------------ */
+/* Workspaces: several diagrams in one file                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A workspace as a file. One diagram whose name is the workspace name is
+ * written as a bare diagram — byte for byte the format this app has always
+ * written — so single-diagram files stay readable by anything that reads them
+ * today. Anything richer gets the envelope, with each sheet a diagram object
+ * carrying its id.
+ */
+export function serializeWorkspace(ws: Workspace): string {
+  const only = ws.sheets.length === 1 ? ws.sheets[0] : null;
+  if (only && only.diagram.name === ws.name) return serializeDiagram(only.diagram);
+  return JSON.stringify(
+    {
+      version: 1,
+      kind: 'workspace',
+      name: ws.name,
+      activeSheet: ws.activeSheetId,
+      sheets: ws.sheets.map((s) => ({ id: s.id, ...s.diagram })),
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * Reads either shape: a workspace envelope, or a bare diagram (which becomes a
+ * workspace of one). `sheetId` names that one sheet — the store passes the id
+ * an older autosave was already known by, so its checkpoints stay attached.
+ */
+export function parseWorkspaceFile(text: string, opts?: { sheetId?: string }): Workspace {
+  const raw = readJson(text);
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  if (!Array.isArray(o.sheets)) return singleSheetWorkspace(parseDiagramValue(raw), opts?.sheetId);
+
+  const sheets: Sheet[] = [];
+  const seen = new Set<string>();
+  o.sheets.forEach((entry, i) => {
+    let diagram: Diagram;
+    try {
+      diagram = parseDiagramValue(entry);
+    } catch (e) {
+      throw new InvalidFile(`Sheet ${i + 1} of this workspace could not be read: ${e instanceof Error ? e.message : 'unknown problem'}`);
+    }
+    const e = entry as Record<string, unknown>;
+    // A duplicated id would make two tabs share one identity (and one set of checkpoints).
+    const id = typeof e.id === 'string' && e.id && !seen.has(e.id) ? e.id : newSheetId();
+    seen.add(id);
+    sheets.push({ id, diagram });
+  });
+  if (sheets.length === 0) throw new InvalidFile('The workspace has no diagrams in it.');
+
+  const active = typeof o.activeSheet === 'string' && seen.has(o.activeSheet) ? o.activeSheet : sheets[0].id;
+  return { version: 1, name: str(o.name) || sheets[0].diagram.name, sheets, activeSheetId: active };
 }
 
 /** Trigger a browser download of text content. */

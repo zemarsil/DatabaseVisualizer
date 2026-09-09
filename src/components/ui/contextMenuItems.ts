@@ -17,7 +17,9 @@ import {
   AlignStartVertical,
   AlignVerticalDistributeCenter,
   ArrowDown,
+  ArrowLeft,
   ArrowLeftRight,
+  ArrowRight,
   ArrowUp,
   Boxes,
   Braces,
@@ -64,7 +66,7 @@ import { copySelectionToClipboard, cutSelection, pasteFromClipboard } from '@/li
 import { PALETTE } from '@/lib/palette';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
-import type { Store } from '@/store/useStore';
+import { sheetDiagram, type Store } from '@/store/useStore';
 
 /** What the user right-clicked. */
 export type ContextTarget =
@@ -74,7 +76,9 @@ export type ContextTarget =
   | { type: 'relationship'; relationshipId: string }
   | { type: 'group'; groupId: string }
   /** Several tables are selected; act on all of them. */
-  | { type: 'selection' };
+  | { type: 'selection' }
+  /** A diagram's tab in the sheet strip above the canvas. */
+  | { type: 'sheet'; sheetId: string };
 
 export interface MenuAction {
   kind: 'action';
@@ -132,6 +136,10 @@ export interface MenuEnv {
   removeGroup: (groupId: string) => void;
   /** Paste the clipboard at a canvas position (defaults to the shared clipboard action). */
   pasteAt?: (at: { x: number; y: number }) => void;
+  /** Sheet tab actions that ask something first; wired by ContextMenu.tsx. */
+  renameSheet?: (id: string) => void;
+  closeSheet?: (id: string) => void;
+  addSheet?: () => void;
 }
 
 const sep = (id: string): MenuSeparator => ({ kind: 'separator', id });
@@ -816,6 +824,24 @@ function groupMenu(groupId: string, env: MenuEnv): MenuNode[] {
 
 /* ------------------------------------------------------------------ */
 
+/** The tab of one diagram in the workspace. */
+function sheetMenu(sheetId: string, env: MenuEnv): MenuNode[] {
+  const s = env.store;
+  const at = s.sheetIds.indexOf(sheetId);
+  const name = sheetDiagram(s, sheetId)?.name ?? 'this diagram';
+  const last = s.sheetIds.length === 1;
+  return [
+    { kind: 'action', id: 'sheet-rename', label: 'Rename…', icon: Pencil, run: () => env.renameSheet?.(sheetId) },
+    { kind: 'action', id: 'sheet-duplicate', label: 'Duplicate', icon: Copy, run: () => void s.duplicateSheet(sheetId) },
+    sep('sheet-order'),
+    { kind: 'action', id: 'sheet-left', label: 'Move left', icon: ArrowLeft, disabled: at <= 0, run: () => s.moveSheet(sheetId, at - 1) },
+    { kind: 'action', id: 'sheet-right', label: 'Move right', icon: ArrowRight, disabled: at < 0 || at >= s.sheetIds.length - 1, run: () => s.moveSheet(sheetId, at + 1) },
+    sep('sheet-end'),
+    { kind: 'action', id: 'sheet-add', label: 'New diagram in this workspace', icon: Plus, run: () => env.addSheet?.() },
+    { kind: 'action', id: 'sheet-close', label: last ? `Empty "${name}"` : `Close "${name}"`, icon: X, danger: true, run: () => env.closeSheet?.(sheetId) },
+  ];
+}
+
 export function buildContextMenu(target: ContextTarget, env: MenuEnv): MenuNode[] {
   const s = env.store;
   switch (target.type) {
@@ -844,6 +870,8 @@ export function buildContextMenu(target: ContextTarget, env: MenuEnv): MenuNode[
       return relationshipMenu(target.relationshipId, env);
     case 'group':
       return groupMenu(target.groupId, env);
+    case 'sheet':
+      return sheetMenu(target.sheetId, env);
   }
 }
 

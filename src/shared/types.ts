@@ -531,6 +531,30 @@ export interface Diagram {
   viewport?: { x: number; y: number; zoom: number };
 }
 
+/**
+ * One diagram inside a workspace. The id is the diagram's identity across a
+ * session: its tab, its parked editing state and its checkpoints all hang off
+ * it, while the diagram itself stays exactly the shape it has always been.
+ */
+export interface Sheet {
+  id: string;
+  diagram: Diagram;
+}
+
+/**
+ * A workspace is what you save: several diagrams side by side, the way a
+ * spreadsheet holds several worksheets. Files written before workspaces
+ * existed are a bare `Diagram` and load as a workspace of one.
+ */
+export interface Workspace {
+  version: 1;
+  name: string;
+  /** Tab order. Never empty. */
+  sheets: Sheet[];
+  /** The sheet that opens with the workspace; always one of `sheets`. */
+  activeSheetId: string;
+}
+
 /* ------------------------------------------------------------------ */
 /* Server API contracts                                                */
 /* ------------------------------------------------------------------ */

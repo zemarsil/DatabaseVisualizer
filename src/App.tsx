@@ -2,9 +2,11 @@ import { useEffect } from 'react';
 import { useStore } from '@/store/useStore';
 import { useSimulation } from '@/store/useSimulation';
 import { simulationTargets } from '@/lib/simulate/engine';
+import { stepSheet } from '@/lib/sheets';
 import { TopBar } from './components/TopBar';
 import { Sidebar } from './components/Sidebar';
 import { Canvas } from './components/canvas/Canvas';
+import { SheetTabs } from './components/SheetTabs';
 import { Inspector } from './components/inspector/Inspector';
 import { Drawer } from './components/drawer/Drawer';
 import { Toasts } from './components/ui/Toasts';
@@ -44,6 +46,13 @@ export default function App() {
       if (mod && e.key.toLowerCase() === 'o') {
         e.preventDefault();
         bridge?.openFile();
+        return;
+      }
+      // Between the diagrams of this workspace, spreadsheet style — and, like a
+      // spreadsheet, it works while you are typing in a field too.
+      if (mod && (e.key === 'PageDown' || e.key === 'PageUp')) {
+        e.preventDefault();
+        stepSheet(e.key === 'PageDown' ? 1 : -1);
         return;
       }
       if (isEditable(e.target)) return; // let inputs keep their own undo/typing
@@ -140,6 +149,7 @@ export default function App() {
       <div className="app__body">
         {sidebarOpen ? <Sidebar /> : <div />}
         <div className="app__center">
+          <SheetTabs />
           <Canvas />
           <Drawer />
         </div>
