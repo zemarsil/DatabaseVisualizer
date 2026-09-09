@@ -41,8 +41,26 @@
   min-height: 0;
 }
 
+/* Views read as "virtual" rather than stored: dashed outline throughout,
+   a hatched header instead of a solid tint, and italic column names. */
+.table-node--view {
+  border-style: dashed;
+  border-width: 1.5px;
+}
 .table-node--view .table-node__header {
   border-bottom: 1px dashed var(--border-strong);
+  background: repeating-linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--hue) 16%, transparent) 0 6px,
+      transparent 6px 12px
+    ),
+    color-mix(in srgb, var(--hue) 10%, var(--node-bg));
+}
+.table-node--view .table-node__header::before {
+  background: repeating-linear-gradient(to bottom, var(--hue) 0 5px, transparent 5px 9px);
+}
+.table-node--view .col-name {
+  font-style: italic;
 }
 .table-node__kind-icon {
   width: 13px;
@@ -52,7 +70,8 @@
   flex: none;
 }
 .table-node__badge--view {
-  background: var(--accent-soft);
+  background: transparent;
+  border: 1px dashed var(--accent);
   color: var(--accent);
 }
 .table-node__badge--join {
