@@ -4,11 +4,13 @@ import { verbLabel, type Column, type Index, type RelationshipKind, type Table }
 import { useStore } from '@/store/useStore';
 import { ViewEditor } from './ViewEditor';
 import { flowDerivations } from '@/lib/derivation';
+import { columnKeyAction, rovingIndex, FLAG_SHORTCUT, type ColumnField, type ColumnFlag } from '@/lib/editorKeys';
 import { PALETTE, paletteHue } from '@/lib/palette';
 import { embeddedColumnIds, foreignKeyColumnIds } from '@/lib/model';
 import { TYPE_SUGGESTIONS } from '@/lib/sql/dialect';
 import { generateTableSql } from '@/lib/sql/generator';
 import { confirmDialog } from '../ui/Modal';
+import { Swatches } from '../ui/Swatches';
 
 /** Little coloured glyph that matches how the edge is drawn on the canvas. */
 function RelIcon({ kind }: { kind: RelationshipKind }) {
@@ -26,6 +28,14 @@ function FlagButton({ on, label, title, className, onClick }: { on: boolean; lab
   );
 }
 
+/** The four column toggles, in the order they sit on a row. */
+const COLUMN_FLAGS: { flag: ColumnFlag; label: string; className?: string }[] = [
+  { flag: 'primaryKey', label: 'PK', className: 'flag-btn--pk' },
+  { flag: 'nullable', label: 'NN' },
+  { flag: 'unique', label: 'UQ' },
+  { flag: 'autoIncrement', label: 'AI' },
+];
+
 interface DragState {
   id: string;
   over: { id: string; where: 'above' | 'below' } | null;
@@ -37,12 +47,14 @@ interface ColumnRowProps {
   index: number;
   fk: boolean;
   embed: boolean;
-  register: (id: string, el: HTMLInputElement | null) => void;
+  register: (id: string, field: 'name' | 'type', el: HTMLInputElement | null) => void;
+  /** Put the cursor in another row's name or type box; false if that row is not rendered. */
+  focusField: (id: string, field: 'name' | 'type') => boolean;
   drag: DragState | null;
   setDrag: (d: DragState | null) => void;
 }
 
-function ColumnRow({ table, column, index, fk, embed, register, drag, setDrag }: ColumnRowProps) {
+function ColumnRow({ table, column, index, fk, embed, register, focusField, drag, setDrag }: ColumnRowProps) {
   const updateColumn = useStore((s) => s.updateColumn);
   const deleteColumn = useStore((s) => s.deleteColumn);
   const moveColumn = useStore((s) => s.moveColumn);
@@ -52,30 +64,56 @@ function ColumnRow({ table, column, index, fk, embed, register, drag, setDrag }:
   const dialect = useStore((s) => s.diagram.dialect);
   const customType = useStore((s) => s.diagram.customTypes.find((t) => t.name.toLowerCase() === column.type.trim().toLowerCase()));
   const [open, setOpen] = useState(false);
+  // The flags share one tab stop and pass focus between themselves with the
+  // arrow keys, so tabbing a row costs three stops (name, type, flags) rather
+  // than seven. `flagIndex` is which of them currently holds the tab stop.
+  const [flagIndex, setFlagIndex] = useState(0);
+  const flagRefs = useRef<(HTMLButtonElement | null)[]>([]);
   const patch = (p: Partial<Column>) => updateColumn(table.id, column.id, p);
+  const toggleFlag = (flag: ColumnFlag) => patch({ [flag]: !column[flag] } as Partial<Column>);
 
-  /** Enter adds a column below (Shift+Enter above); Escape leaves the field; Ctrl+Backspace on an empty name removes the column. */
-  const onKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (e.shiftKey) {
+  /**
+   * Enter adds a column below (Shift+Enter above); Alt+P/N/U/I toggle PK, NN, UQ
+   * and AI without the cursor leaving the box; the arrow keys walk the rows;
+   * Escape leaves the field; Ctrl+Backspace on an unnamed row removes it.
+   */
+  const onKeyDown = (e: React.KeyboardEvent<HTMLElement>, field: ColumnField) => {
+    const action = columnKeyAction(e, { field, nameEmpty: !column.name });
+    if (!action) return;
+    const el = e.currentTarget;
+    e.preventDefault();
+    if (action.kind === 'add') {
+      if (action.where === 'below') addColumn(table.id, undefined, { after: column.id });
+      else {
         const prev = table.columns[index - 1];
         if (prev) addColumn(table.id, undefined, { after: prev.id });
-        else {
-          const id = addColumn(table.id);
-          reorderColumn(table.id, id, 0);
-        }
-      } else {
-        addColumn(table.id, undefined, { after: column.id });
+        else reorderColumn(table.id, addColumn(table.id), 0);
       }
-    } else if (e.key === 'Escape') {
-      e.currentTarget.blur();
-    } else if (e.key === 'Backspace' && (e.ctrlKey || e.metaKey) && !column.name) {
-      e.preventDefault();
+    } else if (action.kind === 'toggle') {
+      toggleFlag(action.flag);
+    } else if (action.kind === 'step') {
+      const target = table.columns[index + action.delta];
+      // From the flag toolbar there is no counterpart on the next row, so land in its name.
+      if (target) focusField(target.id, field === 'type' ? 'type' : 'name');
+    } else if (action.kind === 'delete') {
       const prev = table.columns[index - 1];
       deleteColumn(table.id, column.id);
       if (prev) focusColumn(prev.id);
+    } else if (action.kind === 'blur') {
+      el.blur();
     }
+  };
+
+  /** Arrow keys move between the flags; everything else is an ordinary row key. */
+  const onFlagKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, i: number) => {
+    const next = rovingIndex(e.key, i, COLUMN_FLAGS.length + 1);
+    if (next !== null) {
+      e.preventDefault();
+      setFlagIndex(next);
+      flagRefs.current[next]?.focus();
+      return;
+    }
+    onKeyDown(e, 'flags');
   };
 
   const dragging = drag?.id === column.id;
@@ -120,11 +158,11 @@ function ColumnRow({ table, column, index, fk, embed, register, drag, setDrag }:
           <GripVertical />
         </span>
         <input
-          ref={(el) => register(column.id, el)}
+          ref={(el) => register(column.id, 'name', el)}
           className="input input--sm"
           value={column.name}
           onChange={(e) => patch({ name: e.target.value })}
-          onKeyDown={onKeyDown}
+          onKeyDown={(e) => onKeyDown(e, 'name')}
           placeholder="column"
           spellCheck={false}
           title={fk ? 'Referenced by a foreign key' : embed ? 'Holds another table serialized' : undefined}
@@ -132,22 +170,53 @@ function ColumnRow({ table, column, index, fk, embed, register, drag, setDrag }:
         />
       </div>
       <input
+        ref={(el) => register(column.id, 'type', el)}
         className="input input--sm input--mono"
         value={column.type}
         onChange={(e) => patch({ type: e.target.value })}
-        onKeyDown={onKeyDown}
+        onKeyDown={(e) => onKeyDown(e, 'type')}
         placeholder="TYPE"
         list={`types-${dialect}`}
         spellCheck={false}
         title={customType ? `Custom ${customType.kind === 'enum' ? 'enum' : 'struct'} type — edit it in the Types drawer tab` : undefined}
         style={customType ? { borderColor: 'var(--accent)' } : undefined}
       />
-      <div className="col-row__flags">
-        <FlagButton on={column.primaryKey} label="PK" title="Primary key" className="flag-btn--pk" onClick={() => patch({ primaryKey: !column.primaryKey })} />
-        <FlagButton on={!column.nullable} label="NN" title="NOT NULL" onClick={() => patch({ nullable: !column.nullable })} />
-        <FlagButton on={column.unique} label="UQ" title="UNIQUE" onClick={() => patch({ unique: !column.unique })} />
-        <FlagButton on={column.autoIncrement} label="AI" title={dialect === 'mariadb' ? 'AUTO_INCREMENT' : 'Identity / serial'} onClick={() => patch({ autoIncrement: !column.autoIncrement })} />
-        <button type="button" className="icon-btn" title="More options" onClick={() => setOpen((o) => !o)}>
+      <div className="col-row__flags" role="toolbar" aria-label={`Flags for ${column.name || 'this column'}`}>
+        {COLUMN_FLAGS.map((f, i) => {
+          const on = f.flag === 'nullable' ? !column.nullable : Boolean(column[f.flag]);
+          const what = f.flag === 'primaryKey' ? 'Primary key' : f.flag === 'nullable' ? 'NOT NULL' : f.flag === 'unique' ? 'UNIQUE' : dialect === 'mariadb' ? 'AUTO_INCREMENT' : 'Identity / serial';
+          return (
+            <button
+              key={f.flag}
+              type="button"
+              ref={(el) => {
+                flagRefs.current[i] = el;
+              }}
+              className={`flag-btn${on ? ' flag-btn--on' : ''}${f.className ? ` ${f.className}` : ''}`}
+              title={`${what} (Alt+${FLAG_SHORTCUT[f.flag]})`}
+              aria-pressed={on}
+              tabIndex={i === flagIndex ? 0 : -1}
+              onFocus={() => setFlagIndex(i)}
+              onClick={() => toggleFlag(f.flag)}
+              onKeyDown={(e) => onFlagKeyDown(e, i)}
+            >
+              {f.label}
+            </button>
+          );
+        })}
+        <button
+          type="button"
+          ref={(el) => {
+            flagRefs.current[COLUMN_FLAGS.length] = el;
+          }}
+          className="icon-btn"
+          title="More options: default, check, comment"
+          aria-expanded={open}
+          tabIndex={flagIndex === COLUMN_FLAGS.length ? 0 : -1}
+          onFocus={() => setFlagIndex(COLUMN_FLAGS.length)}
+          onClick={() => setOpen((o) => !o)}
+          onKeyDown={(e) => onFlagKeyDown(e, COLUMN_FLAGS.length)}
+        >
           {open ? <ChevronDown /> : <ChevronRight />}
         </button>
       </div>
@@ -225,24 +294,58 @@ export function TableEditor({ table }: { table: Table }) {
   const toast = useStore((s) => s.toast);
   const focusColumnId = useStore((s) => s.focusColumnId);
   const focusColumn = useStore((s) => s.focusColumn);
+  const focusFieldTarget = useStore((s) => s.focusFieldTarget);
+  const focusInspectorField = useStore((s) => s.focusInspectorField);
   const [showSql, setShowSql] = useState(false);
   const [drag, setDrag] = useState<DragState | null>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const schemaRef = useRef<HTMLInputElement>(null);
   const inputs = useRef(new Map<string, HTMLInputElement>());
-  const register = (id: string, el: HTMLInputElement | null) => {
-    if (el) inputs.current.set(id, el);
-    else inputs.current.delete(id);
+  const register = (id: string, field: 'name' | 'type', el: HTMLInputElement | null) => {
+    const key = `${id}:${field}`;
+    if (el) inputs.current.set(key, el);
+    else inputs.current.delete(key);
+  };
+  const focusField = (id: string, field: 'name' | 'type') => {
+    const el = inputs.current.get(`${id}:${field}`);
+    if (!el) return false;
+    el.focus();
+    el.select();
+    return true;
   };
   const isView = table.kind === 'view';
+
+  /**
+   * Enter in the schema box (or a hand-off from elsewhere) drops into the grid.
+   * A table with no columns yet gets one, so the fast path never dead-ends —
+   * except on a view, where columns are decoration and one would be a surprise.
+   */
+  const jumpToColumns = () => {
+    const first = table.columns[0];
+    if (first) focusField(first.id, 'name');
+    else if (!isView) addColumn(table.id);
+  };
 
   // A column added with Enter (or from a menu) gets the cursor so typing flows on.
   useEffect(() => {
     if (!focusColumnId) return;
-    const el = inputs.current.get(focusColumnId);
-    if (!el) return;
-    el.focus();
-    el.select();
+    if (!focusField(focusColumnId, 'name')) return;
     focusColumn(null);
   }, [focusColumnId, focusColumn, table.columns.length]);
+
+  // A new table, or Tab out of the canvas rename box, hands the cursor to a field here.
+  useEffect(() => {
+    if (!focusFieldTarget) return;
+    focusInspectorField(null);
+    const box = focusFieldTarget === 'name' ? nameRef.current : focusFieldTarget === 'schema' ? schemaRef.current : null;
+    if (box) {
+      box.focus();
+      box.select();
+    } else if (focusFieldTarget === 'columns') {
+      jumpToColumns();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusFieldTarget, table.id]);
 
   const fkColumns = useMemo(() => foreignKeyColumnIds(diagram, table.id), [diagram, table.id]);
   const embedColumns = useMemo(() => embeddedColumnIds(diagram, table.id), [diagram, table.id]);
@@ -251,6 +354,21 @@ export function TableEditor({ table }: { table: Table }) {
   const group = diagram.groups.find((g) => g.id === table.groupId);
   const tableName = (id: string) => diagram.tables.find((t) => t.id === id)?.name ?? '?';
   const sql = showSql ? generateTableSql(diagram, table.id) : '';
+
+  /** Enter walks the header fields in the order a table gets typed: name, schema, columns. */
+  const stepTo = (e: React.KeyboardEvent<HTMLInputElement>, next: 'schema' | 'columns') => {
+    if (e.key === 'Escape') {
+      e.currentTarget.blur();
+      return;
+    }
+    if (e.key !== 'Enter' || e.shiftKey) return;
+    e.preventDefault();
+    if (next === 'columns') jumpToColumns();
+    else {
+      schemaRef.current?.focus();
+      schemaRef.current?.select();
+    }
+  };
 
   const onDelete = async () => {
     const ok = await confirmDialog({
@@ -285,25 +403,45 @@ export function TableEditor({ table }: { table: Table }) {
 
       <div className="field">
         <span className="field__label">Name</span>
-        <input className="input" value={table.name} onChange={(e) => updateTable(table.id, { name: e.target.value })} spellCheck={false} autoFocus={table.columns.length <= 1} />
+        <input
+          ref={nameRef}
+          className="input"
+          value={table.name}
+          onChange={(e) => updateTable(table.id, { name: e.target.value })}
+          onKeyDown={(e) => stepTo(e, 'schema')}
+          title="Enter moves on to Schema"
+          spellCheck={false}
+        />
       </div>
       <div className="row" style={{ alignItems: 'flex-start' }}>
         <div className="field grow">
           <span className="field__label">Schema</span>
-          <input className="input input--sm" value={table.schema ?? ''} onChange={(e) => updateTable(table.id, { schema: e.target.value || undefined })} placeholder={diagram.dialect === 'postgresql' ? 'public' : '(database)'} spellCheck={false} />
+          <input
+            ref={schemaRef}
+            className="input input--sm"
+            value={table.schema ?? ''}
+            onChange={(e) => updateTable(table.id, { schema: e.target.value || undefined })}
+            onKeyDown={(e) => stepTo(e, 'columns')}
+            placeholder={diagram.dialect === 'postgresql' ? 'public' : '(database)'}
+            title="Enter jumps to the columns"
+            spellCheck={false}
+          />
         </div>
         <div className="field">
           <span className="field__label">Color</span>
-          <div className="swatches">
-            {PALETTE.map((p) => (
-              <button key={p.key} className={`swatch${table.color === p.key ? ' swatch--active' : ''}`} style={{ background: p.hue }} title={p.label} onClick={() => updateTable(table.id, { color: p.key })} />
-            ))}
-          </div>
+          <Swatches value={table.color} onPick={(key) => updateTable(table.id, { color: key })} label="Table colour" />
         </div>
       </div>
       <div className="field">
         <span className="field__label">Comment</span>
-        <input className="input input--sm" value={table.comment ?? ''} onChange={(e) => updateTable(table.id, { comment: e.target.value || undefined })} placeholder="What this table is for" />
+        <input
+          className="input input--sm"
+          value={table.comment ?? ''}
+          onChange={(e) => updateTable(table.id, { comment: e.target.value || undefined })}
+          onKeyDown={(e) => stepTo(e, 'columns')}
+          title="Enter jumps to the columns"
+          placeholder="What this table is for"
+        />
       </div>
       <div className="field">
         <span className="field__label">Group</span>
@@ -353,12 +491,14 @@ export function TableEditor({ table }: { table: Table }) {
         </div>
         <div className="col-editor">
           {table.columns.map((c, i) => (
-            <ColumnRow key={c.id} table={table} column={c} index={i} fk={fkColumns.has(c.id)} embed={embedColumns.has(c.id)} register={register} drag={drag} setDrag={setDrag} />
+            <ColumnRow key={c.id} table={table} column={c} index={i} fk={fkColumns.has(c.id)} embed={embedColumns.has(c.id)} register={register} focusField={focusField} drag={drag} setDrag={setDrag} />
           ))}
           {table.columns.length === 0 && <div className="faint small">No columns yet.</div>}
         </div>
         <div className="field__hint" style={{ marginTop: 6 }}>
-          PK primary key · NN not null · UQ unique · AI auto-increment. Enter adds the next column, Shift+Enter one above, drag the grip to reorder. Expand a row for default, check and comment.
+          PK primary key · NN not null · UQ unique · AI auto-increment — toggle them from the name or type box with Alt+P, Alt+N, Alt+U and Alt+I. Enter adds
+          the next column, Shift+Enter one above, ↑ and ↓ walk the rows, Ctrl+Backspace deletes an unnamed one, and the grip drags to reorder. Expand a row for
+          default, check and comment. Enter in Name and Schema above walks down to here.
         </div>
       </div>
 

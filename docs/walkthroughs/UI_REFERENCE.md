@@ -105,6 +105,12 @@ Source: `src/components/inspector/*.tsx`
 toggles (expand a row for *Default*, *Check*, *Comment*), *Indexes (N)*,
 *Table checks (N)*, *Connections (N)* and *Quick actions*.
 
+A new table opens with the cursor in *Name*. `Enter` walks the order a table is
+actually typed in — *Name*, *Schema*, then the column grid, which gets its first
+row if it has none. The colour palette and each row's flag toolbar hold one tab
+stop apiece and move internally with the arrow keys, so `Tab` crosses the form
+in a handful of stops rather than twenty.
+
 **View** (`ViewEditor.tsx`) — *View definition (SELECT …)*, the checkbox
 *Materialized (store the rows, refresh on demand)* (PostgreSQL emits
 `CREATE MATERIALIZED VIEW`; MariaDB and SQLite fall back to a plain view with a
@@ -152,13 +158,16 @@ spelling other than the one in the left column.
 | `F2` | Rename the selected table in place |
 | `.` | Focus on the selected table |
 | `[` / `]` | Narrow / widen the focus neighbourhood |
-| `Arrow keys` | Nudge the selection 10 px |
+| `Arrow keys` | Nudge the selection 10 px; in a column name, move to the same box one row up or down |
 | `Shift+Arrow keys` | Nudge 50 px |
-| `Enter` | In a column name: add the next column |
-| `Shift+Enter` | In a column name: insert one above |
+| `Enter` | In the table *Name*: move to *Schema*. In *Schema* or *Comment*: jump to the column grid. Anywhere in a column row: add the next column |
+| `Shift+Enter` | In a column row: insert one above |
+| `Alt+P` / `Alt+N` / `Alt+U` / `Alt+I` | In a column row: toggle **PK** / **NN** / **UQ** / **AI** without leaving the box |
 | `Ctrl+Backspace` | On an empty column name: delete the row |
+| `Tab` | In the canvas rename box: commit the name and carry on into the inspector's *Schema* |
 | `Ctrl+Enter` | **Query** tab: run |
 | `Tab` | **Query** tab: indent |
+| `←` `→` `Home` `End` | Inside the colour palette or a column's flag toolbar, which share one tab stop each |
 | `Shift+click` | Add a table or note to the selection |
 | `Shift+drag` | Box-select everything the box touches |
 | `Delete` / `Backspace` | Delete the selection |

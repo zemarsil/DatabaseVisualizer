@@ -267,9 +267,22 @@ function HelpContent() {
         </span>
         <span>Nudge the selection by 10 px (<K k="Shift" /> for 50)</span>
         <span>
-          <K k="Enter" /> in a column name
+          <K k="Enter" /> in the table form
         </span>
-        <span>Add the next column (<K k="Shift" /> inserts above; <K k="Ctrl" /> + <K k="Backspace" /> deletes an empty row)</span>
+        <span>
+          Walk the order a table gets typed in: <em>Name</em> to <em>Schema</em> to the column grid, then one column row to the next
+        </span>
+        <span>
+          <K k="Enter" /> in a column row
+        </span>
+        <span>
+          Add the next column, from the name, the type or the flags (<K k="Shift" /> inserts above; <K k="Ctrl" /> + <K k="Backspace" /> deletes an empty row;{' '}
+          <K k="↑" /> <K k="↓" /> move between rows)
+        </span>
+        <span>
+          <K k="Alt" /> + <K k="P" /> / <K k="N" /> / <K k="U" /> / <K k="I" />
+        </span>
+        <span>Tick PK, NN, UQ or AI on the column you are typing, without the cursor leaving the box</span>
         <span>
           <K k="Shift" /> + click
         </span>

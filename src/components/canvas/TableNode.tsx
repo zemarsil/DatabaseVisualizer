@@ -57,6 +57,13 @@ function RenameInput({ table }: { table: Table }) {
     if (next && next !== table.name) updateTable(table.id, { name: next });
     setRenaming(null);
   };
+  /** Tab carries on into the inspector rather than the collapse button behind the input. */
+  const commitAndOpenInspector = () => {
+    commit();
+    const s = useStore.getState();
+    s.setInspectorOpen(true);
+    s.focusInspectorField('schema');
+  };
   return (
     <input
       ref={ref}
@@ -70,6 +77,10 @@ function RenameInput({ table }: { table: Table }) {
         e.stopPropagation();
         if (e.key === 'Enter') commit();
         else if (e.key === 'Escape') setRenaming(null);
+        else if (e.key === 'Tab' && !e.shiftKey) {
+          e.preventDefault();
+          commitAndOpenInspector();
+        }
       }}
       spellCheck={false}
     />
