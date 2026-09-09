@@ -47,11 +47,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.badge--warn {
-  background: rgba(224, 175, 104, 0.16);
-  color: var(--warn);
-  border-color: transparent;
-}
 .badge--muted {
   background: var(--bg-hover);
   color: var(--text-muted);

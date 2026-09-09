@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DEFAULT_DB_HOST, createDbContainer, describeDockerError, dockerStatus, listDbContainers, removeContainer, startContainer, stopContainer } from './docker';
-import { applyStatements, friendlyDbError, introspect, isReadOnlySql, runQuery, testConnection, validateConnection } from './db/index';
+import { applyStatements, friendlyDbError, introspect, isReadOnlySql, listExtensions, runQuery, testConnection, validateConnection } from './db/index';
 import type { ApplySchemaRequest, CreateContainerRequest, QueryRequest } from '../src/shared/types';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -139,6 +139,24 @@ app.post(
     }
     try {
       res.json(await introspect(cfg));
+    } catch (e) {
+      res.status(502).json({ error: friendlyDbError(e) });
+    }
+  }),
+);
+
+app.post(
+  '/api/db/extensions',
+  wrap(async (req, res) => {
+    let cfg;
+    try {
+      cfg = validateConnection(req.body);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message });
+      return;
+    }
+    try {
+      res.json(await listExtensions(cfg));
     } catch (e) {
       res.status(502).json({ error: friendlyDbError(e) });
     }

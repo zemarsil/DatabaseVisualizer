@@ -28,6 +28,7 @@ let packs: ExtensionPack[] | null = null;
 /** Definitions learned from a live database this session; not persisted. */
 let learned: ExtensionDef[] = [];
 let merged: Map<string, ExtensionDef> | null = null;
+let version = 0;
 const listeners = new Set<() => void>();
 
 function currentPacks(): ExtensionPack[] {
@@ -50,7 +51,17 @@ function index(): Map<string, ExtensionDef> {
 
 function invalidate(): void {
   merged = null;
+  version++;
   for (const l of listeners) l();
+}
+
+/**
+ * Bumped whenever the catalog changes. React reads this through
+ * useSyncExternalStore, which needs a value it can compare rather than the
+ * catalog itself (a fresh array every call would re-render forever).
+ */
+export function extensionCatalogVersion(): number {
+  return version;
 }
 
 /** Notified whenever the merged catalog changes (a pack loaded, dropped, or learned from a server). */

@@ -7,7 +7,7 @@ import { flowDerivations } from '@/lib/derivation';
 import { columnKeyAction, rovingIndex, FLAG_SHORTCUT, type ColumnField, type ColumnFlag } from '@/lib/editorKeys';
 import { PALETTE, paletteHue } from '@/lib/palette';
 import { embeddedColumnIds, foreignKeyColumnIds } from '@/lib/model';
-import { TYPE_SUGGESTIONS } from '@/lib/sql/dialect';
+import { extensionFunctionSuggestions, typeSuggestions } from '@/lib/extensions/registry';
 import { generateTableSql } from '@/lib/sql/generator';
 import { confirmDialog } from '../ui/Modal';
 import { Swatches } from '../ui/Swatches';
@@ -224,7 +224,14 @@ function ColumnRow({ table, column, index, fk, embed, register, focusField, drag
         <div className="col-row__more">
           <div className="field">
             <span className="field__label">Default</span>
-            <input className="input input--sm input--mono" value={column.defaultValue ?? ''} onChange={(e) => patch({ defaultValue: e.target.value || undefined })} placeholder="e.g. now() or 'pending'" spellCheck={false} />
+            <input
+              className="input input--sm input--mono"
+              value={column.defaultValue ?? ''}
+              onChange={(e) => patch({ defaultValue: e.target.value || undefined })}
+              placeholder="e.g. now() or 'pending'"
+              list={`defaults-${dialect}`}
+              spellCheck={false}
+            />
           </div>
           <div className="field">
             <span className="field__label">Check</span>
@@ -391,13 +398,19 @@ export function TableEditor({ table }: { table: Table }) {
         </button>
       </div>
       <datalist id={`types-${diagram.dialect}`}>
-        {TYPE_SUGGESTIONS[diagram.dialect].map((t) => (
+        {typeSuggestions(diagram).map((t) => (
           <option key={t} value={t} />
         ))}
         {diagram.customTypes.map((t) => (
           <option key={t.id} value={t.name}>
             {t.name} ({t.kind === 'enum' ? 'enum' : 'struct'})
           </option>
+        ))}
+      </datalist>
+      {/* Only populated once an extension is enabled: gen_random_uuid() is no use until pgcrypto is. */}
+      <datalist id={`defaults-${diagram.dialect}`}>
+        {extensionFunctionSuggestions(diagram).map((f) => (
+          <option key={f} value={f} />
         ))}
       </datalist>
 

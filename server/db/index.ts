@@ -1,4 +1,4 @@
-import type { ConnectionConfig, IntrospectResponse, QueryResult, StatementResult } from '../../src/shared/types';
+import type { ConnectionConfig, ExtensionsResponse, IntrospectResponse, QueryResult, StatementResult } from '../../src/shared/types';
 import * as postgres from './postgres';
 import * as maria from './mariadb';
 
@@ -39,6 +39,10 @@ export function applyStatements(cfg: ConnectionConfig, statements: string[], sto
 
 export function introspect(cfg: ConnectionConfig): Promise<IntrospectResponse> {
   return cfg.dialect === 'postgresql' ? postgres.introspect(cfg) : maria.introspect(cfg);
+}
+
+export function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsResponse> {
+  return cfg.dialect === 'postgresql' ? postgres.listExtensions(cfg) : maria.listExtensions(cfg);
 }
 
 export interface QueryOptions {

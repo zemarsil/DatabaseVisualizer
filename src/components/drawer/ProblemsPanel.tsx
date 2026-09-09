@@ -22,6 +22,7 @@ export function ProblemsPanel() {
   const toast = useStore((s) => s.toast);
   const selectTable = useStore((s) => s.selectTable);
   const focusTable = useStore((s) => s.focusTable);
+  const openDrawer = useStore((s) => s.openDrawer);
   const focusRelationship = useStore((s) => s.focusRelationship);
   const setSelection = useStore((s) => s.setSelection);
   const addRelationship = useStore((s) => s.addRelationship);
@@ -34,6 +35,7 @@ export function ProblemsPanel() {
   const counts = useMemo(() => summarizeFindings(findings), [findings]);
   const tableName = (id: string | undefined) => diagram.tables.find((t) => t.id === id)?.name;
   const columnName = (tableId: string | undefined, columnId: string | undefined) => diagram.tables.find((t) => t.id === tableId)?.columns.find((c) => c.id === columnId)?.name;
+  const extensionName = (id: string) => diagram.extensions.find((e) => e.id === id)?.name;
 
   // Recognize any table name mentioned inside a finding's message text so it can be turned into a "go to table" link.
   const tableNameLookup = useMemo(() => {
@@ -159,6 +161,12 @@ export function ProblemsPanel() {
                         {(f.tableId || f.relationshipId) && (
                           <button className="chip" onClick={() => goTo(f)} title="Show on the canvas">
                             {f.tableId ? `${tableName(f.tableId) ?? '?'}${columnName(f.tableId, f.columnId) ? `.${columnName(f.tableId, f.columnId)}` : ''}` : 'connection'}
+                          </button>
+                        )}
+                        {/* An extension is not on the canvas, so its chip opens where it is edited. */}
+                        {f.extensionId && !f.tableId && (
+                          <button className="chip" onClick={() => openDrawer('types')} title="Open the extensions list">
+                            {extensionName(f.extensionId) ?? 'extension'}
                           </button>
                         )}
                         {f.fix && (
