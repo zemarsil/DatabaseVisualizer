@@ -14,6 +14,8 @@ covers:
   - Cardinality labels
 shortcuts:
   - T
+  - Enter
+  - Alt+N
   - Ctrl+Z
 start: diagrams/01-set-up-a-table.dbviz.json
 diagram: diagrams/02-connect-two-tables.dbviz.json
@@ -134,8 +136,9 @@ goals:
   - default | orders.placed_at : now()
 -->
 
-Press `T`, rename the new table `orders` with `F2`, and give it these columns
-(the `id` row is already there — change its type):
+Press `T`, type `orders` into the name box the cursor is already in, and press
+`Enter` twice to drop into the column grid. Give it these columns (the `id` row
+is already there — change its type):
 
 | Name | Type | Flags | Default |
 | --- | --- | --- | --- |
@@ -144,6 +147,11 @@ Press `T`, rename the new table `orders` with `F2`, and give it these columns
 | `status` | `TEXT` | **NN** | `'pending'` |
 | `total_cents` | `INTEGER` | **NN** | `0` |
 | `placed_at` | `TIMESTAMPTZ` | **NN** | `now()` |
+
+The `id` row arrives with **PK**, **NN** and **AI** already lit, so only the
+four rows under it need a flag — and each **NN** is one `Alt+N` from inside the
+cell you are already typing in. That makes the table one uninterrupted run:
+name, `Tab`, type, `Alt+N`, `Enter`, next row.
 
 Leave `status` as plain `TEXT` for now: walkthrough 04 turns it into an enum,
 and the difference is easier to feel once you have seen what `TEXT` lets

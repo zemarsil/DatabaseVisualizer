@@ -17,6 +17,7 @@ shortcuts:
   - T
   - F2
   - Enter
+  - Tab
   - L
   - F
   - Ctrl+S
@@ -139,8 +140,12 @@ goals:
 Press `T`. (Double-clicking empty canvas, the **+ Table** button, and
 right-click → *Add table here* all do the same thing.) A table appears named
 `new_table`, already holding one column: `id`, `INTEGER`, primary key, not
-null, auto-increment. Rename it — press `F2` and type `authors`, or edit
-*Name* at the top of the inspector.
+null, auto-increment.
+
+The cursor is already waiting in the inspector's *Name* box, with `new_table`
+selected, so type `authors` straight over it. A new table costs no click to
+name. (`F2` renames a table in place in its header on the canvas, which is what
+you want later on, for a table that is not the one you just made.)
 
 **You should see:** a table node called `authors` on the canvas, selected,
 with the inspector open on the right showing *Name*, *Schema*, *Comment*,
@@ -156,12 +161,21 @@ goals:
   - column | authors.name : TEXT
 -->
 
-Click `id`'s type cell and change it to `BIGSERIAL` — PostgreSQL's
-auto-incrementing 64-bit integer, and the type every table in this series'
-bookshop schema uses for its key (*Set up a table*, next in the series, is
-where you find out why). Then click into `id`'s name cell and press `Enter`:
-a new row opens below it with the cursor already there. Type `name`, press
-`Tab`, and type `TEXT`.
+Still in *Name*, press `Enter` twice. The first steps on to *Schema* — leave it
+empty, `public` is the default — and the second drops into the column grid, on
+`id`'s name cell. That is the whole table header typed without touching the
+mouse, and it is the order every table in this series gets built in.
+
+`id` is already named, so `Tab` past it rather than typing over it (its text
+arrives selected, ready to be replaced) and change the type cell from `INTEGER`
+to `BIGSERIAL` — PostgreSQL's auto-incrementing 64-bit integer, and the type
+every table in this series' bookshop schema uses for its key (*Set up a table*,
+next in the series, is where you find out why). Now press `Enter`: a new row
+opens below with the cursor already there. Type `name`, press `Tab`, and type
+`TEXT`.
+
+Clicking into any cell does the same thing. The keyboard route is there so that
+a table whose shape you already know never needs the mouse at all.
 
 **You should see:** two rows in the column grid, and the bottom drawer's
 **SQL** tab — open it now if it is not already in front — showing
@@ -178,10 +192,11 @@ goals:
   - column | books.title : TEXT
 -->
 
-Press `T` again for a second table and rename it `books`. Change its `id` to
-`BIGSERIAL` as you just did, then add two more columns the same way: `Enter`,
-type a name, `Tab`, type a type. Add `author_id` as `BIGINT` — the same type
-as `authors.id`, which is what makes the connection you are about to draw
+Press `T` again for a second table, type `books` into the name box the cursor
+lands in, and `Enter` twice down into its grid. Change its `id` to `BIGSERIAL`
+as you just did, then add two more columns the same way: `Enter`, type a name,
+`Tab`, type a type. Add `author_id` as `BIGINT` — the same type as
+`authors.id`, which is what makes the connection you are about to draw
 possible — and `title` as `TEXT`.
 
 **You should see:** a second table, `books`, with three rows (`id`,
@@ -293,6 +308,10 @@ Nothing above is the only route there:
 - **Right-click a column row** for the same *Primary key*, *Not null*,
   *Unique* and *Auto-increment* toggles as the grid, plus *Add column below*
   and *Delete column*.
+- **`F2` on the canvas** renames a table in its own header rather than in the
+  inspector. `Tab` out of that box commits the name and carries on into
+  *Schema*, so both routes end up in the same place; the next walkthrough
+  keeps going from there and never leaves the keyboard.
 - Drew the foreign key backwards (from `authors` onto `books` instead of the
   other way round)? Select it and click **Swap** in the inspector — it moves
   the foreign key to the other table without making you delete and redraw it.

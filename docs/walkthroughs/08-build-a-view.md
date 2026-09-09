@@ -168,9 +168,10 @@ goals:
   - viewsql | v_customer_orders
 -->
 
-Rename it to `v_customer_orders` (`F2`, or edit *Name* in the inspector), and
-set its *Colour* to `teal` — this series' convention for views. In *View
-definition (SELECT …)*, paste:
+The cursor is already in the inspector's *Name* box, as it is for any node you
+have just added, so type `v_customer_orders` over it (`F2` renames it on the
+canvas instead, if you have since clicked away). Set its *Colour* to `teal` —
+this series' convention for views. In *View definition (SELECT …)*, paste:
 
 ```
 SELECT c.id AS customer_id,
