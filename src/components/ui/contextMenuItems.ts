@@ -20,6 +20,7 @@ import {
   ArrowLeftRight,
   ArrowUp,
   Boxes,
+  Braces,
   ClipboardCopy,
   ClipboardPaste,
   Code2,
@@ -28,6 +29,7 @@ import {
   Database,
   Eye,
   FileDown,
+  FileText,
   Focus,
   KeyRound,
   ListPlus,
@@ -55,7 +57,8 @@ import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type Tabl
 import { flowDerivations } from '@/lib/derivation';
 import { createGroup, customTypeByName, relationshipKindPatch, uniqueGroupName } from '@/lib/model';
 import { emptySelection, selectionSize, type Selection } from '@/lib/selection';
-import { generateTableSql } from '@/lib/sql/generator';
+import { selectionMarkdown, selectionSql } from '@/lib/selectionExport';
+import { encodeClipboard } from '@/lib/clipboard';
 import { alignTables, distributeTables, groupBySchema, type AlignMode } from '@/lib/canvasOps';
 import { copySelectionToClipboard, cutSelection, pasteFromClipboard } from '@/lib/canvasActions';
 import { PALETTE } from '@/lib/palette';
@@ -189,6 +192,34 @@ function displayItems(store: Store, tableIds: string[]): MenuNode[] {
       disabled: tables.length === 0,
       run: () => store.setTableDisplay(tableIds, m.value),
     })),
+  ];
+}
+
+/**
+ * The "Copy as" rows, shared by the table, selection and group menus.
+ *
+ * Every format here covers exactly `tableIds` and the connections between them;
+ * anything pointing at a table that did not come along is left out, and the text
+ * says so rather than dropping it silently. That holds for a single table too:
+ * its own DDL would carry a foreign key to a table you did not copy, which does
+ * not run on its own.
+ */
+function copyAsItems(env: MenuEnv, tableIds: string[], what: string): MenuNode[] {
+  const d = env.store.diagram;
+  const only = tableIds.length === 1 ? d.tables.find((t) => t.id === tableIds[0]) : undefined;
+  const sqlLabel = only ? (only.kind === 'view' ? 'CREATE VIEW' : 'CREATE TABLE') : 'SQL script';
+  return [
+    { kind: 'caption', id: 'copy-as-caption', text: 'Copy as' },
+    { kind: 'action', id: 'copy-sql', label: sqlLabel, icon: Code2, run: () => env.copy(selectionSql(d, tableIds).text, `Copied the SQL for ${what}.`) },
+    { kind: 'action', id: 'copy-markdown', label: 'Markdown', icon: FileText, run: () => env.copy(selectionMarkdown(d, tableIds), `Copied ${what} as a Markdown table.`) },
+    {
+      kind: 'action',
+      id: 'copy-markdown-sql',
+      label: 'Markdown + SQL',
+      icon: FileText,
+      run: () => env.copy(selectionMarkdown(d, tableIds, { includeSql: true }), `Copied ${what} as Markdown with the SQL below it.`),
+    },
+    { kind: 'action', id: 'copy-json', label: 'Diagram JSON', icon: Braces, run: () => env.copy(encodeClipboard(d, tableIds), `Copied ${what} as diagram JSON.`) },
   ];
 }
 
@@ -461,13 +492,10 @@ function tableMenu(table: Table, env: MenuEnv): MenuNode[] {
         cutSelection();
       },
     },
-    {
-      kind: 'action',
-      id: 'copy-sql',
-      label: table.kind === 'view' ? 'Copy CREATE VIEW' : 'Copy CREATE TABLE',
-      icon: Code2,
-      run: () => env.copy(generateTableSql(s.diagram, table.id), `Copied the ${table.kind === 'view' ? 'CREATE VIEW' : 'CREATE TABLE'} for ${table.name}.`),
-    },
+    sep('s-copy-as'),
+    ...copyAsItems(env, [table.id], table.name || 'the table'),
+    { kind: 'action', id: 'copy-name', label: 'Table name', icon: ClipboardCopy, run: () => env.copy(table.name, 'Copied the table name.') },
+    sep('s-sql-tab'),
     {
       kind: 'action',
       id: 'show-sql',
@@ -478,7 +506,6 @@ function tableMenu(table: Table, env: MenuEnv): MenuNode[] {
         s.openDrawer('sql');
       },
     },
-    { kind: 'action', id: 'copy-name', label: 'Copy table name', icon: ClipboardCopy, run: () => env.copy(table.name, 'Copied the table name.') },
     sep('s-show'),
     ...displayItems(s, [table.id]),
     sep('s3'),
@@ -590,6 +617,8 @@ function selectionMenu(env: MenuEnv): MenuNode[] {
           sep('s-clip'),
           { kind: 'action' as const, id: 'copy', label: `Copy ${plural(tableIds.length, 'table')}`, icon: ClipboardCopy, hint: 'Ctrl+C', run: () => void copySelectionToClipboard(tableIds) },
           { kind: 'action' as const, id: 'cut', label: `Cut ${plural(tableIds.length, 'table')}`, icon: Scissors, hint: 'Ctrl+X', run: () => cutSelection() },
+          sep('s-copy-as'),
+          ...copyAsItems(env, tableIds, plural(tableIds.length, 'table')),
         ]
       : []),
     sep('s2'),
@@ -754,6 +783,14 @@ function groupMenu(groupId: string, env: MenuEnv): MenuNode[] {
     },
     { kind: 'action', id: 'inspector', label: 'Edit group…', icon: PanelRight, run: () => s.selectGroup(groupId) },
     ...(members.length ? [sep('s-show'), ...displayItems(s, ids)] : []),
+    ...(members.length
+      ? [
+          sep('s-clip'),
+          { kind: 'action' as const, id: 'copy', label: `Copy its ${plural(members.length, 'table')}`, icon: ClipboardCopy, run: () => void copySelectionToClipboard(ids) },
+          sep('s-copy-as'),
+          ...copyAsItems(env, ids, group.name || 'the group'),
+        ]
+      : []),
     sep('s1'),
     {
       kind: 'action',

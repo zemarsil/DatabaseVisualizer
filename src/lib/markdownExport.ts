@@ -2,8 +2,18 @@ import { describeRelationship, dialectLabel, type Diagram, type Relationship, ty
 import { derivationSummaries } from './derivation';
 import { exportMermaid } from './export/mermaid';
 
+/**
+ * Cell text is data, not markup. A CHECK expression like `qty * 2 * 3` or a
+ * comment holding a backtick has to survive a Markdown renderer and the HTML
+ * mirror alike, so the characters that would turn into emphasis or a code span
+ * are escaped. Underscores are left alone: neither GFM nor markdownToHtml reads
+ * one inside a word as emphasis, and escaping them would litter every column name.
+ */
 function esc(v: string): string {
-  return v.replace(/\|/g, '\\|').replace(/\r?\n/g, ' ');
+  return v
+    .replace(/([\\*`])/g, '\\$1')
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, ' ');
 }
 
 function mdTable(headers: string[], rows: string[][]): string {
@@ -16,10 +26,10 @@ function anchor(t: Table): string {
   return (t.schema ? `${t.schema}${t.name}` : t.name).toLowerCase().replace(/[^a-z0-9]+/g, '-');
 }
 
-function tableSection(d: Diagram, t: Table, rels: Relationship[]): string {
+function tableSection(d: Diagram, t: Table, rels: Relationship[], level: number): string {
   const parts: string[] = [];
   const heading = t.schema ? `${t.schema}.${t.name}` : t.name;
-  parts.push(`### ${heading}${t.kind === 'view' ? (t.materialized ? ' _(materialized view)_' : ' _(view)_') : ''}`);
+  parts.push(`${'#'.repeat(level)} ${heading}${t.kind === 'view' ? (t.materialized ? ' _(materialized view)_' : ' _(view)_') : ''}`);
   const group = d.groups.find((g) => g.id === t.groupId);
   if (group?.external) parts.push(`\n_Lives in another database (${esc(group.name)}); documented here, not created by the script._`);
   if (t.comment) parts.push(`\n${t.comment}`);
@@ -143,14 +153,28 @@ function relationshipsSection(d: Diagram): string {
   return parts.join('\n');
 }
 
+export interface MarkdownOptions {
+  /** Include the ```mermaid ER diagram in the summary. Default true; ignored in fragment mode. */
+  includeMermaid?: boolean;
+  /**
+   * Fragment mode: no `# title`, no summary or table of contents, no `## Tables`
+   * heading, and one heading level less throughout. For pasting a few tables
+   * into a document that already has its own structure.
+   */
+  fragment?: boolean;
+}
+
 /** Render a diagram's tables (and the connections between them) as GitHub-flavored Markdown. */
-export function generateMarkdown(d: Diagram, opts: { includeMermaid?: boolean } = {}): string {
-  const parts: string[] = [`# ${d.name}`];
+export function generateMarkdown(d: Diagram, opts: MarkdownOptions = {}): string {
+  const fragment = opts.fragment ?? false;
+  const parts: string[] = fragment ? [] : [`# ${d.name}`];
 
   if (d.tables.length) {
-    parts.push(summarySection(d, opts.includeMermaid ?? true));
-    parts.push('## Tables');
-    for (const t of d.tables) parts.push(tableSection(d, t, d.relationships));
+    if (!fragment) {
+      parts.push(summarySection(d, opts.includeMermaid ?? true));
+      parts.push('## Tables');
+    }
+    for (const t of d.tables) parts.push(tableSection(d, t, d.relationships, fragment ? 2 : 3));
   }
 
   const types = customTypesSection(d);

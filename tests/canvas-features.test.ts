@@ -256,6 +256,6 @@ describe('context menu additions', () => {
     d.tables.push(v);
     const { env: e } = env(d);
     const items = buildContextMenu({ type: 'table', tableId: v.id }, e);
-    expect(action(items, 'copy-sql').label).toBe('Copy CREATE VIEW');
+    expect(action(items, 'copy-sql').label).toBe('CREATE VIEW');
   });
 });

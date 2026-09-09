@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { RELATIONSHIP_KINDS, kindMeta, type Diagram } from '../src/shared/types';
 import { buildContextMenu, hasActions, type MenuAction, type MenuEnv, type MenuNode } from '../src/components/ui/contextMenuItems';
 import { sampleDiagram } from '../src/lib/sample';
+import { decodeClipboard } from '../src/lib/clipboard';
 import type { Store } from '../src/store/useStore';
 import { placementSizes } from '../src/lib/geometry';
 
@@ -73,7 +74,21 @@ describe('group region menu', () => {
     const { env, store } = makeEnv(d);
     const items = buildContextMenu({ type: 'group', groupId: group.id }, env);
     expect(heading(items)).toMatchObject({ label: group.name, detail: `${members.length} tables · in another database` });
-    expect(ids(items)).toEqual(['select', 'external', 'inspector', 'show-full', 'show-keys', 'show-header', 'ungroup', 'delete']);
+    expect(ids(items)).toEqual([
+      'select',
+      'external',
+      'inspector',
+      'show-full',
+      'show-keys',
+      'show-header',
+      'copy',
+      'copy-sql',
+      'copy-markdown',
+      'copy-markdown-sql',
+      'copy-json',
+      'ungroup',
+      'delete',
+    ]);
 
     action(items, 'select').run();
     expect(store.setSelection).toHaveBeenCalledWith({ tableIds: members.map((t) => t.id), noteIds: [], relationshipId: null, groupId: null });
@@ -323,5 +338,70 @@ describe('note menu', () => {
     const gone = buildContextMenu({ type: 'note', noteId: 'nope' }, env);
     expect(gone).toEqual([]);
     expect(hasActions(gone)).toBe(false);
+  });
+});
+
+describe('"Copy as" rows', () => {
+  const orders = (d: Diagram) => d.tables.find((t) => t.name === 'orders')!;
+  const orderItems = (d: Diagram) => d.tables.find((t) => t.name === 'order_items')!;
+
+  it('offers every format on a single table, with its own DDL under the SQL row', () => {
+    const d = sampleDiagram();
+    const { env } = makeEnv(d);
+    const items = buildContextMenu({ type: 'table', tableId: orders(d).id }, env);
+    expect(ids(items)).toEqual(expect.arrayContaining(['copy-sql', 'copy-markdown', 'copy-markdown-sql', 'copy-json', 'copy-name']));
+    expect(action(items, 'copy-sql').label).toBe('CREATE TABLE');
+
+    action(items, 'copy-markdown').run();
+    const [markdown] = (env.copy as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+    expect(markdown).toContain('## orders');
+    expect(markdown).toContain('| Column | Type | Nullable | Default | Key | Check | Comment |');
+    expect(markdown).not.toContain('```sql');
+
+    action(items, 'copy-markdown-sql').run();
+    const [both] = (env.copy as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+    expect(both).toContain('## orders');
+    expect(both).toContain('```sql');
+    expect(both).toContain('CREATE TABLE orders');
+  });
+
+  it('copies a multi-table selection as one script, keeping only the connections inside it', () => {
+    const d = sampleDiagram();
+    const tableIds = [orders(d).id, orderItems(d).id];
+    const { env } = makeEnv(d, { selection: { tableIds, noteIds: [], relationshipId: null, groupId: null } });
+    const items = buildContextMenu({ type: 'selection' }, env);
+    expect(action(items, 'copy-sql').label).toBe('SQL script');
+
+    action(items, 'copy-sql').run();
+    const [sql, message] = (env.copy as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+    expect(sql).toContain('CREATE TABLE orders');
+    expect(sql).toContain('CREATE TABLE order_items');
+    expect(sql).toContain('REFERENCES orders');
+    expect(sql).not.toContain('CREATE TABLE customers');
+    expect(sql).toContain('outside this copy');
+    expect(message).toContain('2 tables');
+  });
+
+  it('copies a selection as diagram JSON that carries the same tables back', () => {
+    const d = sampleDiagram();
+    const tableIds = [orders(d).id, orderItems(d).id];
+    const { env } = makeEnv(d, { selection: { tableIds, noteIds: [], relationshipId: null, groupId: null } });
+    action(buildContextMenu({ type: 'selection' }, env), 'copy-json').run();
+    const [json] = (env.copy as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+    const payload = decodeClipboard(json)!;
+    expect(payload.tables.map((t) => t.name).sort()).toEqual(['order_items', 'orders']);
+    expect(payload.relationships).toHaveLength(2);
+  });
+
+  it('copies a whole group region', () => {
+    const d = sampleDiagram();
+    const group = d.groups[0];
+    const members = d.tables.filter((t) => t.groupId === group.id);
+    const { env } = makeEnv(d);
+    const items = buildContextMenu({ type: 'group', groupId: group.id }, env);
+    action(items, 'copy-markdown').run();
+    const [markdown, message] = (env.copy as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
+    for (const t of members) expect(markdown).toContain(`## ${t.name}`);
+    expect(message).toContain(group.name);
   });
 });

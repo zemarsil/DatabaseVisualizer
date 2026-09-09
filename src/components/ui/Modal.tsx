@@ -192,6 +192,15 @@ function HelpContent() {
         (Diagram panel in the inspector, or <em>File → Save checkpoint…</em>) and restore it later. <K k="Ctrl" /> <K k="S" /> downloads a .dbviz.json
         file, <em>Copy share link</em> puts the whole diagram in a URL, and the export menu writes PNG, SVG, SQL, Markdown, Mermaid or DBML.
       </p>
+      <h4>Taking tables out as text</h4>
+      <p>
+        Copying tables fills the clipboard three ways at once and lets whatever you paste into choose: a text editor or a psql prompt gets the{' '}
+        <em>CREATE TABLE</em> script, an editor that takes rich text (Obsidian, Notion, a mail client) gets the data dictionary — a table of columns per table,
+        then the connections, then the DDL in a fenced block — and this app gets the tables back with their positions, colours and every kind of connection.
+        Right-click a table, a selection or a group region and use <em>Copy as</em> to pick one format on purpose, or find the same thing in the command palette.
+        Every format covers only what you copied: a foreign key pointing at a table that did not come along is left out, and the text names it rather than
+        dropping it quietly.
+      </p>
       <h4>Shortcuts</h4>
       <div className="help-grid">
         <span>
@@ -217,7 +226,10 @@ function HelpContent() {
         <span>
           <K k="Ctrl" /> <K k="C" /> / <K k="X" /> / <K k="V" />
         </span>
-        <span>Copy, cut and paste the selected tables (also pastes DDL or a .dbviz.json)</span>
+        <span>
+          Copy, cut and paste the selected tables (also pastes DDL or a .dbviz.json). A copy lands as SQL in a text editor, as a Markdown data dictionary in an
+          editor that takes rich text, and as the tables themselves back here
+        </span>
         <span>
           <K k="T" />
         </span>
