@@ -60,6 +60,7 @@ docker compose up --build
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks. `Enter` anywhere in a row adds the next one, `Shift+Enter` inserts above, `Alt+P` / `Alt+N` / `Alt+U` / `Alt+I` tick PK / NN / UQ / AI without the cursor leaving the box, the arrow keys walk the rows, `Ctrl+Backspace` on an empty name deletes; drag the grip to reorder |
 | Type a table end to end | A new table opens with the cursor in its name. `Enter` goes on to the schema, `Enter` again drops into the column grid (adding the first row if there is none), and from there name, `Tab`, type, `Alt`+a flag, `Enter` repeats down the table. The colour palette and each row's flag toggles are one tab stop each, walked with the arrow keys |
 | Views | Switch a table to **View** in the inspector, paste its `SELECT`, and **Detect from SQL** draws the data-flow links from the tables it reads. Tick **Materialized** (PostgreSQL) to store the rows instead of recomputing them per query; on MariaDB and SQLite the script falls back to a plain view and the setting is kept for when you switch back |
+| Extensions | Bottom drawer → **Types** → *Extensions*: declare what the engine has to have loaded — PostGIS for a `geometry` column, pgvector for an embedding, pg_trgm for a fuzzy-search index. `CREATE EXTENSION` goes to the top of the generated script, the extension's types join every column's TYPE autocomplete, and a column typed with something no enabled extension provides becomes an error in **Problems** with a one-click fix. Definitions for anything the app does not ship with come from a JSON pack (file or URL) or straight off the database you are connected to |
 | Rename in place | Double-click a table header (or press `F2`) |
 | Foreign key | Hover a table and drag the handle beside a column onto a column of another table |
 | Group tables | Select them and press `G` (or the group button in the top bar). Drag a table into or out of a region to change what is in it; drag a region by its title bar to move everything inside it |
@@ -93,9 +94,10 @@ Press `?` in the app for the full shortcut list.
 
 ## Walkthroughs
 
-[`docs/walkthroughs/`](docs/walkthroughs/) is fifteen hands-on guides that build
-**one database, once**: walkthrough 00 puts two tables on the canvas, and
-walkthrough 14 exports the eighteen-table bookshop they grew into. Each one
+[`docs/walkthroughs/`](docs/walkthroughs/) is sixteen hands-on guides that build
+**one database, once**: walkthrough 00 puts two tables on the canvas, walkthrough
+14 exports the eighteen-table bookshop they grew into, and walkthrough 15 adds
+the one column type PostgreSQL cannot make without an extension. Each one
 picks the canvas up exactly where the last put it down — the foreign keys from
 02 are what the derivations in 05 resolve through, the enum from 04 is what the
 seeded rows in 13 obey — so the schema in front of you is always the one you
@@ -213,6 +215,7 @@ src/lib/trace.ts         BFS path finding + join-query builder
 src/lib/simulate/        expression.ts: SQL expression parser/evaluator; engine.ts: runs the data flows over sample rows with lineage
 src/lib/io.ts            .dbviz.json save/load (one diagram, or a workspace of several)
 src/lib/sheets.ts        add / rename / close a diagram tab, with the questions each one asks first
+src/lib/extensions/      engine extensions: bundled definitions, loadable packs, and the registry that merges them with what a live server reports
 src/lib/lint.ts          schema linter with one-click fixes; suggest.ts proposes foreign keys
 src/lib/migrate/         diagram vs. database diff and per-dialect ALTER generation
 src/lib/seed.ts          deterministic seed-data generator
@@ -228,8 +231,8 @@ src/store/useSimulation.ts  simulation mode: target, sample options, playback, r
 src/components/          React UI (canvas, inspector, drawer panels, command palette)
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
 scripts/                 validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
-docs/                    ADVISOR_OUTPUT_FORMAT.md, an example diagram, and walkthroughs/
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format, the simulation, the walkthroughs and their clickthroughs
+docs/                    ADVISOR_OUTPUT_FORMAT.md, EXTENSION_PACK_FORMAT.md, examples, and walkthroughs/
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, layout, file format, the simulation, extensions, the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
 ```
 
 ```bash
@@ -321,9 +324,54 @@ which is the case for a database you query but do not own:
 bring in straight into a new group, external by default, which is usually what
 you want when you are reading someone else's database.
 
+## Extensions
+
+A schema that stores embeddings in a `vector(1536)` column or shapes in a
+`geometry(Point,4326)` one depends on something the engine does not have out of the
+box. Declare it in **Types → Extensions** and the diagram carries that dependency:
+
+- the generated script opens with `CREATE EXTENSION IF NOT EXISTS vector;`, before
+  the types and tables that need it;
+- the extension's types appear in every column's TYPE box and its functions in the
+  DEFAULT box, so `vector(1536)` and `gen_random_uuid()` autocomplete;
+- **Problems** reports a column whose type needs an extension you have not enabled —
+  a real error, because the `CREATE TABLE` would fail — and offers to enable it;
+- importing a schema that says `CREATE EXTENSION`, or reading one off a live
+  database, brings the extensions with it.
+
+Only PostgreSQL installs extensions from a schema script. MariaDB's equivalent is a
+plugin loaded into the whole server with `INSTALL SONAME`, and SQLite's modules are
+compiled in or loaded by the client, so on those two the declaration documents the
+dependency and the script carries the exact statement as a comment rather than
+running it with your schema.
+
+**Where the definitions come from.** The diagram stores only an extension's name, so
+a file you share stays small and opens for someone who has never heard of it. What an
+extension *provides* comes from a catalog with three layers, each outranking the one
+before it:
+
+1. **Bundled** — the usual PostgreSQL extensions, MariaDB plugins and SQLite modules,
+   shipped with the app so the common cases work offline.
+2. **Packs** — one JSON file listing what a set of extensions provides, loaded from
+   disk or a URL. This is how you teach the app about anything it does not bundle.
+   The format is [`docs/EXTENSION_PACK_FORMAT.md`](docs/EXTENSION_PACK_FORMAT.md),
+   with an example in [`docs/examples/`](docs/examples/).
+3. **A live database** — **Read from the database** asks the server you are connected
+   to. A PostgreSQL server that has an extension installed knows exactly what it
+   added, because `pg_depend` ties every type, function, index access method and
+   operator class back to the extension that created it. So the app can describe an
+   extension nobody wrote a definition for, and describe it correctly for *that*
+   server — which is why it beats both other layers. **Keep as a pack** saves what it
+   said. MariaDB answers from `information_schema.PLUGINS` and the in-browser SQLite
+   from `PRAGMA compile_options`.
+
+A definition only ever teaches the app names and prose. Nothing in a pack becomes SQL,
+and an extension with no definition at all still generates the right statement — it
+just gets no autocomplete and no checks.
+
 ## Notes on the SQL support
 
-The parser is purpose-built for schema DDL rather than a full SQL grammar. It handles `CREATE TABLE` with column and table constraints in both dialects, `ALTER TABLE … ADD CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`, `COMMENT ON`, and `CREATE TYPE … AS ENUM`. Anything else is skipped with a warning, and a broken statement does not stop the rest of the script from importing. Generated columns, partitioning, and expression indexes are dropped with a warning because the model does not represent them.
+The parser is purpose-built for schema DDL rather than a full SQL grammar. It handles `CREATE TABLE` with column and table constraints in both dialects, `ALTER TABLE … ADD CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`, `COMMENT ON`, `CREATE TYPE … AS ENUM`, and `CREATE EXTENSION` (plus MariaDB's `INSTALL SONAME` / `INSTALL PLUGIN`). Anything else is skipped with a warning, and a broken statement does not stop the rest of the script from importing. Generated columns, partitioning, and expression indexes are dropped with a warning because the model does not represent them.
 
 Views are first-class: `CREATE VIEW … AS SELECT …` (PostgreSQL, MariaDB and SQLite flavours, including `MATERIALIZED`, `ALGORITHM=`/`DEFINER=` prefixes and `WITH CHECK OPTION`) becomes a view node fed by data-flow links from the tables its SELECT reads, and the generated script creates views after every table, in dependency order. A materialized view stays materialized through import, save and introspection; because only PostgreSQL has them, the other two dialects generate a plain `CREATE VIEW` with a warning rather than a statement they cannot run, and the flag is preserved so switching back restores it. SQLite is a third dialect: the generator writes `INTEGER PRIMARY KEY AUTOINCREMENT`, keeps every foreign key inline (SQLite resolves them at run time, so cycles need no `ALTER TABLE`), turns enum types into `CHECK (col IN (…))`, drops schema prefixes and moves comments into the script, and the parser accepts `AUTOINCREMENT`, `[bracketed]` identifiers, `WITHOUT ROWID` and `STRICT`. Column types are translated when you switch to or from SQLite.
 

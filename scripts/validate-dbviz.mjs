@@ -34,6 +34,46 @@ const VERBS = {
   serializes: ['embed'],
   embeds: ['embed'],
 };
+/**
+ * Types that only an extension provides, and which extension provides them.
+ *
+ * A deliberately short list of the ones people actually reach for. The app's own
+ * catalog (src/lib/extensions) is the complete one and can be extended with packs;
+ * this exists so a generated file can be checked without opening the app, and a
+ * type missing from here simply is not checked.
+ */
+const EXTENSION_TYPES = {
+  postgresql: {
+    vector: 'vector',
+    halfvec: 'vector',
+    sparsevec: 'vector',
+    geometry: 'postgis',
+    geography: 'postgis',
+    box2d: 'postgis',
+    box3d: 'postgis',
+    raster: 'postgis_raster',
+    citext: 'citext',
+    hstore: 'hstore',
+    ltree: 'ltree',
+    lquery: 'ltree',
+    cube: 'cube',
+    agtype: 'age',
+  },
+  mariadb: {},
+  sqlite: {},
+};
+
+/** "vector(1536)[]" -> "vector": what EXTENSION_TYPES is keyed by. */
+function baseTypeName(type) {
+  return String(type)
+    .trim()
+    .replace(/^["'`]|["'`]$/g, '')
+    .replace(/\[\s*\]/g, '')
+    .replace(/\(.*$/, '')
+    .trim()
+    .toLowerCase();
+}
+
 /** Types that give away a dialect mix-up. */
 const DIALECT_SMELLS = {
   postgresql: [
@@ -70,6 +110,8 @@ function validate(doc) {
   };
 
   const groupIds = new Set();
+  /** Groups holding another database's tables: this file documents them, it does not build them. */
+  const externalGroupIds = new Set();
   for (const [gi, g] of (Array.isArray(doc.groups) ? doc.groups : []).entries()) {
     const gw = `groups[${gi}]${g && g.name ? ` (${g.name})` : ''}`;
     if (!g || typeof g !== 'object') {
@@ -81,6 +123,30 @@ function validate(doc) {
     if (typeof g.name !== 'string' || !g.name.trim()) warn(`${gw} has no name; it loads as "Group".`);
     if (g.color !== undefined && !COLORS.includes(g.color)) warn(`${gw}: colour "${g.color}" is not in the palette; it renders as slate.`);
     if (g.external !== undefined && typeof g.external !== 'boolean') err(`${gw}: "external" must be a boolean.`);
+    else if (g.external === true && typeof g.id === 'string') externalGroupIds.add(g.id);
+  }
+
+  const extensionNames = new Set();
+  for (const [ei, e] of (Array.isArray(doc.extensions) ? doc.extensions : []).entries()) {
+    const ew = `extensions[${ei}]${e && e.name ? ` (${e.name})` : ''}`;
+    if (!e || typeof e !== 'object') {
+      err(`${ew} is not an object.`);
+      continue;
+    }
+    claim(e.id, ew);
+    if (typeof e.name !== 'string' || !e.name.trim()) {
+      err(`${ew} has no name; the app skips extensions without one.`);
+      continue;
+    }
+    const key = e.name.trim().toLowerCase();
+    // An engine can only enable an extension once, so the loader keeps the first.
+    if (extensionNames.has(key)) err(`${ew}: "${e.name}" is listed twice; only the first is loaded.`);
+    else extensionNames.add(key);
+    if (e.schema !== undefined && typeof e.schema !== 'string') err(`${ew}: "schema" must be a string.`);
+    if (e.version !== undefined && typeof e.version !== 'string') err(`${ew}: "version" must be a string, e.g. "3.4.2".`);
+    if (doc.dialect !== 'postgresql' && (e.schema || e.version)) {
+      warn(`${ew}: "schema" and "version" are PostgreSQL-only and are ignored on ${doc.dialect}.`);
+    }
   }
 
   const customTypeNames = new Set();
@@ -135,6 +201,7 @@ function validate(doc) {
       else tableNames.set(key, where);
     }
     const isView = t.kind === 'view';
+    const isExternal = typeof t.groupId === 'string' && externalGroupIds.has(t.groupId);
     if (t.kind !== undefined && t.kind !== 'view' && t.kind !== 'table') warn(`${where}: "kind" is only "view" (or omitted for a table); ${JSON.stringify(t.kind)} loads as a table.`);
     if (isView && (typeof t.viewSql !== 'string' || !t.viewSql.trim())) warn(`${where} is a view with no "viewSql"; it draws on the canvas but is left out of the generated script.`);
     if (!isView && t.viewSql) warn(`${where}: "viewSql" is ignored unless "kind" is "view".`);
@@ -175,6 +242,13 @@ function validate(doc) {
       if (typeof c.type === 'string' && !customTypeNames.has(c.type.trim().toLowerCase())) {
         for (const [re, why] of DIALECT_SMELLS[doc.dialect] ?? []) {
           if (re.test(c.type)) err(`${cw}: type "${c.type}" is ${why} but the dialect is ${doc.dialect}.`);
+        }
+        // A view's columns describe what its SELECT returns and are never created,
+        // and a table in an external group belongs to a database this file does
+        // not build — neither can fail for want of an extension here.
+        const provider = isView || isExternal ? undefined : (EXTENSION_TYPES[doc.dialect] ?? {})[baseTypeName(c.type)];
+        if (provider && !extensionNames.has(provider)) {
+          err(`${cw}: type "${c.type}" needs the "${provider}" extension, which is not in "extensions"; the CREATE TABLE will fail.`);
         }
       }
     }

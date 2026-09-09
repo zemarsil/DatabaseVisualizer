@@ -25,6 +25,11 @@ export interface SqliteEngine {
   tableCount(): Promise<number>;
   /** SQLite library version string. */
   version(): Promise<string>;
+  /**
+   * The build's compile options, e.g. ENABLE_FTS5. SQLite has no catalog of
+   * loadable modules, so this is the only way to ask what it can actually do.
+   */
+  compileOptions(): Promise<string[]>;
   /** Notified after any change to the database. */
   subscribe(listener: () => void): () => void;
 }

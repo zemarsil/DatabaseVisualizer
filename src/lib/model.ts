@@ -5,6 +5,7 @@ import {
   type CustomTypeField,
   type Derivation,
   type Diagram,
+  type DiagramExtension,
   type Dialect,
   type Group,
   type Index,
@@ -19,7 +20,7 @@ import { newId } from './ids';
 import { colorForName } from './palette';
 
 export function emptyDiagram(dialect: Dialect = 'postgresql', name = 'Untitled diagram'): Diagram {
-  return { version: 1, name, dialect, tables: [], relationships: [], notes: [], groups: [], customTypes: [] };
+  return { version: 1, name, dialect, tables: [], relationships: [], notes: [], groups: [], customTypes: [], extensions: [] };
 }
 
 export function newSheetId(): string {
@@ -136,6 +137,21 @@ export function uniqueCustomTypeName(d: Diagram, base = 'my_type'): string {
 export function customTypeByName(d: Diagram, type: string): CustomType | undefined {
   const bare = type.trim().replace(/^["'`]|["'`]$/g, '');
   return d.customTypes.find((t) => t.name.toLowerCase() === bare.toLowerCase());
+}
+
+export function createExtension(partial: Partial<DiagramExtension> & { name: string }): DiagramExtension {
+  const { id, ...rest } = partial;
+  return { id: id ?? newId('ext'), ...rest, name: partial.name.trim() };
+}
+
+/** The declaration for an extension, by the name the engine knows it by (case-insensitive). */
+export function extensionByName(d: Diagram, name: string): DiagramExtension | undefined {
+  const key = name.trim().toLowerCase();
+  return d.extensions.find((e) => e.name.toLowerCase() === key);
+}
+
+export function hasExtension(d: Diagram, name: string): boolean {
+  return extensionByName(d, name) !== undefined;
 }
 
 /** Next free table name like "table_3". */

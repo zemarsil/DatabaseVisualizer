@@ -339,6 +339,15 @@ class SqlJsEngine implements SqliteEngine {
     return String(this.runOne('SELECT sqlite_version()').rows[0]?.[0] ?? '?');
   }
 
+  async compileOptions(): Promise<string[]> {
+    try {
+      return this.runOne('PRAGMA compile_options').rows.map((r) => String(r[0]));
+    } catch {
+      // The pragma is itself an optional build feature (SQLITE_OMIT_COMPILEOPTION_DIAGS).
+      return [];
+    }
+  }
+
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);

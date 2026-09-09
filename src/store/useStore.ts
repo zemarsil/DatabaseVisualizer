@@ -4,6 +4,7 @@ import {
   normalizeVerb,
   type Column,
   type CustomType,
+  type DiagramExtension,
   type Diagram,
   type Dialect,
   type Group,
@@ -20,6 +21,7 @@ import {
   cloneTables,
   createColumn,
   createCustomType,
+  createExtension,
   createGroup,
   createIndex,
   createNote,
@@ -33,6 +35,7 @@ import {
   pruneRelationships,
   singleSheetWorkspace,
   uniqueColumnName,
+  extensionByName,
   uniqueCustomTypeName,
   uniqueGroupName,
   uniqueSheetName,
@@ -226,7 +229,7 @@ interface Actions {
   addTable: (position?: { x: number; y: number }, partial?: Partial<Omit<Table, 'id' | 'position'>>) => string;
   updateTable: (id: string, patch: Partial<Omit<Table, 'id' | 'columns' | 'indexes'>>) => void;
   /** Paste copies of tables (from the clipboard or another diagram): fresh ids, unique names, offset positions. Returns the new table ids. */
-  pasteTables: (tables: Table[], relationships: Relationship[], customTypes?: CustomType[], offset?: { x: number; y: number }) => string[];
+  pasteTables: (tables: Table[], relationships: Relationship[], customTypes?: CustomType[], offset?: { x: number; y: number }, extensions?: DiagramExtension[]) => string[];
   setTableDisplay: (ids: string[], collapsed: TableDisplay | undefined) => void;
   /** Recolour a group of tables and/or notes in one history step. */
   colorElements: (ids: { tableIds?: string[]; noteIds?: string[] }, color: string) => void;
@@ -248,6 +251,12 @@ interface Actions {
   updateCustomType: (id: string, patch: Partial<Omit<CustomType, 'id' | 'kind'>>) => void;
   deleteCustomType: (id: string) => void;
   customTypeUsage: (id: string) => { table: Table; column: Column }[];
+
+  // extensions
+  /** Declare an extension. Re-declaring one the diagram already has is a no-op; returns its id either way. */
+  addExtension: (name: string, partial?: Partial<Omit<DiagramExtension, 'id' | 'name'>>) => string;
+  updateExtension: (id: string, patch: Partial<Omit<DiagramExtension, 'id'>>) => void;
+  deleteExtension: (id: string) => void;
 
   // relationships
   addRelationship: (rel: Omit<Relationship, 'id'>) => string;
@@ -309,6 +318,7 @@ interface Actions {
     mode: 'merge' | 'replace',
     opts?: {
       customTypes?: CustomType[];
+      extensions?: DiagramExtension[];
       /** Wrap everything imported in a new group, e.g. the database it came from. */
       group?: { name: string; external: boolean; note?: string };
     },
@@ -752,7 +762,7 @@ export const useStore = create<Store>()(
           },
           { coalesce: textPatchKey(`table:${id}`, patch) },
         ),
-      pasteTables: (tables, relationships, customTypes, offset) => {
+      pasteTables: (tables, relationships, customTypes, offset, extensions) => {
         const d = get().diagram;
         const { tables: copies, relationships: rels } = cloneTables(tables, relationships, d, offset);
         if (copies.length === 0) return [];
@@ -760,10 +770,17 @@ export const useStore = create<Store>()(
         const newTypes = (customTypes ?? [])
           .filter((ct) => !existingTypes.has(ct.name.toLowerCase()))
           .map((ct) => createCustomType({ ...ct, id: undefined, fields: ct.fields?.map((f) => ({ ...f, id: newId('ctf') })) }));
+        // Pasted columns can be typed with something only an extension provides,
+        // so the dependency travels with them or the paste generates broken DDL.
+        const existingExtensions = new Set(d.extensions.map((e) => e.name.toLowerCase()));
+        const newExtensions = (extensions ?? [])
+          .filter((e) => e.name.trim() && !existingExtensions.has(e.name.trim().toLowerCase()))
+          .map((e) => createExtension({ ...e, id: undefined }));
         mutate((dd) => {
           dd.tables.push(...copies);
           dd.relationships.push(...rels);
           if (newTypes.length) dd.customTypes.push(...newTypes);
+          if (newExtensions.length) dd.extensions.push(...newExtensions);
         });
         set((s) => {
           s.selection = { ...emptySelection(), tableIds: copies.map((t) => t.id) };
@@ -938,6 +955,34 @@ export const useStore = create<Store>()(
         }
         return out;
       },
+
+      /* ---------------- extensions ---------------- */
+      addExtension: (name, partial) => {
+        const trimmed = name.trim();
+        if (!trimmed) return '';
+        // The engine keys extensions by name, so declaring one twice is one
+        // extension, not two. Return the existing id so callers can still focus it.
+        const existing = extensionByName(get().diagram, trimmed);
+        if (existing) return existing.id;
+        const e = createExtension({ ...partial, name: trimmed });
+        mutate((d) => {
+          d.extensions.push(e);
+        });
+        return e.id;
+      },
+      updateExtension: (id, patch) =>
+        mutate(
+          (d) => {
+            const e = d.extensions.find((x) => x.id === id);
+            if (e) Object.assign(e, patch);
+          },
+          // Typing into the comment or version box should not fill the undo stack.
+          { coalesce: `extension:${id}:${Object.keys(patch).join(',')}` },
+        ),
+      deleteExtension: (id) =>
+        mutate((d) => {
+          d.extensions = d.extensions.filter((e) => e.id !== id);
+        }),
 
       /* ---------------- relationships ---------------- */
       addRelationship: (rel) => {
@@ -1209,6 +1254,9 @@ export const useStore = create<Store>()(
         // by the script even though its tables are not. The columns keep their
         // type text either way, which is all an external table needs.
         const customTypes = group?.external ? undefined : opts?.customTypes;
+        // Extensions are a property of the server, not of the tables, so they
+        // still apply when the import is filed away as another database.
+        const extensions = opts?.extensions ?? [];
         const newGroup = group
           ? createGroup({
               name: uniqueGroupName(mode === 'replace' ? { ...diagram, groups: [] } : diagram, group.name.trim() || 'Imported'),
@@ -1225,11 +1273,18 @@ export const useStore = create<Store>()(
             d.notes = [];
             d.groups = newGroup ? [newGroup] : [];
             d.customTypes = customTypes ?? [];
+            d.extensions = extensions;
           } else {
             d.tables.push(...tables);
             d.relationships.push(...relationships);
             if (newGroup) d.groups.push(newGroup);
             if (customTypes?.length) d.customTypes.push(...customTypes);
+            const already = new Set(d.extensions.map((e) => e.name.trim().toLowerCase()));
+            for (const e of extensions) {
+              if (already.has(e.name.trim().toLowerCase())) continue;
+              already.add(e.name.trim().toLowerCase());
+              d.extensions.push(e);
+            }
           }
           // Lay everything out in the same history step so one undo removes the import.
           // Nothing imported has been drawn yet, so most of these are estimates; the

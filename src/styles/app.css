@@ -446,6 +446,11 @@ a {
   color: var(--trace);
   border-color: transparent;
 }
+.badge--warn {
+  background: color-mix(in srgb, var(--warn) 18%, transparent);
+  color: var(--warn);
+  border-color: transparent;
+}
 .badge--danger {
   background: var(--danger-soft);
   color: var(--danger);
