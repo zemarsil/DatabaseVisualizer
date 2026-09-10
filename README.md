@@ -401,4 +401,4 @@ Views are first-class: `CREATE VIEW … AS SELECT …` (PostgreSQL, MariaDB and 
 
 ## License
 
-Licensed under the [Apache License, Version 2.0](LICENSE).
+This project is released into the public domain under [The Unlicense](LICENSE). Use it for anything, any way you like, with no attribution or conditions required.
