@@ -48,6 +48,7 @@ function GroupByRow({
   extras,
   onChange,
   onRemove,
+  onFocusEditor,
 }: {
   value: string;
   columns: Column[];
@@ -55,8 +56,11 @@ function GroupByRow({
   extras: CompletionItem[];
   onChange: (value: string) => void;
   onRemove: () => void;
+  /** Reports this row's editor handle whenever it gains focus, so a reference chip clicked afterwards inserts here. */
+  onFocusEditor?: (handle: SqlEditorHandle) => void;
 }) {
   const isColumn = columns.some((c) => c.name === value);
+  const editor = useRef<SqlEditorHandle | null>(null);
   return (
     <div className="derivation__group">
       <select
@@ -77,7 +81,22 @@ function GroupByRow({
         ))}
         <option value={-1}>— expression —</option>
       </select>
-      {!isColumn && <SqlEditor multiline={false} mode="expression" scope={scope} extras={extras} value={value} onChange={onChange} placeholder="e.g. CAST(placed_at AS DATE)" ariaLabel="Key expression" />}
+      {!isColumn && (
+        <SqlEditor
+          ref={(h) => {
+            editor.current = h;
+          }}
+          multiline={false}
+          mode="expression"
+          scope={scope}
+          extras={extras}
+          value={value}
+          onChange={onChange}
+          onFocus={() => editor.current && onFocusEditor?.(editor.current)}
+          placeholder="e.g. CAST(placed_at AS DATE)"
+          ariaLabel="Key expression"
+        />
+      )}
       <button className="icon-btn icon-btn--danger" title="Remove grouping key" onClick={onRemove}>
         <Trash2 />
       </button>
@@ -118,7 +137,8 @@ function ReferenceChips({ src, reachable, onInsert }: { src: Table; reachable: R
           ))}
           <span className="field__hint">
             Write SQL: arithmetic, comparisons, AND / OR, CASE, CAST, and functions such as COALESCE, ROUND, UPPER, DATE. A column of another table is
-            looked up through the foreign keys shown, so the diagram says how the tables combine. Ctrl+Space in the box lists the same names.
+            looked up through the foreign keys shown, so the diagram says how the tables combine. Ctrl+Space in the box lists the same names. Clicking a
+            chip inserts it at the cursor in whichever box below — expression, sequence keys, group by, or filter — you were last in.
           </span>
         </div>
       )}
@@ -152,6 +172,9 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
   const templates = useMemo(() => relationshipQueryTemplates(diagram, r), [diagram, r]);
   /** One editor handle per derivation, so a chip can drop a column name in at the caret. */
   const expressionEditors = useRef(new Map<string, SqlEditorHandle>());
+  const filterEditors = useRef(new Map<string, SqlEditorHandle>());
+  /** Per derivation, whichever of its editors (expression, filter, group/sequence keys) the user focused most recently — where a clicked chip lands. */
+  const activeEditors = useRef(new Map<string, SqlEditorHandle>());
   const queryEditor = useRef<SqlEditorHandle>(null);
 
   // Target columns a source column of the same name could fill outright, and
@@ -221,7 +244,8 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
     updateDerivation(dv.id, { window: { fn, orderBy, partitionBy: dv.window?.partitionBy ?? [] } });
   };
   const insertReference = (dv: Derivation, text: string) => {
-    const editor = expressionEditors.current.get(dv.id);
+    // Land in whichever of this derivation's boxes the user was last in; the main expression is the fallback for a fresh derivation nothing has focused yet.
+    const editor = activeEditors.current.get(dv.id) ?? expressionEditors.current.get(dv.id);
     if (editor) {
       editor.insert(text, { spaced: true });
       editor.focus();
@@ -503,6 +527,10 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                     extras={flow?.extras}
                     value={dv.expression}
                     onChange={(v) => updateDerivation(dv.id, { expression: v })}
+                    onFocus={() => {
+                      const h = expressionEditors.current.get(dv.id);
+                      if (h) activeEditors.current.set(dv.id, h);
+                    }}
                     ariaLabel={`Expression on ${src.name}`}
                     placeholder={
                       dv.window && !windowMeta(dv.window.fn).needsExpression
@@ -515,7 +543,6 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                     }
                   />
                 </div>
-                <ReferenceChips src={src} reachable={reachable} onInsert={(text) => insertReference(dv, text)} />
 
                 <div className="field field--tight">
                   <span className="field__label">Sequence (window)</span>
@@ -542,6 +569,7 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                           extras={flow!.extras}
                           onChange={(v) => updateDerivation(dv.id, { window: { ...dv.window!, orderBy: dv.window!.orderBy.map((g, j) => (j === i ? v : g)) } })}
                           onRemove={() => updateDerivation(dv.id, { window: { ...dv.window!, orderBy: dv.window!.orderBy.filter((_, j) => j !== i) } })}
+                          onFocusEditor={(h) => activeEditors.current.set(dv.id, h)}
                         />
                       ))}
                       <div>
@@ -567,6 +595,7 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                           extras={flow!.extras}
                           onChange={(v) => updateDerivation(dv.id, { window: { ...dv.window!, partitionBy: dv.window!.partitionBy.map((g, j) => (j === i ? v : g)) } })}
                           onRemove={() => updateDerivation(dv.id, { window: { ...dv.window!, partitionBy: dv.window!.partitionBy.filter((_, j) => j !== i) } })}
+                          onFocusEditor={(h) => activeEditors.current.set(dv.id, h)}
                         />
                       ))}
                       <div>
@@ -595,6 +624,7 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                       extras={flow!.extras}
                       onChange={(v) => updateDerivation(dv.id, { groupBy: dv.groupBy.map((g, j) => (j === i ? v : g)) })}
                       onRemove={() => updateDerivation(dv.id, { groupBy: dv.groupBy.filter((_, j) => j !== i) })}
+                      onFocusEditor={(h) => activeEditors.current.set(dv.id, h)}
                     />
                   ))}
                   <div>
@@ -612,16 +642,25 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                 <div className="field field--tight">
                   <span className="field__label">Filter (WHERE)</span>
                   <SqlEditor
+                    ref={(h) => {
+                      if (h) filterEditors.current.set(dv.id, h);
+                      else filterEditors.current.delete(dv.id);
+                    }}
                     multiline={false}
                     mode="expression"
                     scope={flow?.scope}
                     extras={flow?.extras}
                     value={dv.filter ?? ''}
                     onChange={(v) => updateDerivation(dv.id, { filter: v || undefined })}
+                    onFocus={() => {
+                      const h = filterEditors.current.get(dv.id);
+                      if (h) activeEditors.current.set(dv.id, h);
+                    }}
                     placeholder="e.g. status = 'paid'"
                     ariaLabel="Filter"
                   />
                 </div>
+                <ReferenceChips src={src} reachable={reachable} onInsert={(text) => insertReference(dv, text)} />
 
                 <div className="derivation__summary">{derivationSummary(dv, targetColumn?.name)}</div>
               </div>

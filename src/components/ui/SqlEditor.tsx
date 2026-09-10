@@ -49,6 +49,8 @@ export interface SqlEditorProps {
   ariaLabel?: string;
   /** Ctrl+Enter (Enter in a single-line editor). */
   onSubmit?: () => void;
+  /** Fires when the textarea gains focus — lets a caller remember "the last field the user was in" for e.g. inserting a reference at the caret. */
+  onFocus?: () => void;
   /** What Ctrl+Enter does, for the hint under the editor: "runs" (default), "imports", … */
   submitLabel?: string;
   /** Extra completion items, e.g. columns reachable through foreign keys as table.column. */
@@ -151,6 +153,7 @@ export function SqlEditor(props: SqlEditorProps) {
     autoFocus,
     disabled,
     status = 'auto',
+    onFocus,
   } = props;
   const ta = useRef<HTMLTextAreaElement>(null);
   const hl = useRef<HTMLPreElement>(null);
@@ -522,7 +525,10 @@ export function SqlEditor(props: SqlEditorProps) {
           onClick={onSelect}
           onKeyUp={onSelect}
           onScroll={onScroll}
-          onFocus={() => setFocused(true)}
+          onFocus={() => {
+            setFocused(true);
+            onFocus?.();
+          }}
           onBlur={() => {
             setFocused(false);
             // the list closes on blur unless the blur is a click on the list itself (handled by mousedown capture)
