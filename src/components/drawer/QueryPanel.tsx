@@ -9,6 +9,9 @@ import { backendFor } from '@/lib/backend';
 import { buildJoinQuery } from '@/lib/trace';
 import { generateFlowSql } from '@/lib/sql/generator';
 import { loadHistory, pushHistory, type HistoryEntry } from '@/lib/queryHistory';
+import { splitStatements, statementAt } from '@/lib/sql/analyze';
+import { diagramScope } from '@/lib/sqlScope';
+import { SqlEditor, type SqlEditorHandle } from '@/components/ui/SqlEditor';
 import '@/styles/query.css';
 
 const DRAFT_KEY = 'dbviz:queryDraft';
@@ -43,7 +46,8 @@ export function QueryPanel() {
   const [result, setResult] = useState<QueryResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoryEntry[]>(() => loadHistory());
-  const editor = useRef<HTMLTextAreaElement>(null);
+  const editor = useRef<SqlEditorHandle>(null);
+  const scope = useMemo(() => diagramScope(diagram), [diagram]);
 
   const backend = useMemo(() => backendFor(conn), [conn]);
   const isSqlite = !isServerDialect(conn.dialect);
@@ -59,9 +63,11 @@ export function QueryPanel() {
 
   const run = useCallback(
     async (text?: string) => {
-      const el = editor.current;
-      const selected = el && el.selectionStart !== el.selectionEnd ? el.value.slice(el.selectionStart, el.selectionEnd) : '';
-      const toRun = (text ?? (selected || sql)).trim();
+      // The selection if there is one; else, in a script of several statements, the one under the caret; else everything.
+      const sel = editor.current?.selection();
+      const selected = sel && sel.start !== sel.end ? sel.text : '';
+      const underCaret = !selected && sel && splitStatements(sql).length > 1 ? statementAt(sql, sel.start).text : '';
+      const toRun = (text ?? (selected || underCaret || sql)).trim();
       if (!toRun) return;
       setRunning(true);
       setError(null);
@@ -103,22 +109,6 @@ export function QueryPanel() {
     for (const t of diagram.tables) out.push({ label: `SELECT * FROM ${t.name}`, sql: `SELECT * FROM ${t.name} LIMIT 100;` });
     return out;
   }, [diagram, traceResult]);
-
-  const onKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
-      e.preventDefault();
-      void run();
-      return;
-    }
-    if (e.key === 'Tab') {
-      e.preventDefault();
-      const el = e.currentTarget;
-      const { selectionStart, selectionEnd, value } = el;
-      const next = `${value.slice(0, selectionStart)}  ${value.slice(selectionEnd)}`;
-      setSql(next);
-      requestAnimationFrame(() => el.setSelectionRange(selectionStart + 2, selectionStart + 2));
-    }
-  };
 
   const copyCsv = () => {
     if (!result) return;
@@ -162,7 +152,7 @@ export function QueryPanel() {
             Max rows
             <input className="input input--sm" style={{ width: 70, marginLeft: 4 }} type="number" min={1} max={5000} value={maxRows} onChange={(e) => setMaxRows(Math.max(1, Number(e.target.value) || 500))} />
           </label>
-          <button className="btn btn--sm btn--primary" onClick={() => void run()} disabled={running || !sql.trim()} title="Ctrl+Enter">
+          <button className="btn btn--sm btn--primary" onClick={() => void run()} disabled={running || !sql.trim()} title="Ctrl+Enter — runs the selection, or the statement under the cursor">
             <Play /> {running ? 'Running…' : 'Run'} <span className="kbd">Ctrl ↵</span>
           </button>
         </div>
@@ -199,14 +189,16 @@ export function QueryPanel() {
             ))}
           </select>
         </div>
-        <textarea
+        <SqlEditor
           ref={editor}
-          className="textarea textarea--mono grow query__textarea"
           value={sql}
-          onChange={(e) => setSql(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder={`SELECT * FROM ${diagram.tables[0]?.name ?? 'table'} LIMIT 100;\n\nSelect part of the text to run only that part. Ctrl+Enter runs.`}
-          spellCheck={false}
+          onChange={setSql}
+          scope={scope}
+          fill
+          status="always"
+          onSubmit={() => void run()}
+          ariaLabel="Query"
+          placeholder={`SELECT * FROM ${diagram.tables[0]?.name ?? 'table'} LIMIT 100;\n\nCtrl+Enter runs the selection, or the statement under the cursor. Ctrl+Space completes names, Ctrl+Shift+F formats.`}
         />
       </div>
       <div className="drawer__col query__results">

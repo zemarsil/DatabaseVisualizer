@@ -13,6 +13,9 @@ import { extensionFunctionSuggestions, typeSuggestions } from '@/lib/extensions/
 import { generateTableSql } from '@/lib/sql/generator';
 import { confirmDialog } from '../ui/Modal';
 import { Swatches } from '../ui/Swatches';
+import { SqlCode, SqlEditor } from '../ui/SqlEditor';
+import { tableScope } from '@/lib/sqlScope';
+import type { CompletionItem } from '@/lib/sql/complete';
 
 /** Little coloured glyph that matches how the edge is drawn on the canvas. */
 function RelIcon({ kind }: { kind: RelationshipKind }) {
@@ -61,6 +64,14 @@ interface ColumnRowProps {
 }
 
 function ColumnRow({ table, column, index, fk, embed, origin, originText, register, focusField, drag, setDrag }: ColumnRowProps) {
+  const diagramForScope = useStore((s) => s.diagram);
+  /** The default and check boxes colour and complete this table's own columns. */
+  const scope = useMemo(() => tableScope(table), [table]);
+  /** Functions an enabled extension adds (gen_random_uuid() once pgcrypto is on), offered in the default box. */
+  const defaultExtras = useMemo<CompletionItem[]>(
+    () => extensionFunctionSuggestions(diagramForScope).map((f) => ({ label: f, insert: f, kind: 'function' as const, detail: 'extension', caretBack: f.endsWith('()') ? 1 : 0 })),
+    [diagramForScope],
+  );
   const updateColumn = useStore((s) => s.updateColumn);
   const deleteColumn = useStore((s) => s.deleteColumn);
   const moveColumn = useStore((s) => s.moveColumn);
@@ -247,18 +258,21 @@ function ColumnRow({ table, column, index, fk, embed, origin, originText, regist
           )}
           <div className="field">
             <span className="field__label">Default</span>
-            <input
-              className="input input--sm input--mono"
+            <SqlEditor
+              multiline={false}
+              mode="expression"
+              scope={scope}
+              extras={defaultExtras}
+              check={false}
               value={column.defaultValue ?? ''}
-              onChange={(e) => patch({ defaultValue: e.target.value || undefined })}
+              onChange={(v) => patch({ defaultValue: v || undefined })}
               placeholder="e.g. now() or 'pending'"
-              list={`defaults-${dialect}`}
-              spellCheck={false}
+              ariaLabel="Default"
             />
           </div>
           <div className="field">
             <span className="field__label">Check</span>
-            <input className="input input--sm input--mono" value={column.check ?? ''} onChange={(e) => patch({ check: e.target.value || undefined })} placeholder="e.g. price >= 0" spellCheck={false} />
+            <SqlEditor multiline={false} mode="expression" scope={scope} lenient value={column.check ?? ''} onChange={(v) => patch({ check: v || undefined })} placeholder="e.g. price >= 0" ariaLabel="Check" />
           </div>
           <div className="field field--full">
             <span className="field__label">Comment</span>
@@ -310,6 +324,7 @@ function IndexRow({ table, index }: { table: Table; index: Index }) {
 }
 
 export function TableEditor({ table }: { table: Table }) {
+  const scope = useMemo(() => tableScope(table), [table]);
   const diagram = useStore((s) => s.diagram);
   const updateTable = useStore((s) => s.updateTable);
   const addColumn = useStore((s) => s.addColumn);
@@ -434,12 +449,6 @@ export function TableEditor({ table }: { table: Table }) {
           <option key={t.id} value={t.name}>
             {t.name} ({t.kind === 'enum' ? 'enum' : 'struct'})
           </option>
-        ))}
-      </datalist>
-      {/* Only populated once an extension is enabled: gen_random_uuid() is no use until pgcrypto is. */}
-      <datalist id={`defaults-${diagram.dialect}`}>
-        {extensionFunctionSuggestions(diagram).map((f) => (
-          <option key={f} value={f} />
         ))}
       </datalist>
 
@@ -582,12 +591,16 @@ export function TableEditor({ table }: { table: Table }) {
         </div>
         {table.checks.map((chk, i) => (
           <div key={i} className="row" style={{ marginBottom: 4 }}>
-            <input
-              className="input input--sm input--mono grow"
+            <SqlEditor
+              className="grow"
+              multiline={false}
+              mode="expression"
+              scope={scope}
+              lenient
               value={chk}
               placeholder="e.g. end_date > start_date"
-              spellCheck={false}
-              onChange={(e) => setChecks(table.id, table.checks.map((c, j) => (j === i ? e.target.value : c)))}
+              ariaLabel="Table check"
+              onChange={(v) => setChecks(table.id, table.checks.map((c, j) => (j === i ? v : c)))}
             />
             <button className="icon-btn icon-btn--danger" onClick={() => setChecks(table.id, table.checks.filter((_, j) => j !== i))} title="Remove">
               <Trash2 />
@@ -633,9 +646,7 @@ export function TableEditor({ table }: { table: Table }) {
         </div>
         {showSql && (
           <div style={{ position: 'relative' }}>
-            <pre className="code-block" style={{ maxHeight: 260 }}>
-              {sql}
-            </pre>
+            <SqlCode sql={sql} scope={scope} style={{ maxHeight: 260 }} />
             <button
               className="btn btn--sm btn--icon"
               style={{ position: 'absolute', top: 6, right: 6 }}

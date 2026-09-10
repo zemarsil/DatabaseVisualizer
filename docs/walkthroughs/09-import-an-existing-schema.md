@@ -184,10 +184,11 @@ points at `warehouses.code`, which is `NOT NULL` but not `UNIQUE`.
 Import it anyway. Reading someone else's schema *as it is* is the whole job;
 fixing it comes after you can see it.
 
-**You should see:** the **Import** and **Preview only** buttons switch from
-greyed out to active — nothing lands on the canvas until you click one of
-them. Click **Preview only** first if you want to see the table list, the
-column counts and any warnings without touching the diagram.
+**You should see:** the SQL coloured as you paste it, and — a moment after
+you stop — the preview under the **Import** button fill in by itself: the
+table list with column counts, the foreign-key count, and any warnings.
+Nothing lands on the canvas until you click **Import** (or press `Ctrl+Enter`
+in the box).
 
 ### 2. Import it into the diagram you already have
 

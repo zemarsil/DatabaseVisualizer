@@ -3,6 +3,8 @@ import { Database, ScanSearch } from 'lucide-react';
 import type { Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { viewSourcesFromSql } from '@/lib/sql/views';
+import { diagramScope } from '@/lib/sqlScope';
+import { SqlEditor } from '@/components/ui/SqlEditor';
 
 /** The SELECT behind a view and the tables that feed it. */
 export function ViewEditor({ table }: { table: Table }) {
@@ -13,6 +15,7 @@ export function ViewEditor({ table }: { table: Table }) {
   const focusTable = useStore((s) => s.focusTable);
   const toast = useStore((s) => s.toast);
 
+  const scope = useMemo(() => diagramScope(diagram), [diagram]);
   const sources = useMemo(
     () =>
       diagram.relationships
@@ -48,17 +51,21 @@ export function ViewEditor({ table }: { table: Table }) {
     <>
       <div className="field">
         <span className="field__label">View definition (SELECT …)</span>
-        <textarea
-          className="textarea textarea--mono"
-          rows={8}
+        <SqlEditor
           value={table.viewSql ?? ''}
-          onChange={(e) => updateTable(table.id, { viewSql: e.target.value })}
+          onChange={(v) => updateTable(table.id, { viewSql: v })}
+          scope={scope}
+          rows={8}
+          expandable
+          title={`View definition · ${table.name}`}
+          onSubmit={detect}
+          submitLabel="links the source tables"
+          ariaLabel="View definition"
           placeholder={`SELECT o.id, c.email\nFROM orders o\nJOIN customers c ON c.id = o.customer_id`}
-          spellCheck={false}
         />
         <span className="field__hint">
           Written into the script as {materialized && supportsMaterialized ? 'CREATE MATERIALIZED VIEW' : 'CREATE VIEW'} after every table. Columns below are
-          optional and only affect how the node is drawn.
+          optional and only affect how the node is drawn. Ctrl+Space completes table and column names; Ctrl+Enter links the source tables.
         </span>
       </div>
       <div className="field">
