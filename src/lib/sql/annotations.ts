@@ -123,16 +123,13 @@ function cleanList(v: string[] | undefined): string[] | undefined {
 export function collectAnnotations(d: Diagram, emittedAsDdl: ReadonlySet<string>): SqlAnnotations {
   const external = externalTableIds(d);
   const tableName = new Map(d.tables.map((t) => [t.id, t.name] as const));
-  const columnName = new Map<string, string>();
-  const columnsOf = new Map<string, Map<string, string>>();
-  for (const t of d.tables) {
-    const byId = new Map<string, string>();
-    for (const c of t.columns) {
-      columnName.set(c.id, c.name);
-      byId.set(c.id, c.name);
-    }
-    columnsOf.set(t.id, byId);
-  }
+  // Per table, not diagram-wide: a name may only be written down for a column
+  // of the table the connection says it belongs to.
+  const columnsOf = new Map<string, Map<string, string>>(d.tables.map((t) => [t.id, new Map(t.columns.map((c) => [c.id, c.name] as const))] as const));
+  const names = (tableId: string, ids: string[]) => {
+    const byId = columnsOf.get(tableId);
+    return ids.map((id) => byId?.get(id)).filter((n): n is string => Boolean(n));
+  };
 
   const connections: AnnotatedConnection[] = [];
   for (const r of d.relationships) {
@@ -144,10 +141,10 @@ export function collectAnnotations(d: Diagram, emittedAsDdl: ReadonlySet<string>
     if (external.has(r.sourceTableId) || external.has(r.targetTableId)) continue;
     if (!carriesMoreThanDdl(r, emittedAsDdl.has(r.id))) continue;
 
-    const targetColumns = columnsOf.get(r.targetTableId) ?? new Map<string, string>();
+    const targetColumns = columnsOf.get(r.targetTableId);
     const derivations: AnnotatedDerivation[] = [];
     for (const dv of r.kind === 'flow' ? (r.derivations ?? []) : []) {
-      const target = targetColumns.get(dv.targetColumnId);
+      const target = targetColumns?.get(dv.targetColumnId);
       // An entry with no target column fills nothing; it is an unfinished edit,
       // not a fact about the schema.
       if (!target) continue;
@@ -169,8 +166,8 @@ export function collectAnnotations(d: Diagram, emittedAsDdl: ReadonlySet<string>
       });
     }
 
-    const fromColumns = r.sourceColumnIds.map((id) => columnName.get(id)).filter((n): n is string => Boolean(n));
-    const toColumns = r.targetColumnIds.map((id) => columnName.get(id)).filter((n): n is string => Boolean(n));
+    const fromColumns = names(r.sourceTableId, r.sourceColumnIds);
+    const toColumns = names(r.targetTableId, r.targetColumnIds);
     const verb = normalizeVerb(r.kind, r.verb);
     connections.push({
       kind: r.kind,
@@ -271,8 +268,8 @@ function connection(v: unknown): AnnotatedConnection | null {
     ...(str(o.inverseName) ? { inverseName: str(o.inverseName) } : {}),
     ...(action(o.onDelete) ? { onDelete: action(o.onDelete) } : {}),
     ...(action(o.onUpdate) ? { onUpdate: action(o.onUpdate) } : {}),
-    ...(str(o.query) ? { query: o.query as string } : {}),
-    ...(str(o.note) ? { note: o.note as string } : {}),
+    ...(str(o.query) ? { query: str(o.query) } : {}),
+    ...(str(o.note) ? { note: str(o.note) } : {}),
     ...(derivations.length ? { derivations } : {}),
   };
 }
