@@ -88,7 +88,7 @@ function parseDiagramValue(raw: unknown): Diagram {
   const o = raw as Record<string, unknown>;
   if (!Array.isArray(o.tables)) throw new InvalidFile('The file has no "tables" array; is this a Database Visualizer file?');
 
-  const dialect = o.dialect === 'mariadb' ? 'mariadb' : o.dialect === 'sqlite' ? 'sqlite' : 'postgresql';
+  const dialect = o.dialect === 'mariadb' ? 'mariadb' : o.dialect === 'sqlite' ? 'sqlite' : o.dialect === 'duckdb' ? 'duckdb' : 'postgresql';
   const d = emptyDiagram(dialect, str(o.name, 'Untitled diagram'));
 
   const tables: Table[] = [];

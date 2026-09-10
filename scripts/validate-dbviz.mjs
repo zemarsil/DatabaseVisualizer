@@ -17,7 +17,7 @@ import { readFileSync } from 'node:fs';
 
 const COLORS = ['blue', 'teal', 'green', 'yellow', 'orange', 'red', 'pink', 'purple', 'indigo', 'slate'];
 const ACTIONS = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT'];
-const DIALECTS = ['postgresql', 'mariadb', 'sqlite'];
+const DIALECTS = ['postgresql', 'mariadb', 'sqlite', 'duckdb'];
 const KINDS = ['fk', 'flow', 'embed', 'dependency'];
 const AGGREGATES = ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX'];
 const WINDOW_FUNCTIONS = ['DIFF', 'LAG', 'LEAD', 'RUNNING_SUM', 'RUNNING_AVG', 'ROW_NUMBER', 'RANK'];
@@ -61,6 +61,14 @@ const EXTENSION_TYPES = {
   },
   mariadb: {},
   sqlite: {},
+  duckdb: {
+    geometry: 'spatial',
+    point_2d: 'spatial',
+    linestring_2d: 'spatial',
+    polygon_2d: 'spatial',
+    box_2d: 'spatial',
+    inet: 'inet',
+  },
 };
 
 /** "vector(1536)[]" -> "vector": what EXTENSION_TYPES is keyed by. */
@@ -84,6 +92,11 @@ const DIALECT_SMELLS = {
   sqlite: [
     [/^\s*(big|small)?serial\b|timestamptz|jsonb|\bbytea\b/i, 'PostgreSQL syntax'],
     [/auto_increment/i, 'MariaDB syntax (SQLite uses INTEGER PRIMARY KEY)'],
+  ],
+  duckdb: [
+    [/^\s*(big|small)?serial\b|jsonb|\bbytea\b/i, 'PostgreSQL syntax (DuckDB spells these INTEGER with "autoIncrement": true, JSON and BLOB)'],
+    [/auto_increment/i, 'MariaDB syntax (DuckDB uses "autoIncrement": true, which becomes a sequence default)'],
+    [/^\s*(tinytext|mediumtext|longtext|longblob|datetime)\b/i, 'MariaDB syntax'],
   ],
 };
 

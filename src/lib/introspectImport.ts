@@ -4,8 +4,10 @@ import type { ParseResult, ParsedTable } from './sql/parser';
 import { normalizeType } from './sql/dialect';
 import { viewSourcesFromSql } from './sql/views';
 
-/** format_type() output uses long names; prefer the short spellings people type. */
-function canonicalType(type: string, dialect: Diagram['dialect']): string {
+/** format_type() output uses long names; prefer the short spellings people type. A named type keeps the spelling it was created with. */
+function canonicalType(type: string, dialect: Diagram['dialect'], namedTypes: Map<string, string>): string {
+  const named = namedTypes.get(type.trim().replace(/^"|"$/g, '').toLowerCase());
+  if (named) return named;
   let t = normalizeType(type);
   if (dialect === 'postgresql') {
     t = t
@@ -15,6 +17,8 @@ function canonicalType(type: string, dialect: Diagram['dialect']): string {
       .replace(/^TIME(\(\d+\))? WITH TIME ZONE/, 'TIMETZ$1')
       .replace(/^TIME(\(\d+\))? WITHOUT TIME ZONE/, 'TIME$1')
       .replace(/^CHARACTER\(/, 'CHAR(');
+  } else if (dialect === 'duckdb') {
+    t = t.replace(/^TIMESTAMP WITH TIME ZONE/, 'TIMESTAMPTZ').replace(/^TIME WITH TIME ZONE/, 'TIMETZ');
   }
   return t;
 }
@@ -24,6 +28,7 @@ export function introspectionToDiagram(res: IntrospectResponse, dialect: Diagram
   const schemas = new Set(res.tables.map((t) => t.schema));
   const dropSchema = schemas.size <= 1; // everything in one schema (public / the database) -> keep names short
   const tableNames = res.tables.map((t) => (dropSchema ? t.name : `${t.schema}.${t.name}`));
+  const namedTypes = new Map((res.enums ?? []).map((e) => [e.name.toLowerCase(), e.name] as const));
   const parsed: ParseResult = {
     enums: (res.enums ?? []).map((e) => ({ name: e.name, values: e.values })),
     extensions: (res.extensions ?? []).map((e) => ({ name: e.name, schema: e.schema, version: e.version })),
@@ -47,7 +52,7 @@ export function introspectionToDiagram(res: IntrospectResponse, dialect: Diagram
       comment: t.comment ?? undefined,
       columns: t.columns.map((c) => ({
         name: c.name,
-        type: canonicalType(c.type, dialect),
+        type: canonicalType(c.type, dialect, namedTypes),
         nullable: c.nullable,
         primaryKey: t.primaryKey.includes(c.name),
         unique: t.uniques.some((u) => u.columns.length === 1 && u.columns[0] === c.name),

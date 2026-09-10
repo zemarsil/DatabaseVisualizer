@@ -403,7 +403,7 @@ brought in someone else's mess.
 What the parser understands, verified against `src/lib/sql/parser.ts` rather
 than assumed:
 
-**Parses, in PostgreSQL, MariaDB and SQLite spelling:**
+**Parses, in PostgreSQL, MariaDB, SQLite and DuckDB spelling:**
 `CREATE TABLE` with column and table constraints (`PRIMARY KEY`, `UNIQUE`,
 `CHECK`, `FOREIGN KEY … REFERENCES`, composite keys); `ALTER TABLE … ADD
 CONSTRAINT`, `ADD COLUMN`, `ALTER COLUMN SET DEFAULT` / `SET NOT NULL`;
@@ -412,6 +412,9 @@ VIEW … AS SELECT …`; `CREATE TYPE … AS ENUM (…)` and `… AS (…)` (com
 `pg_dump` and `mysqldump` output parses as-is — that is the point of it.
 SQLite's `AUTOINCREMENT`, `[bracketed identifiers]`, `WITHOUT ROWID` and
 `STRICT` are all accepted and ignored where the model has no place for them.
+DuckDB's `STRUCT(…)` / `MAP(…)` / `INTEGER[3]` types, `CREATE TYPE … AS STRUCT(…)`,
+`INSTALL` / `LOAD` and a `CREATE SEQUENCE` feeding a `nextval()` default (read as an
+auto-increment column) parse too.
 
 **Drops, with a warning you can read in the Import SQL preview:** generated /
 computed columns (`GENERATED ALWAYS AS (…) STORED`), table partitioning,
@@ -478,7 +481,7 @@ statement in the script — before and after it — still lands. Try it under
   "also pastes DDL, DBML or a .dbviz.json" — but there is no DBML parser
   anywhere in the codebase; DBML is an *export* format only (File menu →
   Export DBML). A dropped `.dbml` file falls through to the same error every
-  unrecognised file gets ("drop a .sql, .dbviz.json or .sqlite file"), and
+  unrecognised file gets ("drop a .sql, .dbviz.json, .sqlite or .duckdb file"), and
   pasting DBML text with `Ctrl+V` does nothing at all — no import, no error.
   Convert it to SQL first, or hand-write the `.dbviz.json`.
 - **File → Open always replaces — it never asks.** Dropping a `.dbviz.json`

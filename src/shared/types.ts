@@ -6,15 +6,21 @@
  * edges.
  */
 
-export type Dialect = 'postgresql' | 'mariadb' | 'sqlite';
+export type Dialect = 'postgresql' | 'mariadb' | 'sqlite' | 'duckdb';
 
-/** Dialects that run as a server the API talks to (everything except the in-browser SQLite engine). */
-export type ServerDialect = Exclude<Dialect, 'sqlite'>;
+/**
+ * Dialects whose engine runs inside the browser (sql.js for SQLite, DuckDB-Wasm
+ * for DuckDB): no server, no Docker, no host or port to connect to.
+ */
+export type EmbeddedDialect = 'sqlite' | 'duckdb';
+
+/** Dialects that run as a server the API talks to (everything except the in-browser engines). */
+export type ServerDialect = Exclude<Dialect, EmbeddedDialect>;
 
 export interface DialectMeta {
   id: Dialect;
   label: string;
-  /** False for SQLite, which runs inside the browser (sql.js) and needs no server or Docker. */
+  /** False for SQLite and DuckDB, which run inside the browser and need no server or Docker. */
   server: boolean;
   defaultPort: number;
   defaultUser: string;
@@ -25,12 +31,39 @@ export const DIALECTS: DialectMeta[] = [
   { id: 'postgresql', label: 'PostgreSQL', server: true, defaultPort: 5432, defaultUser: 'postgres', image: 'postgres:16' },
   { id: 'mariadb', label: 'MariaDB', server: true, defaultPort: 3306, defaultUser: 'root', image: 'mariadb:11' },
   { id: 'sqlite', label: 'SQLite (in browser)', server: false, defaultPort: 0, defaultUser: '', image: '' },
+  { id: 'duckdb', label: 'DuckDB (in browser)', server: false, defaultPort: 0, defaultUser: '', image: '' },
 ];
 
 export const SERVER_DIALECTS = DIALECTS.filter((d) => d.server);
 
+export const EMBEDDED_DIALECTS: EmbeddedDialect[] = ['sqlite', 'duckdb'];
+
+export function isEmbeddedDialect(d: Dialect): d is EmbeddedDialect {
+  return d === 'sqlite' || d === 'duckdb';
+}
+
 export function isServerDialect(d: Dialect): d is ServerDialect {
-  return d !== 'sqlite';
+  return !isEmbeddedDialect(d);
+}
+
+/**
+ * The engine's name as it reads mid-sentence. DIALECTS labels the in-browser
+ * engines "SQLite (in browser)" / "DuckDB (in browser)", which is right for a
+ * picker and wrong for a message.
+ */
+export function engineName(d: Dialect): string {
+  switch (d) {
+    case 'postgresql':
+      return 'PostgreSQL';
+    case 'mariadb':
+      return 'MariaDB';
+    case 'sqlite':
+      return 'SQLite';
+    case 'duckdb':
+      return 'DuckDB';
+    default:
+      return d;
+  }
 }
 
 export function dialectLabel(d: Dialect): string {
@@ -86,9 +119,11 @@ export type ExtensionInstall =
   | 'create-extension'
   /** MariaDB: INSTALL SONAME '...' */
   | 'install-soname'
+  /** DuckDB: INSTALL name; LOAD name; — fetched once from the extension repository, loaded per session. */
+  | 'install-load'
   /** SQLite: loaded by the client before it opens the database; nothing executable to emit. */
   | 'client-loaded'
-  /** Compiled into the engine (SQLite FTS5, PostgreSQL plpgsql): present or not, never installed. */
+  /** Compiled into the engine (SQLite FTS5, PostgreSQL plpgsql, DuckDB's core_functions): present or not, never installed. */
   | 'built-in';
 
 /**
@@ -796,7 +831,7 @@ export interface ExtensionsResponse {
 export interface IntrospectResponse {
   serverVersion: string;
   tables: IntrospectedTable[];
-  /** Named enum types (PostgreSQL only). */
+  /** Named enum types (PostgreSQL and DuckDB). */
   enums?: { schema: string; name: string; values: string[] }[];
   /** Extensions installed in this database, so importing a schema brings its dependencies with it. */
   extensions?: { name: string; schema?: string; version?: string }[];

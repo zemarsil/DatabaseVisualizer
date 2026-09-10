@@ -22,8 +22,23 @@ const RESERVED = new Set(
     .filter(Boolean),
 );
 
-export function isReserved(name: string): boolean {
-  return RESERVED.has(name.toUpperCase());
+/**
+ * Words DuckDB alone refuses as bare identifiers, on top of the shared set: its
+ * own reserved keywords (PIVOT, QUALIFY, SUMMARIZE…) and the "type/function"
+ * keywords its parser cannot take as a column name (AT, MAP, STRUCT…). Read
+ * off `duckdb_keywords()` of the engine the app ships.
+ */
+const DUCKDB_RESERVED = new Set(
+  `LAMBDA PIVOT PIVOT_LONGER PIVOT_WIDER QUALIFY SUMMARIZE UNPIVOT VARIADIC DEFERRABLE INITIALLY
+   ANTI ASOF AT COLLATION GENERATED GLOB MAP OVERLAPS POSITIONAL SEMI STRUCT TABLESAMPLE TRY_CAST UNPACK`
+    .split(/\s+/)
+    .filter(Boolean),
+);
+
+export function isReserved(name: string, dialect?: Dialect): boolean {
+  const upper = name.toUpperCase();
+  if (RESERVED.has(upper)) return true;
+  return dialect === 'duckdb' && DUCKDB_RESERVED.has(upper);
 }
 
 /** Quote an identifier only when needed, in the dialect's style. */
@@ -32,9 +47,9 @@ export function quoteIdent(name: string, dialect: Dialect): string {
     if (/^[a-z_][a-z0-9_]*$/.test(name) && !isReserved(name)) return name;
     return `"${name.replace(/"/g, '""')}"`;
   }
-  if (dialect === 'sqlite') {
-    // SQLite keeps identifier case and compares case-insensitively, so plain names stay bare.
-    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !isReserved(name)) return name;
+  if (dialect === 'sqlite' || dialect === 'duckdb') {
+    // Both keep identifier case and compare case-insensitively, so plain names stay bare.
+    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !isReserved(name, dialect)) return name;
     return `"${name.replace(/"/g, '""')}"`;
   }
   if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) && !isReserved(name)) return name;
@@ -66,6 +81,12 @@ export const TYPE_SUGGESTIONS: Record<Dialect, string[]> = {
     'TIMESTAMP', 'YEAR', 'JSON', "ENUM('a','b')", "SET('a','b')", 'INET6', 'POINT', 'GEOMETRY',
   ],
   sqlite: ['INTEGER', 'REAL', 'TEXT', 'BLOB', 'NUMERIC', 'BOOLEAN', 'DATE', 'DATETIME', 'VARCHAR(255)', 'DECIMAL(10,2)', 'JSON'],
+  duckdb: [
+    'INTEGER', 'BIGINT', 'SMALLINT', 'TINYINT', 'HUGEINT', 'UINTEGER', 'UBIGINT', 'USMALLINT', 'UTINYINT', 'DECIMAL(18,3)',
+    'FLOAT', 'DOUBLE', 'BOOLEAN', 'VARCHAR', 'VARCHAR(255)', 'TEXT', 'BLOB', 'UUID', 'DATE', 'TIME', 'TIMESTAMP', 'TIMESTAMPTZ',
+    'INTERVAL', 'JSON', 'BIT', 'INTEGER[]', 'VARCHAR[]', 'DOUBLE[3]', 'STRUCT(x INTEGER, y INTEGER)', 'MAP(VARCHAR, INTEGER)',
+    "UNION(num INTEGER, str VARCHAR)", "ENUM('a', 'b')",
+  ],
 };
 
 /** Normalise a raw SQL type for comparisons: upper-case, single spaces, no space before '('. */
@@ -96,7 +117,7 @@ function splitType(type: string): TypeParts {
 
 export function isIntegerType(type: string): boolean {
   const { base } = splitType(type);
-  return /^(TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT|INT2|INT4|INT8|SERIAL|BIGSERIAL|SMALLSERIAL)$/.test(base);
+  return /^(TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT|INT1|INT2|INT4|INT8|INT128|SERIAL|BIGSERIAL|SMALLSERIAL|HUGEINT|UHUGEINT|UTINYINT|USMALLINT|UINTEGER|UBIGINT|SHORT|LONG|SIGNED)$/.test(base);
 }
 
 export function isSerialType(type: string): boolean {
@@ -110,6 +131,8 @@ export function isSerialType(type: string): boolean {
  */
 export function translateType(type: string, from: Dialect, to: Dialect): string {
   if (from === to) return type;
+  if (to === 'duckdb') return toDuckdb(type, from);
+  if (from === 'duckdb') return fromDuckdb(type, to);
   const { base, args, suffix } = splitType(type);
   const withArgs = (b: string, a: string | null = args) => (a ? `${b}(${a})` : b);
   const isArray = suffix.includes('[]');
@@ -131,7 +154,7 @@ export function translateType(type: string, from: Dialect, to: Dialect): string 
       case 'JSON': case 'JSONB': case 'UUID': case 'XML': case 'TSVECTOR': case 'INTERVAL': case 'INET': case 'INET6': case 'INET4':
       case 'CIDR': case 'MACADDR': case 'ENUM': case 'SET': case 'POINT': case 'GEOMETRY': case 'LINESTRING': case 'POLYGON': case 'HSTORE':
         return 'TEXT';
-      case 'BYTEA': case 'BLOB': case 'TINYBLOB': case 'MEDIUMBLOB': case 'LONGBLOB': case 'VARBINARY': case 'BINARY': return 'BLOB';
+      case 'BYTEA': case 'BLOB': case 'TINYBLOB': case 'MEDIUMBLOB': case 'LONGBLOB': case 'VARBINARY': case 'BINARY': case 'BIT VARYING': case 'VARBIT': return 'BLOB';
       case 'DATE': return 'DATE';
       case 'TIME': case 'TIMETZ': case 'TIME WITH TIME ZONE': return 'TIME';
       case 'TIMESTAMP': case 'TIMESTAMPTZ': case 'TIMESTAMP WITH TIME ZONE': case 'DATETIME': return 'DATETIME';
@@ -182,6 +205,7 @@ export function translateType(type: string, from: Dialect, to: Dialect): string 
       case 'INTERVAL': return 'VARCHAR(64)';
       case 'TSVECTOR': case 'XML': return 'TEXT';
       case 'OID': return 'INT UNSIGNED';
+      case 'BIT VARYING': case 'VARBIT': return 'BIT(64)';
       default: return type;
     }
   }
@@ -211,4 +235,144 @@ export function translateType(type: string, from: Dialect, to: Dialect): string 
     case 'CHAR': return withArgs('CHAR');
     default: return type;
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* DuckDB                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * DuckDB's nested type constructors, which splitType cannot take apart:
+ * a LIST or ARRAY suffix (`INTEGER[]`, `DOUBLE[3]`), or STRUCT / MAP / UNION /
+ * inline ENUM with their own parenthesised bodies.
+ */
+function duckdbListElement(norm: string): string | null {
+  const m = /^(.*?)\s*\[\s*\d*\s*\]$/.exec(norm);
+  return m ? m[1].trim() : null;
+}
+
+function isDuckdbNested(norm: string): boolean {
+  return /^(STRUCT|MAP|UNION)\s*\(/i.test(norm);
+}
+
+/**
+ * A column type as DuckDB spells it. DuckDB's type system is PostgreSQL's with
+ * unsigned and 128-bit integers, LIST / STRUCT / MAP on top, and no length on
+ * VARCHAR (a declared length is accepted and ignored, so it is kept as
+ * documentation).
+ */
+function toDuckdb(type: string, from: Dialect): string {
+  const norm = normalizeType(type);
+  const { base, args, suffix } = splitType(norm);
+  const withArgs = (b: string, a: string | null = args) => (a ? `${b}(${a})` : b);
+  const unsigned = suffix.includes('UNSIGNED');
+  if (suffix.includes('[]')) {
+    // A PostgreSQL array becomes a DuckDB list of the translated element type.
+    const element = norm.replace(/(\s*\[\])+$/, '');
+    return `${toDuckdb(element, from)}[]`;
+  }
+  switch (base) {
+    case 'SERIAL': case 'INT4': case 'INT': case 'INTEGER': case 'MEDIUMINT': return unsigned ? 'UINTEGER' : 'INTEGER';
+    case 'BIGSERIAL': case 'INT8': case 'BIGINT': return unsigned ? 'UBIGINT' : 'BIGINT';
+    case 'SMALLSERIAL': case 'INT2': case 'SMALLINT': return unsigned ? 'USMALLINT' : 'SMALLINT';
+    case 'TINYINT':
+      if (from === 'mariadb' && args === '1') return 'BOOLEAN';
+      return unsigned ? 'UTINYINT' : 'TINYINT';
+    case 'BOOL': case 'BOOLEAN': return 'BOOLEAN';
+    case 'BIT':
+      // MariaDB's BIT(1) is its boolean; PostgreSQL's BIT(n) is a bit string, which DuckDB has too.
+      if (from === 'mariadb' && (args === '1' || !args)) return 'BOOLEAN';
+      return 'BIT';
+    case 'BIT VARYING': case 'VARBIT': return 'BIT';
+    case 'NUMERIC': case 'DECIMAL': case 'DEC': case 'FIXED': return withArgs('DECIMAL');
+    case 'MONEY': return 'DECIMAL(19,4)';
+    case 'REAL': return from === 'sqlite' ? 'DOUBLE' : 'FLOAT';
+    case 'FLOAT4': return 'FLOAT';
+    case 'FLOAT': return from === 'mariadb' && args && Number(args.split(',')[0]) > 24 ? 'DOUBLE' : 'FLOAT';
+    case 'DOUBLE': case 'DOUBLE PRECISION': case 'FLOAT8': return 'DOUBLE';
+    case 'CHAR': case 'CHARACTER': case 'NCHAR': return withArgs('CHAR');
+    case 'VARCHAR': case 'CHARACTER VARYING': case 'NVARCHAR': return withArgs('VARCHAR');
+    case 'TEXT': case 'TINYTEXT': case 'MEDIUMTEXT': case 'LONGTEXT': case 'CITEXT': case 'CLOB': return 'VARCHAR';
+    case 'BYTEA': case 'BLOB': case 'TINYBLOB': case 'MEDIUMBLOB': case 'LONGBLOB': case 'VARBINARY': case 'BINARY': return 'BLOB';
+    case 'DATE': return 'DATE';
+    case 'TIME': return suffix.includes('WITH TIME ZONE') && !suffix.includes('WITHOUT') ? 'TIMETZ' : 'TIME';
+    case 'TIMETZ': case 'TIME WITH TIME ZONE': return 'TIMETZ';
+    case 'TIMESTAMP':
+      // MariaDB's TIMESTAMP is stored normalised to UTC, which is what TIMESTAMPTZ means.
+      return (suffix.includes('WITH TIME ZONE') && !suffix.includes('WITHOUT')) || from === 'mariadb' ? 'TIMESTAMPTZ' : 'TIMESTAMP';
+    case 'TIMESTAMPTZ': case 'TIMESTAMP WITH TIME ZONE': return 'TIMESTAMPTZ';
+    case 'DATETIME': return 'TIMESTAMP';
+    case 'YEAR': return 'SMALLINT';
+    case 'INTERVAL': return 'INTERVAL';
+    case 'JSON': case 'JSONB': return 'JSON';
+    case 'UUID': return 'UUID';
+    // MariaDB's inline ENUM('a','b') is legal DuckDB as written; SET has no counterpart.
+    case 'ENUM': return args ? withArgs('ENUM') : 'VARCHAR';
+    case 'SET': return 'VARCHAR';
+    case 'INET': return 'INET';
+    case 'INET6': case 'INET4': return 'VARCHAR(45)';
+    case 'CIDR': return 'VARCHAR(49)';
+    case 'MACADDR': return 'VARCHAR(17)';
+    case 'XML': case 'TSVECTOR': case 'HSTORE': return 'VARCHAR';
+    case 'POINT': case 'LINESTRING': case 'POLYGON': case 'GEOMETRY': case 'GEOGRAPHY': return 'GEOMETRY';
+    case 'OID': return 'UINTEGER';
+    default: return type;
+  }
+}
+
+/**
+ * A DuckDB type in PostgreSQL's spelling, the nearest engine. Lists become
+ * arrays element by element; STRUCT / MAP / UNION have no relational
+ * counterpart and become JSONB; unsigned and 128-bit integers widen to what
+ * still holds every value.
+ */
+function duckdbToPostgres(type: string): string {
+  const norm = normalizeType(type);
+  const element = duckdbListElement(norm);
+  if (element !== null) return `${duckdbToPostgres(element)}[]`;
+  if (isDuckdbNested(norm)) return 'JSONB';
+  if (/^ENUM\s*\(/i.test(norm)) return 'TEXT';
+  const { base, args } = splitType(norm);
+  const withArgs = (b: string, a: string | null = args) => (a ? `${b}(${a})` : b);
+  switch (base) {
+    case 'HUGEINT': case 'UHUGEINT': case 'INT128': return 'NUMERIC(39,0)';
+    case 'UBIGINT': return 'NUMERIC(20,0)';
+    case 'UINTEGER': return 'BIGINT';
+    case 'USMALLINT': return 'INTEGER';
+    case 'UTINYINT': case 'TINYINT': case 'INT1': case 'SHORT': return 'SMALLINT';
+    case 'SIGNED': case 'INT': case 'INT4': return 'INTEGER';
+    case 'LONG': case 'INT8': return 'BIGINT';
+    case 'INT2': return 'SMALLINT';
+    case 'STRING': case 'BPCHAR': return 'TEXT';
+    case 'FLOAT': case 'FLOAT4': return 'REAL';
+    case 'DOUBLE': case 'FLOAT8': return 'DOUBLE PRECISION';
+    case 'DECIMAL': case 'DEC': return withArgs('NUMERIC');
+    case 'BLOB': case 'BINARY': case 'VARBINARY': return 'BYTEA';
+    case 'DATETIME': case 'TIMESTAMP_S': case 'TIMESTAMP_MS': case 'TIMESTAMP_NS': return 'TIMESTAMP';
+    case 'BIT': case 'BITSTRING': return 'VARBIT';
+    case 'JSON': return 'JSONB';
+    case 'VARINT': case 'BIGNUM': return 'NUMERIC';
+    case 'LOGICAL': case 'BOOL': return 'BOOLEAN';
+    default: return type;
+  }
+}
+
+function fromDuckdb(type: string, to: Dialect): string {
+  const pg = duckdbToPostgres(type);
+  if (to === 'postgresql') return pg;
+  if (to === 'mariadb') {
+    // MariaDB has unsigned integers of its own, so keep them rather than widening.
+    const { base, suffix } = splitType(normalizeType(type));
+    if (!suffix.includes('[]')) {
+      switch (base) {
+        case 'UTINYINT': return 'TINYINT UNSIGNED';
+        case 'USMALLINT': return 'SMALLINT UNSIGNED';
+        case 'UINTEGER': return 'INT UNSIGNED';
+        case 'UBIGINT': return 'BIGINT UNSIGNED';
+        case 'TINYINT': case 'INT1': return 'TINYINT';
+        default: break;
+      }
+    }
+  }
+  return translateType(pg, 'postgresql', to);
 }

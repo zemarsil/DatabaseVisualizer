@@ -44,8 +44,8 @@ const STORAGE_KEY = 'dbviz.extensionPacks';
 /** A pack is prose and names; anything this size is not that, and would crowd out other storage. */
 const MAX_PACK_CHARS = 2_000_000;
 
-const DIALECTS = new Set<string>(['postgresql', 'mariadb', 'sqlite']);
-const INSTALLS = new Set<string>(['create-extension', 'install-soname', 'client-loaded', 'built-in']);
+const DIALECTS = new Set<string>(['postgresql', 'mariadb', 'sqlite', 'duckdb']);
+const INSTALLS = new Set<string>(['create-extension', 'install-soname', 'install-load', 'client-loaded', 'built-in']);
 
 function text(v: unknown): string | undefined {
   return typeof v === 'string' && v.trim() ? v.trim() : undefined;
@@ -109,7 +109,7 @@ function parseDef(raw: unknown, index: number, fallbackDialect: Dialect | undefi
   }
   const dialectRaw = text(o.dialect) ?? fallbackDialect;
   if (!dialectRaw || !DIALECTS.has(dialectRaw)) {
-    errors.push(`extensions[${index}] (${name}): "dialect" must be postgresql, mariadb or sqlite.`);
+    errors.push(`extensions[${index}] (${name}): "dialect" must be postgresql, mariadb, sqlite or duckdb.`);
     return null;
   }
   const install = text(o.install);
@@ -161,7 +161,7 @@ export function parseExtensionPack(json: string, opts: { origin?: string; id?: s
   // A pack for a single engine can say so once at the top instead of on every entry.
   const packDialect = text(o.dialect);
   if (packDialect && !DIALECTS.has(packDialect)) {
-    return { pack: null, errors: [`"dialect" is "${packDialect}"; it must be postgresql, mariadb or sqlite.`], warnings };
+    return { pack: null, errors: [`"dialect" is "${packDialect}"; it must be postgresql, mariadb, sqlite or duckdb.`], warnings };
   }
 
   const id = opts.id ?? text(o.id) ?? `pack-${Date.now().toString(36)}`;

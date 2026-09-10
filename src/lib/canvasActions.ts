@@ -25,6 +25,7 @@ import { classifyPastedText, decodeClipboard } from './clipboard';
 import { importSql } from './sql/import';
 import { parseDiagramFile, parseWorkspaceFile } from './io';
 import { getSqliteEngine } from './sqlite/engine';
+import { getDuckdbEngine } from './duckdb/engine';
 import { introspectionToDiagram } from './introspectImport';
 import { estimateNodeSize } from './geometry';
 import { selectionFlavors, type ClipboardFlavors } from './selectionExport';
@@ -364,12 +365,23 @@ export async function pasteFromClipboard(at?: { x: number; y: number }): Promise
   if (pasteText(text, at) === 'unknown') useStore.getState().toast('info', 'The clipboard holds neither tables, SQL nor a diagram file.');
 }
 
-/** Open files dropped on the canvas: .sql, .dbviz.json, or a SQLite database. */
+/** Open files dropped on the canvas: .sql, .dbviz.json, or a SQLite / DuckDB database. */
 export async function openDroppedFiles(files: File[], at?: { x: number; y: number }): Promise<void> {
   const s = useStore.getState();
   for (const file of files) {
     const name = file.name.toLowerCase();
     try {
+      if (/\.duckdb$/.test(name)) {
+        const engine = await getDuckdbEngine();
+        await engine.load(new Uint8Array(await file.arrayBuffer()));
+        const res = await engine.introspect();
+        const converted = introspectionToDiagram(res, 'duckdb', s.diagram.tables.length ? s.diagram : null);
+        useConnection.getState().setDialect('duckdb');
+        if (s.diagram.tables.length === 0) s.setDialect('duckdb', false);
+        s.importTables(converted.tables, converted.relationships, s.diagram.tables.length ? 'merge' : 'replace', { customTypes: converted.customTypes, extensions: converted.extensions });
+        s.toast('success', `Opened ${file.name} in the browser and imported ${converted.tables.length} table${converted.tables.length === 1 ? '' : 's'}.`);
+        continue;
+      }
       if (/\.(sqlite3?|db)$/.test(name)) {
         const engine = await getSqliteEngine();
         await engine.load(new Uint8Array(await file.arrayBuffer()));
@@ -427,7 +439,7 @@ export async function openDroppedFiles(files: File[], at?: { x: number; y: numbe
         s.toast('success', `Imported ${res.tables.length} table${res.tables.length === 1 ? '' : 's'} from ${file.name}.`);
         continue;
       }
-      s.toast('error', `${file.name}: drop a .sql, .dbviz.json or .sqlite file.`);
+      s.toast('error', `${file.name}: drop a .sql, .dbviz.json, .sqlite or .duckdb file.`);
     } catch (e) {
       s.toast('error', `${file.name}: ${e instanceof Error ? e.message : String(e)}`);
     }

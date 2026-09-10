@@ -6,6 +6,16 @@ import type { Diagram, Table } from '@shared/types';
 
 const CLAUSE_END = /\b(WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|OFFSET|UNION|INTERSECT|EXCEPT|WINDOW|FETCH|FOR\s+UPDATE|ON|USING|JOIN|LEFT|RIGHT|INNER|OUTER|FULL|CROSS|NATURAL)\b/i;
 
+/**
+ * The SELECT body of a stored CREATE VIEW statement, as SQLite's sqlite_master
+ * and DuckDB's duckdb_views() hand it back (schema-qualified names included).
+ */
+export function viewBody(createSql: string): string {
+  const m =
+    /^\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:TEMP(?:ORARY)?\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(?:"[^"]*"|`[^`]*`|\[[^\]]*\]|[^\s(.]+)\s*\.\s*)*(?:"[^"]*"|`[^`]*`|\[[^\]]*\]|[^\s(]+)\s*(?:\([^)]*\))?\s*AS\s+/i.exec(createSql);
+  return (m ? createSql.slice(m[0].length) : createSql).trim().replace(/;+$/, '');
+}
+
 function stripIdent(raw: string): string {
   return raw.trim().replace(/^["`[]|["`\]]$/g, '');
 }

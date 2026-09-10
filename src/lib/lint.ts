@@ -7,7 +7,7 @@
  * A fix mutates an immer draft of the diagram; callers hand it to the store's
  * `mutate` so it lands as one undo step.
  */
-import { kindMeta, type Column, type Diagram, type Relationship, type Table } from '@shared/types';
+import { engineName, kindMeta, type Column, type Diagram, type Relationship, type Table } from '@shared/types';
 import { flowDerivations, isDerivationComplete } from './derivation';
 import { externalTableIds } from './groups';
 import { createColumn, createExtension, createIndex, customTypeByName } from './model';
@@ -36,7 +36,7 @@ export interface LintFinding {
   fix?: LintFix;
 }
 
-const IDENTIFIER_LIMIT = { postgresql: 63, mariadb: 64, sqlite: 1000 } as const;
+const IDENTIFIER_LIMIT = { postgresql: 63, mariadb: 64, sqlite: 1000, duckdb: 1000 } as const;
 
 /** Types that mean the same column shape once the dialect noise is removed. */
 const TYPE_ALIASES: Record<string, string> = {
@@ -166,7 +166,7 @@ export function lintDiagram(d: Diagram): LintFinding[] {
     if (t.name.length > limit) {
       push({ rule: 'identifier-too-long', severity: 'warning', message: `Table name "${t.name}" is longer than ${limit} characters, the ${d.dialect} limit.`, tableId: t.id });
     }
-    if (isReserved(t.name)) {
+    if (isReserved(t.name, d.dialect)) {
       push({ rule: 'reserved-word', severity: 'info', message: `"${t.name}" is a reserved word; it will be quoted everywhere, which is easy to forget in hand-written queries.`, tableId: t.id });
     }
 
@@ -267,7 +267,7 @@ export function lintDiagram(d: Diagram): LintFinding[] {
       if (c.name.length > limit) {
         push({ rule: 'identifier-too-long', severity: 'warning', message: `Column "${t.name}.${c.name}" is longer than ${limit} characters.`, tableId: t.id, columnId: c.id });
       }
-      if (isReserved(c.name)) {
+      if (isReserved(c.name, d.dialect)) {
         push({ rule: 'reserved-word', severity: 'info', message: `"${t.name}.${c.name}" is a reserved word; it will be quoted everywhere.`, tableId: t.id, columnId: c.id });
       }
     }
@@ -365,7 +365,7 @@ export function lintDiagram(d: Diagram): LintFinding[] {
       push({
         rule: 'fk-target-not-unique',
         severity: 'error',
-        message: `${src.name} → ${tgt.name} references ${tgt.name}(${names}), which is not a primary key or UNIQUE. PostgreSQL and SQLite reject the constraint.`,
+        message: `${src.name} → ${tgt.name} references ${tgt.name}(${names}), which is not a primary key or UNIQUE. PostgreSQL, SQLite and DuckDB reject the constraint.`,
         relationshipId: r.id,
         fix: {
           label: `Add a unique index on ${tgt.name}(${names})`,
@@ -401,6 +401,31 @@ export function lintDiagram(d: Diagram): LintFinding[] {
       });
     }
 
+    // DuckDB's parser refuses CASCADE, SET NULL and SET DEFAULT on a foreign
+    // key outright, so the CREATE TABLE would fail rather than merely behave differently.
+    if (d.dialect === 'duckdb') {
+      const unsupported = (a: string | undefined) => a === 'CASCADE' || a === 'SET NULL' || a === 'SET DEFAULT';
+      if (unsupported(r.onDelete) || unsupported(r.onUpdate)) {
+        const which = [unsupported(r.onDelete) ? `ON DELETE ${r.onDelete}` : '', unsupported(r.onUpdate) ? `ON UPDATE ${r.onUpdate}` : ''].filter(Boolean).join(' and ');
+        push({
+          rule: 'fk-action-unsupported',
+          severity: 'error',
+          message: `${src.name} → ${tgt.name} uses ${which}; DuckDB foreign keys only support RESTRICT and NO ACTION, so the CREATE TABLE will fail.`,
+          relationshipId: r.id,
+          fix: {
+            label: 'Use NO ACTION',
+            safe: true,
+            apply: (dd) => {
+              const rel = dd.relationships.find((x) => x.id === r.id);
+              if (!rel) return;
+              if (unsupported(rel.onDelete)) rel.onDelete = 'NO ACTION';
+              if (unsupported(rel.onUpdate)) rel.onUpdate = 'NO ACTION';
+            },
+          },
+        });
+      }
+    }
+
     const setNull = r.onDelete === 'SET NULL' || r.onUpdate === 'SET NULL';
     if (setNull) {
       for (const p of pairs) {
@@ -429,7 +454,7 @@ export function lintDiagram(d: Diagram): LintFinding[] {
       push({
         rule: 'fk-without-index',
         severity: 'warning',
-        message: `${src.name}(${names}) references ${tgt.name} but has no index; ${d.dialect === 'sqlite' ? 'SQLite' : 'PostgreSQL'} does not add one, so deletes on ${tgt.name} and joins scan ${src.name}.`,
+        message: `${src.name}(${names}) references ${tgt.name} but has no index; ${engineName(d.dialect)} does not add one, so deletes on ${tgt.name} and joins scan ${src.name}.`,
         relationshipId: r.id,
         tableId: src.id,
         fix: {

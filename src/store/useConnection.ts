@@ -3,14 +3,14 @@ import { DIALECTS, type ConnectionConfig, type Dialect } from '@shared/types';
 
 /**
  * The database connection the Database, Query, Migrate and Seed panels share.
- * dialect === 'sqlite' means the in-browser engine; host/port/user are unused.
+ * dialect === 'sqlite' or 'duckdb' means an in-browser engine; host/port/user are unused.
  */
 
 const CONN_KEY = 'dbviz:connection';
 
 export function defaultConnection(dialect: Dialect): ConnectionConfig {
   const d = DIALECTS.find((x) => x.id === dialect)!;
-  return { dialect, host: '127.0.0.1', port: d.defaultPort, user: d.defaultUser, password: '', database: dialect === 'sqlite' ? 'local.sqlite' : 'app' };
+  return { dialect, host: '127.0.0.1', port: d.defaultPort, user: d.defaultUser, password: '', database: dialect === 'sqlite' ? 'local.sqlite' : dialect === 'duckdb' ? 'local.duckdb' : 'app' };
 }
 
 function loadConnection(): ConnectionConfig | null {

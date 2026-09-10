@@ -6,7 +6,7 @@ A locally hosted web app for designing relational schemas visually.
 - Say how a connection *reads*: "orders **contains** order_items", "customers **has** addresses", "orders **uses** addresses". The verb is documentation, so it never changes the DDL.
 - Tag any connection with the query that moves data across it, so the diagram documents *how* one table feeds another, not just that they are related.
 - **Group** tables into a labelled region — handy when part of the diagram is a *different* database you only read from. Mark that group external and the generated script documents those tables instead of creating them.
-- Generate the `CREATE TABLE` script for **PostgreSQL**, **MariaDB** or **SQLite** from the diagram, or paste DDL (including `pg_dump` / `mysqldump` output) and get the diagram back. Enum and composite types are first-class.
+- Generate the `CREATE TABLE` script for **PostgreSQL**, **MariaDB**, **SQLite** or **DuckDB** from the diagram, or paste DDL (including `pg_dump` / `mysqldump` output) and get the diagram back. Enum and composite types are first-class.
 - **Problems**: a schema linter that flags missing primary keys, foreign keys onto non-unique columns, type mismatches, duplicate names, reserved words and more — most findings fix themselves with one click — plus foreign-key suggestions read off column names.
 - **Detangle**: a layered auto-layout that ranks referenced tables before the tables that reference them and minimises edge crossings. Align, distribute, snap to grid and nudge with the arrow keys for the last few pixels.
 - **Trace**: pick two tables and get the shortest chain of connections between them, highlighted on the canvas, plus the `JOIN` query for that path.
@@ -17,7 +17,7 @@ A locally hosted web app for designing relational schemas visually.
 - **Migrate and seed**: diff the diagram against a live database and get the `ALTER` statements that bring it up to date; generate deterministic seed rows that respect foreign keys, uniqueness and enums.
 - **Query**: run read-only `SELECT`s against the connected database with a results grid, snippets built from the diagram, and history.
 - Export as PNG, SVG, SQL, Markdown, Mermaid or DBML; save a `.dbviz.json` file; or copy a **share link** that carries the whole diagram in its URL. Every diagram you work on is kept in the browser's library with thumbnails and named checkpoints.
-- **Docker & database**: start a PostgreSQL or MariaDB container from the UI, create the schema in it (or in any database you can reach), and pull an existing database's schema into the diagram. With the SQLite dialect the database runs *inside the browser*, no server required.
+- **Docker & database**: start a PostgreSQL or MariaDB container from the UI, create the schema in it (or in any database you can reach), and pull an existing database's schema into the diagram. With the SQLite or DuckDB dialect the database runs *inside the browser*, no server required.
 
 ## Requirements
 
@@ -65,7 +65,7 @@ docker compose up --build
 | Right-click anything | Every target has its own menu: the canvas (add a table or note right here, select all, detangle, undo, open a drawer), a table (rename, duplicate, colour, **Copy as** SQL / Markdown / Markdown + SQL / diagram JSON, trace, delete), a column row inside a table (toggle PK / NN / UQ / AI, add a column below, index it, reorder, delete), a connection (swap direction, switch its kind, copy the tagged query), a note, a group region (copy all of its tables in any format), and the entries in the table list. Right-clicking inside a selected group acts on the whole group |
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks. `Enter` anywhere in a row adds the next one, `Shift+Enter` inserts above, `Alt+P` / `Alt+N` / `Alt+U` / `Alt+I` tick PK / NN / UQ / AI without the cursor leaving the box, the arrow keys walk the rows, `Ctrl+Backspace` on an empty name deletes; drag the grip to reorder |
 | Type a table end to end | A new table opens with the cursor in its name. `Enter` goes on to the schema, `Enter` again drops into the column grid (adding the first row if there is none), and from there name, `Tab`, type, `Alt`+a flag, `Enter` repeats down the table. The colour palette and each row's flag toggles are one tab stop each, walked with the arrow keys |
-| Views | Switch a table to **View** in the inspector, paste its `SELECT`, and **Detect from SQL** draws the data-flow links from the tables it reads. Tick **Materialized** (PostgreSQL) to store the rows instead of recomputing them per query; on MariaDB and SQLite the script falls back to a plain view and the setting is kept for when you switch back |
+| Views | Switch a table to **View** in the inspector, paste its `SELECT`, and **Detect from SQL** draws the data-flow links from the tables it reads. Tick **Materialized** (PostgreSQL) to store the rows instead of recomputing them per query; on MariaDB, SQLite and DuckDB the script falls back to a plain view and the setting is kept for when you switch back |
 | Extensions | Bottom drawer → **Types** → *Extensions*: declare what the engine has to have loaded — PostGIS for a `geometry` column, pgvector for an embedding, pg_trgm for a fuzzy-search index. `CREATE EXTENSION` goes to the top of the generated script, the extension's types join every column's TYPE autocomplete, and a column typed with something no enabled extension provides becomes an error in **Problems** with a one-click fix. Definitions for anything the app does not ship with come from a JSON pack (file or URL) or straight off the database you are connected to |
 | Rename in place | Double-click a table header (or press `F2`) |
 | Foreign key | Hover a table and drag the handle beside a column onto a column of another table |
@@ -79,11 +79,11 @@ docker compose up --build
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express |
 | See / copy DDL | Bottom drawer → **SQL** (whole schema or the selected table). The table inspector also has a preview |
-| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. Dropping a `.sql`, `.dbviz.json` or SQLite database file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
+| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. Dropping a `.sql`, `.dbviz.json`, SQLite or DuckDB database file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
 | Check the schema | Bottom drawer → **Problems**: lint findings with one-click fixes, and suggested foreign keys from column names |
 | Copy / paste tables | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` on the selection; pasting between browser tabs or diagrams works too |
 | Copy tables out as text | One `Ctrl+C` puts the selection on the clipboard three ways and the paste target picks: a text editor gets the `CREATE TABLE` script (one statement block per table), a Markdown editor such as Obsidian gets the data dictionary — a table of columns per table, then the connections, then the DDL in a `sql` fence — and this app gets the tables back with their positions, colours and every connection kind. Right-click → **Copy as** (or `Ctrl+K` → *Copy the selected tables as…*) picks one format explicitly. Every format covers only the tables you selected: a foreign key to a table you did not copy is left out, and the text says which ones and why |
-| Switch dialect | Top bar selector (PostgreSQL, MariaDB, SQLite); known column types are translated (`SERIAL` ↔ `INT AUTO_INCREMENT`, `TIMESTAMPTZ` ↔ `TIMESTAMP`, `JSONB` ↔ `JSON`, …). Undo reverts |
+| Switch dialect | Top bar selector (PostgreSQL, MariaDB, SQLite, DuckDB); known column types are translated (`SERIAL` ↔ `INT AUTO_INCREMENT`, `TIMESTAMPTZ` ↔ `TIMESTAMP`, `JSONB` ↔ `JSON`, `INT UNSIGNED` ↔ `UINTEGER`, …). Undo reverts |
 | Collapse tables | The chevron in a table header cycles all columns → keys only → header only; **View → All tables** does it for everything; zooming far out collapses automatically |
 | Focus on a table | Select it and press `.` (or right-click → Focus); `[` / `]` change how many hops stay visible, `Esc` clears |
 | Align and tidy | Box-select, then right-click → Align / Distribute; **View → Snap to grid**, a toggle that makes tables land on the grid as you drag them; arrow keys nudge the selection (`Shift` for bigger steps); right-click the canvas → **Group tables by schema** |
@@ -96,6 +96,7 @@ docker compose up --build
 | Docker & database | **Database** button → left column manages containers, right column tests a connection, runs the schema, reads an existing schema, **migrates** a live database to match the diagram, or **seeds** it with generated rows |
 | Query | Bottom drawer → **Query**: read-only `SELECT`s against the connected database, with `Ctrl+Enter` to run, snippets from the diagram, history and CSV / JSON copy |
 | SQLite in the browser | Pick the SQLite dialect and the Database tab runs the schema in an in-browser database (persisted in this browser) that Query, Migrate and Seed all talk to |
+| DuckDB in the browser | Pick the DuckDB dialect and the Database tab runs DuckDB-Wasm: the database is a real `.duckdb` file kept in the browser's private file storage, so it survives reloads, can be downloaded, and a `.duckdb` file can be opened or dropped on the canvas |
 
 Press `?` in the app for the full shortcut list.
 
@@ -245,6 +246,7 @@ src/lib/canvasActions.ts    copy, cut and paste: which clipboard flavor each pas
 src/lib/share.ts         share links (diagram compressed into the URL hash)
 src/lib/library.ts       IndexedDB workspace library and per-diagram checkpoints
 src/lib/sqlite/          in-browser SQLite engine (sql.js) behind the same interface as the server
+src/lib/duckdb/          in-browser DuckDB engine (DuckDB-Wasm on the origin-private file system) behind the same interface
 src/store/useStore.ts    zustand store with undo/redo and autosave; the sheets of the workspace live here
 src/components/SheetTabs.tsx  the diagram tabs above the canvas
 src/store/useSimulation.ts  simulation mode: target, sample options, playback, recompute on edit
@@ -363,14 +365,16 @@ Only PostgreSQL installs extensions from a schema script. MariaDB's equivalent i
 plugin loaded into the whole server with `INSTALL SONAME`, and SQLite's modules are
 compiled in or loaded by the client, so on those two the declaration documents the
 dependency and the script carries the exact statement as a comment rather than
-running it with your schema.
+running it with your schema. DuckDB is the other engine where it is plain SQL:
+`INSTALL spatial; LOAD spatial;` opens the script, and the in-browser engine fetches
+the extension from extensions.duckdb.org the first time it runs.
 
 **Where the definitions come from.** The diagram stores only an extension's name, so
 a file you share stays small and opens for someone who has never heard of it. What an
 extension *provides* comes from a catalog with three layers, each outranking the one
 before it:
 
-1. **Bundled** — the usual PostgreSQL extensions, MariaDB plugins and SQLite modules,
+1. **Bundled** — the usual PostgreSQL extensions, MariaDB plugins, SQLite modules and DuckDB extensions,
    shipped with the app so the common cases work offline.
 2. **Packs** — one JSON file listing what a set of extensions provides, loaded from
    disk or a URL. This is how you teach the app about anything it does not bundle.
@@ -382,8 +386,8 @@ before it:
    operator class back to the extension that created it. So the app can describe an
    extension nobody wrote a definition for, and describe it correctly for *that*
    server — which is why it beats both other layers. **Keep as a pack** saves what it
-   said. MariaDB answers from `information_schema.PLUGINS` and the in-browser SQLite
-   from `PRAGMA compile_options`.
+   said. MariaDB answers from `information_schema.PLUGINS`, the in-browser SQLite
+   from `PRAGMA compile_options` and DuckDB from `duckdb_extensions()`.
 
 A definition only ever teaches the app names and prose. Nothing in a pack becomes SQL,
 and an extension with no definition at all still generates the right statement — it
@@ -395,7 +399,9 @@ The parser is purpose-built for schema DDL rather than a full SQL grammar. It ha
 
 Views are first-class: `CREATE VIEW … AS SELECT …` (PostgreSQL, MariaDB and SQLite flavours, including `MATERIALIZED`, `ALGORITHM=`/`DEFINER=` prefixes and `WITH CHECK OPTION`) becomes a view node fed by data-flow links from the tables its SELECT reads, and the generated script creates views after every table, in dependency order. A materialized view stays materialized through import, save and introspection; because only PostgreSQL has them, the other two dialects generate a plain `CREATE VIEW` with a warning rather than a statement they cannot run, and the flag is preserved so switching back restores it. SQLite is a third dialect: the generator writes `INTEGER PRIMARY KEY AUTOINCREMENT`, keeps every foreign key inline (SQLite resolves them at run time, so cycles need no `ALTER TABLE`), turns enum types into `CHECK (col IN (…))`, drops schema prefixes and moves comments into the script, and the parser accepts `AUTOINCREMENT`, `[bracketed]` identifiers, `WITHOUT ROWID` and `STRICT`. Column types are translated when you switch to or from SQLite.
 
-**Migrate** introspects the connected database and diffs it against the diagram: new and dropped tables, added / dropped / retyped columns, nullability and default changes, foreign keys and indexes. The `ALTER TABLE` script it writes follows each dialect's rules (`ALTER COLUMN … TYPE` in PostgreSQL, `MODIFY COLUMN` in MariaDB, and a create-copy-drop-rename rebuild for the changes SQLite cannot express), with destructive statements grouped at the end and commented out unless you tick them. It works from the diagram alone, so it cannot see data; review the script before running it.
+DuckDB is the fourth dialect, and the second that runs inside the browser (DuckDB-Wasm, in a Web Worker). Its DDL is PostgreSQL's with a few rules of its own, which the generator follows: there is no serial or identity column, so an auto-increment column reads its default from a sequence created just before its table (`CREATE SEQUENCE orders_id_seq;` … `id INTEGER PRIMARY KEY DEFAULT nextval('orders_id_seq')`); enum and composite types are real `CREATE TYPE … AS ENUM` / `AS STRUCT(…)`; foreign keys support no referential action beyond refusing the change, so `ON DELETE CASCADE` is left out with a warning and Problems flags it; a foreign key can only be written inside `CREATE TABLE`, so one that closes a reference cycle is documented as a comment instead; comments are real `COMMENT ON`; schemas are created with `CREATE SCHEMA IF NOT EXISTS`. Types are translated on the way in and out (`INT UNSIGNED` ↔ `UINTEGER`, `TEXT[]` ↔ `VARCHAR[]`, `STRUCT(…)` → `JSONB`, `HUGEINT` → `NUMERIC(39,0)`), the parser reads `STRUCT(…)` / `MAP(…)` / `INTEGER[3]` types, `CREATE TYPE … AS STRUCT`, `CREATE SEQUENCE` and `INSTALL` / `LOAD`, and reading a live schema uses DuckDB's own `duckdb_tables()` / `duckdb_columns()` / `duckdb_constraints()` catalog functions, mapping an enum column back to the named type it was declared with. In the browser the database is a real `.duckdb` file on the origin-private file system, so it survives reloads and downloads as a file the DuckDB CLI opens; a browser without that storage falls back to an in-memory database for the session. Extensions a script loads (`json`, `spatial`, …) are fetched from extensions.duckdb.org, so they need the network the first time.
+
+**Migrate** introspects the connected database and diffs it against the diagram: new and dropped tables, added / dropped / retyped columns, nullability and default changes, foreign keys and indexes. The `ALTER TABLE` script it writes follows each dialect's rules (`ALTER COLUMN … TYPE` in PostgreSQL, `MODIFY COLUMN` in MariaDB, a create-copy-drop-rename rebuild for the changes SQLite cannot express, and for DuckDB the indexes dropped and recreated around a column change, since it refuses to alter an indexed table), with destructive statements grouped at the end and commented out unless you tick them. DuckDB cannot add or drop a constraint on an existing table (a primary key can be added once), so those changes are written as notes rather than statements it would reject. It works from the diagram alone, so it cannot see data; review the script before running it.
 
 ## License
 

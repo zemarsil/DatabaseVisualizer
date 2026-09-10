@@ -1,6 +1,7 @@
 import initSqlJs, { type Database, type SqlJsStatic } from 'sql.js';
 import type { IntrospectResponse, IntrospectedTable, QueryResult, ReferentialAction, StatementResult } from '@shared/types';
 import type { SqliteEngine } from './engine';
+import { viewBody } from '../sql/views';
 
 /* ------------------------------------------------------------------ */
 /* Persistence (IndexedDB), no-op outside the browser                  */
@@ -101,11 +102,7 @@ function action(raw: string | null | undefined): ReferentialAction {
   return 'NO ACTION';
 }
 
-/** The SELECT body of a stored CREATE VIEW statement. */
-export function viewBody(createSql: string): string {
-  const m = /^\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?VIEW\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"[^"]*"|`[^`]*`|\[[^\]]*\]|[^\s(]+)\s*(?:\([^)]*\))?\s*AS\s+/i.exec(createSql);
-  return (m ? createSql.slice(m[0].length) : createSql).trim().replace(/;+$/, '');
-}
+export { viewBody } from '../sql/views';
 
 /* ------------------------------------------------------------------ */
 /* Engine                                                              */

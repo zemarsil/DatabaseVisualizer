@@ -190,7 +190,7 @@ function ColumnRow({ table, column, index, fk, embed, origin, originText, regist
       <div className="col-row__flags" role="toolbar" aria-label={`Flags for ${column.name || 'this column'}`}>
         {COLUMN_FLAGS.map((f, i) => {
           const on = f.flag === 'nullable' ? !column.nullable : Boolean(column[f.flag]);
-          const what = f.flag === 'primaryKey' ? 'Primary key' : f.flag === 'nullable' ? 'NOT NULL' : f.flag === 'unique' ? 'UNIQUE' : dialect === 'mariadb' ? 'AUTO_INCREMENT' : 'Identity / serial';
+          const what = f.flag === 'primaryKey' ? 'Primary key' : f.flag === 'nullable' ? 'NOT NULL' : f.flag === 'unique' ? 'UNIQUE' : dialect === 'mariadb' ? 'AUTO_INCREMENT' : dialect === 'duckdb' ? 'Auto-increment (sequence default)' : 'Identity / serial';
           return (
             <button
               key={f.flag}
@@ -464,7 +464,7 @@ export function TableEditor({ table }: { table: Table }) {
             value={table.schema ?? ''}
             onChange={(e) => updateTable(table.id, { schema: e.target.value || undefined })}
             onKeyDown={(e) => stepTo(e, 'columns')}
-            placeholder={diagram.dialect === 'postgresql' ? 'public' : '(database)'}
+            placeholder={diagram.dialect === 'postgresql' ? 'public' : diagram.dialect === 'duckdb' ? 'main' : '(database)'}
             title="Enter jumps to the columns"
             spellCheck={false}
           />

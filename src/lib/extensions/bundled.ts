@@ -378,5 +378,249 @@ const SQLITE: ExtensionDef[] = [
   },
 ];
 
+/* ------------------------------------------------------------------ */
+/* DuckDB                                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * DuckDB extensions are fetched from its extension repository with INSTALL and
+ * activated per session with LOAD, both plain SQL, so they belong in a schema
+ * script the way PostgreSQL's CREATE EXTENSION does. Several are bundled into
+ * the native builds and load themselves the first time something needs them;
+ * the in-browser engine fetches every one of them from extensions.duckdb.org,
+ * which is why the script still says LOAD.
+ */
+const DUCKDB_DOCS = 'https://duckdb.org/docs/stable/core_extensions';
+
+const DUCKDB: ExtensionDef[] = [
+  {
+    name: 'json',
+    dialect: 'duckdb',
+    label: 'JSON',
+    summary: 'The JSON type and its functions. Bundled with native DuckDB and loaded on first use; the browser engine fetches it.',
+    docsUrl: `${DUCKDB_DOCS}/json`,
+    types: [{ name: 'JSON', summary: 'JSON text, validated on the way in and queryable with json_extract().' }],
+    functions: [
+      { name: 'json_extract', example: "json_extract(payload, '$.id')", summary: 'The value at a path, still as JSON.' },
+      { name: 'json_extract_string', example: "json_extract_string(payload, '$.name')", summary: 'The value at a path, as text.' },
+      { name: 'json_object', example: "json_object('id', id, 'name', name)" },
+      { name: 'json_array', example: 'json_array(a, b)' },
+      { name: 'json_valid', example: 'json_valid(payload)' },
+    ],
+  },
+  {
+    name: 'parquet',
+    dialect: 'duckdb',
+    label: 'Parquet',
+    summary: 'Read and write Parquet files: read_parquet() as a table, COPY ... TO ... (FORMAT PARQUET) to write.',
+    docsUrl: 'https://duckdb.org/docs/stable/data/parquet/overview',
+    functions: [
+      { name: 'read_parquet', example: "read_parquet('events/*.parquet')", summary: 'A file or glob as a table; the schema comes from the file.' },
+      { name: 'parquet_schema', example: "parquet_schema('events.parquet')" },
+      { name: 'parquet_metadata', example: "parquet_metadata('events.parquet')" },
+    ],
+    note: 'Bundled with native DuckDB. A file read this way is another data source: model it as an external group if the diagram should show where rows come from.',
+  },
+  {
+    name: 'icu',
+    dialect: 'duckdb',
+    label: 'ICU',
+    summary: 'Time zones and language-aware collations. Without it TIMESTAMPTZ arithmetic and COLLATE de / fr and the like are unavailable.',
+    docsUrl: `${DUCKDB_DOCS}/icu`,
+    functions: [
+      { name: 'timezone', example: "timezone('Europe/Berlin', placed_at)", summary: 'A timestamp moved into a named zone.' },
+      { name: 'icu_sort_key', example: "icu_sort_key(name, 'de')" },
+    ],
+    note: 'Bundled with native DuckDB and loaded on demand. The TIMESTAMPTZ type itself needs nothing; converting it between zones does.',
+  },
+  {
+    name: 'spatial',
+    dialect: 'duckdb',
+    label: 'Spatial',
+    summary: 'Geometry types, ST_ functions and an R-tree index: the PostGIS of DuckDB.',
+    docsUrl: `${DUCKDB_DOCS}/spatial/overview`,
+    types: [
+      { name: 'GEOMETRY', summary: 'Any shape: a point, a line, a polygon, or a collection of them.' },
+      { name: 'POINT_2D', summary: 'A fixed-layout point, faster than GEOMETRY when every row is a point.' },
+      { name: 'LINESTRING_2D' },
+      { name: 'POLYGON_2D' },
+      { name: 'BOX_2D', summary: 'A 2D bounding box.' },
+    ],
+    functions: [
+      { name: 'ST_Point', example: 'ST_Point(lon, lat)' },
+      { name: 'ST_GeomFromText', example: "ST_GeomFromText('POINT(0 0)')" },
+      { name: 'ST_AsText', example: 'ST_AsText(geom)' },
+      { name: 'ST_Distance', example: 'ST_Distance(a, b)' },
+      { name: 'ST_Within', example: 'ST_Within(a, b)' },
+      { name: 'ST_Intersects', example: 'ST_Intersects(a, b)' },
+      { name: 'ST_Read', example: "ST_Read('places.geojson')", summary: 'Any GDAL-readable file (GeoJSON, Shapefile, GeoPackage) as a table.' },
+    ],
+    indexMethods: ['rtree'],
+    note: 'An R-tree index is CREATE INDEX ... USING RTREE (geom) and speeds up ST_Within / ST_Intersects filters. Coordinates carry no SRID: ST_Transform converts between reference systems explicitly.',
+  },
+  {
+    name: 'vss',
+    dialect: 'duckdb',
+    label: 'Vector similarity search',
+    summary: 'HNSW indexes over fixed-size FLOAT[n] arrays, so a nearest-neighbour ORDER BY ... LIMIT stops scanning the whole table.',
+    docsUrl: `${DUCKDB_DOCS}/vss`,
+    functions: [
+      { name: 'array_distance', example: 'array_distance(embedding, query)', summary: 'Euclidean distance; what an HNSW index built with metric l2sq accelerates.' },
+      { name: 'array_cosine_distance', example: 'array_cosine_distance(embedding, query)' },
+      { name: 'array_inner_product', example: 'array_inner_product(embedding, query)' },
+    ],
+    indexMethods: ['hnsw'],
+    note: "Embeddings are FLOAT[1536]-style arrays, not lists: the size is part of the type. Persisting an HNSW index in a database file needs SET hnsw_enable_experimental_persistence = true, and the index must be built with the metric the query uses.",
+  },
+  {
+    name: 'fts',
+    dialect: 'duckdb',
+    label: 'Full-text search',
+    summary: 'A BM25 full-text index over one or more text columns of a table.',
+    docsUrl: `${DUCKDB_DOCS}/full_text_search`,
+    functions: [
+      { name: 'create_fts_index', example: "PRAGMA create_fts_index('docs', 'id', 'title', 'body')", summary: 'Builds the index once; rebuild it after the table changes.' },
+      { name: 'match_bm25', example: "fts_main_docs.match_bm25(id, 'search words')", summary: 'The relevance score, or NULL for rows that do not match.' },
+    ],
+    note: 'The index lives in a schema named fts_main_<table> and is not kept up to date by inserts: drop and recreate it when the rows change.',
+  },
+  {
+    name: 'inet',
+    dialect: 'duckdb',
+    label: 'inet',
+    summary: 'The INET type for IPv4 and IPv6 addresses and networks, with containment operators.',
+    docsUrl: `${DUCKDB_DOCS}/inet`,
+    types: [{ name: 'INET', summary: 'An address with an optional prefix length, e.g. 10.0.0.0/8.' }],
+    functions: [
+      { name: 'host', example: 'host(address)', summary: 'The address without its prefix length.' },
+      { name: 'netmask', example: 'netmask(address)' },
+      { name: 'network', example: 'network(address)' },
+      { name: 'family', example: 'family(address)', summary: '4 or 6.' },
+    ],
+  },
+  {
+    name: 'httpfs',
+    dialect: 'duckdb',
+    label: 'httpfs',
+    summary: 'Read files straight from HTTP(S) and S3 URLs: read_parquet(\'https://...\') and read_csv(\'s3://...\').',
+    docsUrl: `${DUCKDB_DOCS}/httpfs/overview`,
+    note: 'Adds no types. S3 credentials go into a secret (CREATE SECRET), which the aws extension can fill from the environment.',
+  },
+  {
+    name: 'aws',
+    dialect: 'duckdb',
+    label: 'AWS',
+    summary: 'Loads S3 credentials from the AWS SDK chain (profiles, environment, instance roles) into a DuckDB secret.',
+    docsUrl: `${DUCKDB_DOCS}/aws`,
+    requires: ['httpfs'],
+  },
+  {
+    name: 'azure',
+    dialect: 'duckdb',
+    label: 'Azure',
+    summary: 'Read files from Azure Blob Storage and Data Lake through az:// and abfss:// URLs.',
+    docsUrl: `${DUCKDB_DOCS}/azure`,
+  },
+  {
+    name: 'sqlite_scanner',
+    dialect: 'duckdb',
+    label: 'SQLite scanner',
+    summary: "Attach a SQLite file and query its tables in place: ATTACH 'app.db' (TYPE sqlite). Also answers to the name sqlite.",
+    docsUrl: `${DUCKDB_DOCS}/sqlite`,
+    note: 'The attached tables belong to the SQLite file. Put them in an external group so the diagram shows them as a source rather than creating them.',
+  },
+  {
+    name: 'postgres_scanner',
+    dialect: 'duckdb',
+    label: 'PostgreSQL scanner',
+    summary: "Attach a running PostgreSQL database and query it from DuckDB: ATTACH 'dbname=app' AS pg (TYPE postgres). Also answers to the name postgres.",
+    docsUrl: `${DUCKDB_DOCS}/postgres`,
+    note: 'Reads go to the PostgreSQL server; the tables are its. An external group fits them.',
+  },
+  {
+    name: 'mysql_scanner',
+    dialect: 'duckdb',
+    label: 'MySQL scanner',
+    summary: "Attach a MySQL or MariaDB database: ATTACH 'host=localhost user=root db=app' AS m (TYPE mysql). Also answers to the name mysql.",
+    docsUrl: `${DUCKDB_DOCS}/mysql`,
+  },
+  {
+    name: 'excel',
+    dialect: 'duckdb',
+    label: 'Excel',
+    summary: 'read_xlsx() to read a spreadsheet as a table, COPY ... TO ... (FORMAT xlsx) to write one.',
+    docsUrl: `${DUCKDB_DOCS}/excel`,
+    functions: [{ name: 'read_xlsx', example: "read_xlsx('report.xlsx', sheet = 'Data')" }],
+  },
+  {
+    name: 'delta',
+    dialect: 'duckdb',
+    label: 'Delta Lake',
+    summary: 'Read Delta Lake tables with delta_scan().',
+    docsUrl: `${DUCKDB_DOCS}/delta`,
+    functions: [{ name: 'delta_scan', example: "delta_scan('s3://bucket/table')" }],
+    requires: ['httpfs'],
+  },
+  {
+    name: 'iceberg',
+    dialect: 'duckdb',
+    label: 'Iceberg',
+    summary: 'Read Apache Iceberg tables with iceberg_scan(), or attach an Iceberg REST catalog.',
+    docsUrl: `${DUCKDB_DOCS}/iceberg/overview`,
+    functions: [{ name: 'iceberg_scan', example: "iceberg_scan('s3://bucket/table')" }],
+    requires: ['httpfs'],
+  },
+  {
+    name: 'ducklake',
+    dialect: 'duckdb',
+    label: 'DuckLake',
+    summary: "A lakehouse format: Parquet data files with the catalog in a SQL database. ATTACH 'ducklake:catalog.ducklake' AS lake.",
+    docsUrl: 'https://ducklake.select/docs/stable/',
+    note: 'The attached catalog is another database. Tables you only read from it belong in an external group.',
+  },
+  {
+    name: 'avro',
+    dialect: 'duckdb',
+    label: 'Avro',
+    summary: 'Read Apache Avro files with read_avro().',
+    docsUrl: `${DUCKDB_DOCS}/avro`,
+    functions: [{ name: 'read_avro', example: "read_avro('events.avro')" }],
+  },
+  {
+    name: 'encodings',
+    dialect: 'duckdb',
+    label: 'Encodings',
+    summary: 'Extra text encodings (Shift_JIS, Windows-1252 and the rest of the ICU set) for reading CSV files that are not UTF-8.',
+    docsUrl: `${DUCKDB_DOCS}/encodings`,
+  },
+  {
+    name: 'tpch',
+    dialect: 'duckdb',
+    label: 'TPC-H',
+    summary: 'Generates the TPC-H benchmark tables at a chosen scale factor: CALL dbgen(sf = 1).',
+    docsUrl: `${DUCKDB_DOCS}/tpch`,
+    functions: [{ name: 'dbgen', example: 'CALL dbgen(sf = 1)' }],
+    note: 'Handy for a realistic eight-table schema to draw and query; the tables it creates can be pulled into the diagram with Read schema.',
+  },
+  {
+    name: 'ui',
+    dialect: 'duckdb',
+    label: 'UI',
+    summary: 'A local web interface for a native DuckDB session: CALL start_ui().',
+    docsUrl: `${DUCKDB_DOCS}/ui`,
+    functions: [{ name: 'start_ui', example: 'CALL start_ui()' }],
+    note: 'For the DuckDB CLI and clients; it does nothing inside this app, which is already a UI over the same engine.',
+  },
+  {
+    name: 'core_functions',
+    dialect: 'duckdb',
+    label: 'Core functions',
+    summary: 'The standard function library. Statically linked into every build, including the in-browser one.',
+    docsUrl: 'https://duckdb.org/docs/stable/sql/functions/overview',
+    install: 'built-in',
+    note: 'Listing it is harmless but never necessary.',
+  },
+];
+
 /** Every definition the app ships with, tagged as bundled. */
-export const BUNDLED_EXTENSIONS: ExtensionDef[] = [...POSTGRES, ...MARIADB, ...SQLITE].map((e) => ({ ...e, source: 'bundled' as const }));
+export const BUNDLED_EXTENSIONS: ExtensionDef[] = [...POSTGRES, ...MARIADB, ...SQLITE, ...DUCKDB].map((e) => ({ ...e, source: 'bundled' as const }));

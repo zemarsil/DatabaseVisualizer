@@ -1,5 +1,6 @@
 import {
   describeRelationship,
+  engineName,
   kindMeta,
   type Column,
   type CustomType,
@@ -139,7 +140,8 @@ function resolveColumnType(ctx: Ctx, rawType: string, columnLabel: string, warni
   const type = rawType.trim() || 'TEXT';
   const ct = findCustomType(ctx.d.customTypes, type);
   if (!ct) return type;
-  if (ctx.dialect === 'postgresql') return quoteIdent(ct.name, ctx.dialect);
+  // PostgreSQL and DuckDB both have named types: CREATE TYPE ... AS ENUM, and AS (...) / AS STRUCT(...).
+  if (ctx.dialect === 'postgresql' || ctx.dialect === 'duckdb') return quoteIdent(ct.name, ctx.dialect);
   if (ctx.dialect === 'sqlite') {
     // Enums become TEXT with a CHECK (added by columnLine); composites have no equivalent at all.
     if (ct.kind !== 'enum') warnings.push(`${columnLabel} uses custom composite type "${ct.name}", which SQLite cannot express; emitted as TEXT.`);
@@ -167,7 +169,50 @@ function sqliteDefault(raw: string): string {
   return `(${v})`;
 }
 
-function columnLine(ctx: Ctx, c: Column, inlinePk: boolean, warnings: string[]): string {
+/** SERIAL / BIGSERIAL / SMALLSERIAL as the plain integer type they stand for. */
+function serialToInteger(type: string): string {
+  const upper = type.toUpperCase();
+  return upper === 'BIGSERIAL' ? 'BIGINT' : upper === 'SMALLSERIAL' ? 'SMALLINT' : 'INTEGER';
+}
+
+/* ---------------- DuckDB sequences ---------------- */
+
+/**
+ * DuckDB has no SERIAL, IDENTITY or AUTO_INCREMENT: an auto-increment column
+ * takes its default from a sequence, which the script creates just before the
+ * table under a name derived from the column. The sequence only makes sense on
+ * an integer column, which is the one thing this checks.
+ */
+function autoIncrementSequenceColumns(ctx: Ctx, t: Table): Column[] {
+  if (ctx.dialect !== 'duckdb') return [];
+  return t.columns.filter((c) => c.name.trim() && c.autoIncrement && isIntegerType(resolveColumnType(ctx, c.type, `Column "${c.name}"`, [])));
+}
+
+function sequenceName(t: Pick<Table, 'name'>, c: Column): string {
+  return `${t.name}_${c.name}_seq`;
+}
+
+/** The sequence as nextval() wants it: a string literal holding the quoted, schema-qualified identifier. */
+function sequenceRef(t: Pick<Table, 'name' | 'schema'>, c: Column, dialect: Dialect): string {
+  return quoteString(quoteQualified(sequenceName(t, c), t.schema, dialect));
+}
+
+/** CREATE SEQUENCE for one auto-increment column of a DuckDB table. */
+export function sequenceStatement(t: Pick<Table, 'name' | 'schema'>, c: Column, dialect: Dialect): string {
+  return `CREATE SEQUENCE IF NOT EXISTS ${quoteQualified(sequenceName(t, c), t.schema, dialect)};`;
+}
+
+/** DROP SEQUENCE for one auto-increment column. Never CASCADE: on DuckDB that takes the table with it. */
+export function dropSequenceStatement(t: Pick<Table, 'name' | 'schema'>, c: Column, dialect: Dialect): string {
+  return `DROP SEQUENCE IF EXISTS ${quoteQualified(sequenceName(t, c), t.schema, dialect)};`;
+}
+
+/** The DEFAULT expression an auto-increment column carries on DuckDB. */
+export function sequenceDefault(t: Pick<Table, 'name' | 'schema'>, c: Column, dialect: Dialect): string {
+  return `nextval(${sequenceRef(t, c, dialect)})`;
+}
+
+function columnLine(ctx: Ctx, c: Column, inlinePk: boolean, warnings: string[], owner?: Table): string {
   const { dialect } = ctx;
   const parts: string[] = [quoteIdent(c.name, dialect)];
   let type = resolveColumnType(ctx, c.type, `Column "${c.name}"`, warnings);
@@ -214,6 +259,24 @@ function columnLine(ctx: Ctx, c: Column, inlinePk: boolean, warnings: string[]):
     return parts.join(' ');
   }
 
+  if (dialect === 'duckdb') {
+    if (isSerialType(type)) type = serialToInteger(type);
+    parts.push(type);
+    if (inlinePk) parts.push('PRIMARY KEY');
+    else if (!c.nullable) parts.push('NOT NULL');
+    // The sequence is created by createTable; a column defined on its own (a
+    // migration's ADD COLUMN) names it the same way, so alter.ts can create it too.
+    const sequence = c.autoIncrement && isIntegerType(type) ? sequenceDefault(owner ?? { name: c.name, schema: undefined }, c, dialect) : null;
+    if (c.autoIncrement && !sequence) {
+      warnings.push(`Column "${c.name}" is auto-increment, but DuckDB feeds a sequence only into an integer column; ${type} keeps its own default instead.`);
+    }
+    if (sequence) parts.push(`DEFAULT ${sequence}`);
+    else if (c.defaultValue && c.defaultValue.trim()) parts.push(`DEFAULT ${c.defaultValue.trim()}`);
+    if (c.unique && !inlinePk) parts.push('UNIQUE');
+    if (c.check && c.check.trim()) parts.push(`CHECK (${c.check.trim()})`);
+    return parts.join(' ');
+  }
+
   // MariaDB
   if (isSerialType(type)) type = type.toUpperCase() === 'BIGSERIAL' ? 'BIGINT' : type.toUpperCase() === 'SMALLSERIAL' ? 'SMALLINT' : 'INT';
   parts.push(type);
@@ -227,7 +290,12 @@ function columnLine(ctx: Ctx, c: Column, inlinePk: boolean, warnings: string[]):
   return parts.join(' ');
 }
 
-function fkClause(ctx: Ctx, r: Relationship): string | null {
+/** Referential actions DuckDB's parser accepts on a foreign key: everything else is a syntax error there. */
+function duckdbAllowsAction(action: string | undefined): boolean {
+  return !action || action === 'NO ACTION' || action === 'RESTRICT';
+}
+
+function fkClause(ctx: Ctx, r: Relationship, warnings: string[] = []): string | null {
   const src = ctx.tableById.get(r.sourceTableId);
   const tgt = ctx.tableById.get(r.targetTableId);
   if (!src || !tgt) return null;
@@ -239,8 +307,16 @@ function fkClause(ctx: Ctx, r: Relationship): string | null {
     `FOREIGN KEY (${sCols.join(', ')})`,
     `REFERENCES ${tableName(tgt, ctx.dialect)} (${tCols.join(', ')})`,
   ];
-  if (r.onDelete && r.onDelete !== 'NO ACTION') parts.push(`ON DELETE ${r.onDelete}`);
-  if (r.onUpdate && r.onUpdate !== 'NO ACTION') parts.push(`ON UPDATE ${r.onUpdate}`);
+  let onDelete = r.onDelete;
+  let onUpdate = r.onUpdate;
+  if (ctx.dialect === 'duckdb' && (!duckdbAllowsAction(onDelete) || !duckdbAllowsAction(onUpdate))) {
+    const dropped = [!duckdbAllowsAction(onDelete) ? `ON DELETE ${onDelete}` : '', !duckdbAllowsAction(onUpdate) ? `ON UPDATE ${onUpdate}` : ''].filter(Boolean).join(' and ');
+    warnings.push(`${src.name} → ${tgt.name}: DuckDB foreign keys only support RESTRICT and NO ACTION, so ${dropped} was left out; the database will refuse the delete or update instead.`);
+    if (!duckdbAllowsAction(onDelete)) onDelete = undefined;
+    if (!duckdbAllowsAction(onUpdate)) onUpdate = undefined;
+  }
+  if (onDelete && onDelete !== 'NO ACTION') parts.push(`ON DELETE ${onDelete}`);
+  if (onUpdate && onUpdate !== 'NO ACTION') parts.push(`ON UPDATE ${onUpdate}`);
   return parts.join(' ');
 }
 
@@ -249,7 +325,17 @@ interface TableSqlOptions {
   inlineFks: Relationship[];
 }
 
-function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string[]): { create: string; extras: string[]; notes: string[] } {
+interface CreatedTable {
+  create: string;
+  /** Statements that follow the CREATE TABLE: indexes, comments. */
+  extras: string[];
+  /** Comment lines for the script only (SQLite keeps no comments). */
+  notes: string[];
+  /** Statements that must run before the CREATE TABLE: DuckDB's sequences. */
+  before: string[];
+}
+
+function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string[]): CreatedTable {
   const { dialect } = ctx;
   const pkCols = t.columns.filter((c) => c.primaryKey);
   const inlinePkId = pkCols.length === 1 ? pkCols[0].id : null;
@@ -262,7 +348,7 @@ function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string
       warnings.push(`Table ${t.name} has a column with an empty name; it was skipped.`);
       continue;
     }
-    lines.push(columnLine(ctx, c, c.id === inlinePkId, warnings));
+    lines.push(columnLine(ctx, c, c.id === inlinePkId, warnings, t));
   }
   if (pkCols.length > 1) {
     lines.push(`PRIMARY KEY (${columnNames(pkCols.map((c) => c.id), t, dialect).join(', ')})`);
@@ -282,7 +368,7 @@ function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string
     }
   }
   for (const r of opts.inlineFks) {
-    const clause = fkClause(ctx, r);
+    const clause = fkClause(ctx, r, warnings);
     if (clause) lines.push(clause);
     else warnings.push(`Foreign key ${ctx.fkNames.get(r.id) ?? r.id} on ${t.name} is incomplete and was skipped.`);
   }
@@ -295,7 +381,8 @@ function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string
   create += ';';
 
   const notes: string[] = [];
-  if (dialect === 'postgresql') {
+  const before = autoIncrementSequenceColumns(ctx, t).map((c) => sequenceStatement(t, c, dialect));
+  if (dialect === 'postgresql' || dialect === 'duckdb') {
     if (t.comment && t.comment.trim()) extras.push(`COMMENT ON TABLE ${tableName(t, dialect)} IS ${quoteString(t.comment.trim())};`);
     for (const c of t.columns) {
       if (c.comment && c.comment.trim()) {
@@ -309,15 +396,7 @@ function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string
       if (c.comment && c.comment.trim()) notes.push(`-- ${t.name}.${c.name}: ${c.comment.trim().replace(/\r?\n/g, ' ')}`);
     }
   }
-  return { create, extras, notes };
-}
-
-/**
- * Display name for messages. DIALECTS labels SQLite "SQLite (in browser)",
- * which does not read well mid-sentence.
- */
-function engineName(dialect: Dialect): string {
-  return dialect === 'postgresql' ? 'PostgreSQL' : dialect === 'mariadb' ? 'MariaDB' : 'SQLite';
+  return { create, extras, notes, before };
 }
 
 /**
@@ -351,17 +430,19 @@ function createView(ctx: Ctx, t: Table, warnings: string[]): string | null {
  * These come first in the script: a CREATE TYPE or a column can name a type an
  * extension provides, so the extension has to exist before either runs.
  *
- * Each engine enables extensions its own way, and only PostgreSQL does it in
- * SQL that belongs in a schema script:
+ * Each engine enables extensions its own way, and only PostgreSQL and DuckDB
+ * do it in SQL that belongs in a schema script:
  *   - PostgreSQL: CREATE EXTENSION IF NOT EXISTS, which is what we emit.
+ *   - DuckDB:     INSTALL fetches the extension once, LOAD activates it for the
+ *                 session; both are plain SQL and both are emitted.
  *   - MariaDB:    INSTALL SONAME, a server-wide administrative statement. It is
  *                 emitted, but flagged, because it is not part of creating a schema.
  *   - SQLite:     modules are compiled in or loaded by the client before it opens
  *                 the file, so there is nothing to run — only a note.
  */
 export interface ExtensionInstallPlan {
-  /** Runnable SQL, or null when this engine has no statement that belongs in a schema script. */
-  statement: string | null;
+  /** Runnable SQL, in order; empty when this engine has no statement that belongs in a schema script. */
+  statements: string[];
   /** Comment lines to put in the script, whether or not there is a statement. */
   comments: string[];
   /** Why it is only a comment, when it is. */
@@ -375,19 +456,34 @@ export interface ExtensionInstallPlan {
  */
 export function extensionInstallPlan(dialect: Dialect, e: DiagramExtension): ExtensionInstallPlan {
   const name = e.name.trim();
-  if (!name) return { statement: null, comments: [] };
+  if (!name) return { statements: [], comments: [] };
   const def = findExtensionDef(name, dialect);
   const method = installMethod(def, dialect);
 
   if (method === 'built-in') {
-    return { statement: null, comments: [`-- ${name} is built into the engine; nothing to install.`] };
+    return { statements: [], comments: [`-- ${name} is built into the engine; nothing to install.`] };
   }
 
   if (dialect === 'postgresql') {
     const parts = [`CREATE EXTENSION IF NOT EXISTS ${quoteIdent(name, 'postgresql')}`];
     if (e.schema && e.schema.trim()) parts.push(`WITH SCHEMA ${quoteIdent(e.schema.trim(), 'postgresql')}`);
     if (e.version && e.version.trim()) parts.push(`VERSION ${quoteString(e.version.trim())}`);
-    return { statement: `${parts.join(' ')};`, comments: [] };
+    return { statements: [`${parts.join(' ')};`], comments: [] };
+  }
+
+  if (dialect === 'duckdb') {
+    if (method === 'client-loaded') {
+      return {
+        statements: [],
+        comments: [`-- ${name}: load this in the client before running the schema (it is not in DuckDB's extension repository).`],
+        warning: `"${name}" is loaded by the client rather than from a script, so it is written as a comment.`,
+      };
+    }
+    // INSTALL is a no-op once the extension is on disk (or, in the browser,
+    // fetched from extensions.duckdb.org); LOAD is what every session needs.
+    // An extension name is bare (spatial, vss); anything else (a path, a URL) is a string.
+    const ident = /^[A-Za-z_][A-Za-z0-9_]*$/.test(name) ? name : quoteString(name);
+    return { statements: [`INSTALL ${ident};`, `LOAD ${ident};`], comments: [] };
   }
 
   if (dialect === 'mariadb') {
@@ -399,20 +495,20 @@ export function extensionInstallPlan(dialect: Dialect, e: DiagramExtension): Ext
       // full so a DBA can run it once, by hand, where it belongs.
       // The library name is the plugin's; the server appends the platform suffix.
       return {
-        statement: null,
+        statements: [],
         comments: [`-- ${name}: run once per server, as an administrator:`, `--   INSTALL SONAME ${quoteString(name)};`],
         warning: `MariaDB installs "${name}" into the server, not into a database: it needs SUPER and only has to be done once, so it is written as a comment rather than run with the schema.`,
       };
     }
     return {
-      statement: null,
+      statements: [],
       comments: [`-- ${name}: MariaDB has no statement to install this; set it up on the server.`],
       warning: `Extension "${name}" cannot be installed from a MariaDB schema script; it was written as a comment.`,
     };
   }
 
   return {
-    statement: null,
+    statements: [],
     comments: [`-- ${name}: load this module in the client before opening the database (SQLite has no statement for it).`],
     warning: `SQLite loads "${name}" in the client, not from a script, so it is written as a comment. The in-browser engine cannot load it at all.`,
   };
@@ -428,7 +524,7 @@ function extensionStatements(d: Diagram, warnings: string[]): { statements: stri
     if (def && def.dialect !== d.dialect) warnings.push(`Extension "${e.name.trim()}" is defined for ${def.dialect}, not ${d.dialect}.`);
 
     const plan = extensionInstallPlan(d.dialect, e);
-    if (plan.statement) statements.push(plan.statement);
+    statements.push(...plan.statements);
     comments.push(...plan.comments);
     if (plan.warning) warnings.push(plan.warning);
   }
@@ -436,14 +532,18 @@ function extensionStatements(d: Diagram, warnings: string[]): { statements: stri
   return { statements, comments };
 }
 
-/** CREATE TYPE statements for named enum/composite types (PostgreSQL only; MariaDB inlines/falls back per-column). */
+/**
+ * CREATE TYPE statements for named enum/composite types. PostgreSQL and DuckDB
+ * have them (DuckDB spells a composite AS STRUCT(...)); MariaDB inlines enums
+ * and falls composites back to JSON per column, SQLite has neither.
+ */
 function createTypeStatements(d: Diagram, warnings: string[]): string[] {
   if (d.customTypes.length === 0) return [];
   if (d.dialect === 'sqlite') {
     warnings.push('SQLite has no CREATE TYPE: enum types became CHECK constraints and composite types TEXT.');
     return [];
   }
-  if (d.dialect !== 'postgresql') {
+  if (d.dialect === 'mariadb') {
     warnings.push('MariaDB has no CREATE TYPE: enum types were inlined per column and composite types fell back to JSON.');
     return [];
   }
@@ -464,15 +564,15 @@ function createTypeStatements(d: Diagram, warnings: string[]): string[] {
         continue;
       }
       const body = fields.map((f) => `${quoteIdent(f.name, d.dialect)} ${f.type.trim() || 'TEXT'}`).join(', ');
-      statements.push(`CREATE TYPE ${name} AS (${body});`);
+      statements.push(d.dialect === 'duckdb' ? `CREATE TYPE ${name} AS STRUCT(${body});` : `CREATE TYPE ${name} AS (${body});`);
     }
   }
   return statements;
 }
 
-function alterAddFk(ctx: Ctx, r: Relationship): string | null {
+function alterAddFk(ctx: Ctx, r: Relationship, warnings: string[] = []): string | null {
   const src = ctx.tableById.get(r.sourceTableId);
-  const clause = fkClause(ctx, r);
+  const clause = fkClause(ctx, r, warnings);
   if (!src || !clause) return null;
   return `ALTER TABLE ${tableName(src, ctx.dialect)} ADD ${clause};`;
 }
@@ -769,6 +869,16 @@ export function generateSchema(d: Diagram): GeneratedSql {
     const schemaed = d.tables.filter((t) => t.schema && !ctx.external.has(t.id)).map((t) => t.name);
     if (schemaed.length) warnings.push(`SQLite has no schemas; the schema prefix was dropped for ${schemaed.join(', ')}.`);
   }
+  // DuckDB starts a database with only `main`; a table in another schema needs it created first.
+  const schemaStatements: string[] = [];
+  if (d.dialect === 'duckdb') {
+    const schemas = new Set<string>();
+    for (const t of d.tables) {
+      const s = t.schema?.trim();
+      if (s && s.toLowerCase() !== 'main' && !ctx.external.has(t.id)) schemas.add(s);
+    }
+    for (const s of [...schemas].sort()) schemaStatements.push(`CREATE SCHEMA IF NOT EXISTS ${quoteIdent(s, d.dialect)};`);
+  }
 
   // A foreign key can only be created when both ends are in this database. One
   // that points into an external group is documented instead of executed.
@@ -811,6 +921,9 @@ export function generateSchema(d: Diagram): GeneratedSql {
   ];
   if (d.extensions.length) headLines.push(`-- Extensions: ${d.extensions.map((e) => e.name).join(', ')}`);
   if (d.dialect === 'sqlite') headLines.push('-- Foreign keys are only enforced when the connection runs PRAGMA foreign_keys = ON (the in-browser engine does).');
+  if (d.dialect === 'duckdb' && order.some((t) => autoIncrementSequenceColumns(ctx, t).length)) {
+    headLines.push('-- DuckDB has no serial columns: each auto-increment column reads its default from a sequence created just before its table.');
+  }
   if (externalTables.length) {
     headLines.push(
       `-- ${externalTables.length} table(s) live in another database and are not created here; see "External sources" at the end.`,
@@ -824,6 +937,11 @@ export function generateSchema(d: Diagram): GeneratedSql {
     scriptParts.push(['-- Extensions', ...extensions.statements, ...extensions.comments].join('\n'));
   }
 
+  if (schemaStatements.length) {
+    statements.push(...schemaStatements);
+    scriptParts.push(`-- Schemas\n${schemaStatements.join('\n')}`);
+  }
+
   const typeStatements = createTypeStatements(d, warnings);
   if (typeStatements.length) {
     statements.push(...typeStatements);
@@ -832,9 +950,9 @@ export function generateSchema(d: Diagram): GeneratedSql {
 
   for (const t of order) {
     const fks = (fksBySource.get(t.id) ?? []).filter((r) => !deferred.has(r.id));
-    const { create, extras, notes } = createTable(ctx, t, { inlineFks: fks }, warnings);
-    statements.push(create, ...extras);
-    const block = [...notes, create, ...extras].join('\n');
+    const { create, extras, notes, before } = createTable(ctx, t, { inlineFks: fks }, warnings);
+    statements.push(...before, create, ...extras);
+    const block = [...notes, ...before, create, ...extras].join('\n');
     tableSql[t.id] = block;
     scriptParts.push(block);
   }
@@ -842,13 +960,33 @@ export function generateSchema(d: Diagram): GeneratedSql {
   const deferredStatements: string[] = [];
   for (const r of d.relationships) {
     if (r.kind === 'fk' && deferred.has(r.id)) {
-      const s = alterAddFk(ctx, r);
+      const s = alterAddFk(ctx, r, warnings);
       if (s) deferredStatements.push(s);
     }
   }
   if (deferredStatements.length) {
-    statements.push(...deferredStatements);
-    scriptParts.push(`-- Foreign keys that close reference cycles\n${deferredStatements.join('\n')}`);
+    if (d.dialect === 'duckdb') {
+      // DuckDB creates foreign keys only inside CREATE TABLE, and a table cannot
+      // reference one that does not exist yet, so a cycle has no executable form.
+      for (const r of d.relationships) {
+        if (r.kind !== 'fk' || !deferred.has(r.id)) continue;
+        const src = ctx.tableById.get(r.sourceTableId);
+        const tgt = ctx.tableById.get(r.targetTableId);
+        warnings.push(
+          `${src?.name ?? '?'} → ${tgt?.name ?? '?'} closes a reference cycle; DuckDB cannot add a foreign key after CREATE TABLE, so ${ctx.fkNames.get(r.id) ?? 'it'} is written as a comment and not enforced.`,
+        );
+      }
+      scriptParts.push(
+        [
+          '-- Foreign keys that close reference cycles',
+          '-- DuckDB creates foreign keys only inside CREATE TABLE and cannot add them afterwards, so these are documented rather than run:',
+          ...deferredStatements.map((s) => `-- ${s}`),
+        ].join('\n'),
+      );
+    } else {
+      statements.push(...deferredStatements);
+      scriptParts.push(`-- Foreign keys that close reference cycles\n${deferredStatements.join('\n')}`);
+    }
   }
 
   const viewStatements: string[] = [];
@@ -937,8 +1075,8 @@ export function generateTableSql(d: Diagram, tableId: string): string {
   if (t.kind === 'view') return createView(ctx, t, []) ?? `-- View ${t.name} has no SELECT yet.`;
   // A foreign key that would cross into another database is not real DDL.
   const fks = d.relationships.filter((r) => r.kind === 'fk' && r.sourceTableId === tableId && !ctx.external.has(r.targetTableId));
-  const { create, extras, notes } = createTable(ctx, t, { inlineFks: fks }, []);
-  const body = [...notes, create, ...extras].join('\n');
+  const { create, extras, notes, before } = createTable(ctx, t, { inlineFks: fks }, []);
+  const body = [...notes, ...before, create, ...extras].join('\n');
   if (!ctx.external.has(t.id)) return body;
   const group = d.groups.find((g) => g.id === t.groupId);
   return [
@@ -967,6 +1105,18 @@ export function generateDropStatements(d: Diagram): string[] {
   if (d.dialect === 'sqlite') {
     return [...viewDrops, ...reversed.map((t) => `DROP TABLE IF EXISTS ${tableName(t, d.dialect)};`)];
   }
+  if (d.dialect === 'duckdb') {
+    // Children before parents (DuckDB refuses to drop a referenced table even
+    // with CASCADE), then the sequences and types the tables depended on. Never
+    // CASCADE on those two: on DuckDB that drops the tables using them.
+    const ctx = buildCtx(d);
+    return [
+      ...viewDrops,
+      ...reversed.map((t) => `DROP TABLE IF EXISTS ${tableName(t, d.dialect)};`),
+      ...reversed.flatMap((t) => autoIncrementSequenceColumns(ctx, t).map((c) => dropSequenceStatement(t, c, d.dialect))),
+      ...d.customTypes.map((ct) => `DROP TYPE IF EXISTS ${quoteIdent(ct.name, d.dialect)};`),
+    ];
+  }
   return [
     'SET FOREIGN_KEY_CHECKS = 0;',
     ...viewDrops,
@@ -986,15 +1136,19 @@ export function resolvedColumnType(d: Diagram, column: Column): string {
 /** One column's definition, as used by ADD COLUMN / MODIFY COLUMN (never with an inline PRIMARY KEY unless asked). */
 export function columnDefinition(d: Diagram, column: Column, opts: { inlinePk?: boolean } = {}): string {
   const ctx = buildCtx(d);
-  return columnLine(ctx, column, opts.inlinePk ?? false, []);
+  // The owning table names the DuckDB sequence an auto-increment column defaults to.
+  const owner = d.tables.find((t) => t.columns.some((c) => c.id === column.id));
+  return columnLine(ctx, column, opts.inlinePk ?? false, [], owner);
 }
 
 export interface TableDdl {
   create: string;
   /** CREATE INDEX statements (MariaDB keeps its KEY lines inside the CREATE TABLE). */
   indexes: string[];
-  /** COMMENT ON statements (PostgreSQL only). */
+  /** COMMENT ON statements (PostgreSQL and DuckDB). */
   comments: string[];
+  /** CREATE SEQUENCE statements that must run before the CREATE TABLE (DuckDB's auto-increment columns). */
+  sequences: string[];
 }
 
 /** CREATE TABLE for one table, with or without its foreign keys inline, plus its index and comment statements. */
@@ -1005,8 +1159,8 @@ export function tableDdl(d: Diagram, tableId: string, opts: { inlineFks: boolean
   const fks = opts.inlineFks
     ? d.relationships.filter((r) => r.kind === 'fk' && r.sourceTableId === tableId && !ctx.external.has(r.targetTableId) && ctx.tableById.get(r.targetTableId)?.kind !== 'view')
     : [];
-  const { create, extras } = createTable(ctx, t, { inlineFks: fks }, []);
-  return { create, indexes: extras.filter((s) => /^CREATE /i.test(s)), comments: extras.filter((s) => /^COMMENT /i.test(s)) };
+  const { create, extras, before } = createTable(ctx, t, { inlineFks: fks }, []);
+  return { create, indexes: extras.filter((s) => /^CREATE /i.test(s)), comments: extras.filter((s) => /^COMMENT /i.test(s)), sequences: before };
 }
 
 /** ALTER TABLE ... ADD CONSTRAINT for one foreign key (null when it is incomplete), with the constraint name the script uses. */
@@ -1026,10 +1180,10 @@ export function createViewStatement(d: Diagram, tableId: string): string | null 
   return createView(ctx, t, []);
 }
 
-/** CREATE TYPE for one enum type (PostgreSQL), or null when it has no values or the dialect has no named types. */
+/** CREATE TYPE for one enum type (PostgreSQL, DuckDB), or null when it has no values or the dialect has no named types. */
 export function enumTypeStatement(d: Diagram, customTypeId: string): string | null {
   const ct = d.customTypes.find((c) => c.id === customTypeId);
-  if (!ct || ct.kind !== 'enum' || d.dialect !== 'postgresql') return null;
+  if (!ct || ct.kind !== 'enum' || (d.dialect !== 'postgresql' && d.dialect !== 'duckdb')) return null;
   const values = (ct.values ?? []).filter((v) => v.trim());
   if (!values.length) return null;
   return `CREATE TYPE ${quoteIdent(ct.name, d.dialect)} AS ENUM (${values.map(quoteString).join(', ')});`;

@@ -149,6 +149,7 @@ export function installMethod(def: ExtensionDef | undefined, dialect: Dialect): 
   if (def?.install) return def.install;
   if (dialect === 'postgresql') return 'create-extension';
   if (dialect === 'mariadb') return 'install-soname';
+  if (dialect === 'duckdb') return 'install-load';
   return 'client-loaded';
 }
 

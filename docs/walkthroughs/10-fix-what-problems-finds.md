@@ -180,7 +180,7 @@ The first error reads:
 
 ```
 stock_levels → warehouses references warehouses(code), which is not a primary
-key or UNIQUE. PostgreSQL and SQLite reject the constraint.
+key or UNIQUE. PostgreSQL, SQLite and DuckDB reject the constraint.
 ```
 
 `warehouses.code` is `NOT NULL`, which the warehouse team clearly thought was
@@ -498,7 +498,7 @@ happened to collect a representative set.
 
 | Problems says | Costs you | Fix |
 | --- | --- | --- |
-| `stock_levels → warehouses references warehouses(code), which is not a primary key or UNIQUE. PostgreSQL and SQLite reject the constraint.` | `REFERENCES warehouses (code)` fails at `CREATE TABLE` time. | **Add a unique index on warehouses(code)** (safe). Step 2. |
+| `stock_levels → warehouses references warehouses(code), which is not a primary key or UNIQUE. PostgreSQL, SQLite and DuckDB reject the constraint.` | `REFERENCES warehouses (code)` fails at `CREATE TABLE` time. | **Add a unique index on warehouses(code)** (safe). Step 2. |
 | `shipments → warehouses uses SET NULL, but shipments.warehouse_id is NOT NULL, so the action can never succeed.` | Legal DDL that fails the moment it fires — an incident, not a review comment. | **Allow NULL in warehouse_id** (safe) — only right if a shipment can lose its warehouse; otherwise change **On delete** by hand, which is what step 3 does. |
 
 ### Warnings

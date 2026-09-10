@@ -1,16 +1,17 @@
 import type { ApplySchemaResponse, ConnectionConfig, DatabaseExtension, ExtensionsResponse, IntrospectResponse, QueryResult } from '@shared/types';
 import { dialectLabel, isServerDialect } from '@shared/types';
 import { api } from './api';
+import { getDuckdbEngine } from './duckdb/engine';
 import { getSqliteEngine } from './sqlite/engine';
 
 /**
  * One interface for "the database we are talking to", whether that is a
- * PostgreSQL/MariaDB server reached through the local API or the SQLite
- * engine running inside the browser. Panels ask for a backend with
+ * PostgreSQL/MariaDB server reached through the local API or the SQLite or
+ * DuckDB engine running inside the browser. Panels ask for a backend with
  * `backendFor(conn)` and never care which one they got.
  */
 export interface Backend {
-  readonly kind: 'server' | 'sqlite';
+  readonly kind: 'server' | 'sqlite' | 'duckdb';
   readonly connection: ConnectionConfig;
   /** Short human label, e.g. "PostgreSQL app@127.0.0.1:5432" or "SQLite (in browser)". */
   readonly label: string;
@@ -103,6 +104,39 @@ function compileOptionsToExtensions(options: string[]): DatabaseExtension[] {
     .map((k) => ({ name: k.name, installed: true, comment: `${k.comment}. Compiled in, so there is nothing to install.` }));
 }
 
+class DuckdbBackend implements Backend {
+  readonly kind = 'duckdb' as const;
+  readonly label = 'DuckDB (in browser)';
+  constructor(readonly connection: ConnectionConfig) {}
+  async test() {
+    try {
+      const e = await getDuckdbEngine();
+      const where = e.storage === 'opfs' ? 'in browser, kept between reloads' : 'in browser, in memory';
+      return { ok: true, message: `DuckDB ${await e.version()} (${where})` };
+    } catch (err) {
+      return { ok: false, message: err instanceof Error ? err.message : String(err) };
+    }
+  }
+  async apply(statements: string[], stopOnError: boolean): Promise<ApplySchemaResponse> {
+    const e = await getDuckdbEngine();
+    const results = await e.exec(statements, stopOnError);
+    return { ok: results.every((r) => r.ok), results };
+  }
+  async query(sql: string, opts?: { maxRows?: number }) {
+    const e = await getDuckdbEngine();
+    return e.query(sql, { maxRows: opts?.maxRows });
+  }
+  async introspect() {
+    const e = await getDuckdbEngine();
+    return e.introspect();
+  }
+  async extensions(): Promise<ExtensionsResponse> {
+    const e = await getDuckdbEngine();
+    return e.extensions();
+  }
+}
+
 export function backendFor(conn: ConnectionConfig): Backend {
-  return isServerDialect(conn.dialect) ? new ServerBackend(conn) : new SqliteBackend(conn);
+  if (isServerDialect(conn.dialect)) return new ServerBackend(conn);
+  return conn.dialect === 'duckdb' ? new DuckdbBackend(conn) : new SqliteBackend(conn);
 }

@@ -18,7 +18,9 @@
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.1",
+    "@duckdb/duckdb-wasm": "^1.32.0",
     "@xyflow/react": "^12.11.6",
+    "apache-arrow": "^17.0.0",
     "cors": "^2.8.6",
     "cross-env": "^10.1.0",
     "dockerode": "^5.0.1",

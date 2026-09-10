@@ -285,6 +285,7 @@ in the UI beyond the hint under a composite's fields:
 | **PostgreSQL** | `order_status` — a real named type, `CREATE TYPE order_status AS ENUM (...)` runs first | `postal_address` — a real named type, `CREATE TYPE postal_address AS (...)` runs first |
 | **MariaDB** | inlined per column: `ENUM('pending','paid','shipped','cancelled')` | falls back to `JSON` — there is no MariaDB struct type |
 | **SQLite** | `TEXT` plus a same-column `CHECK`: `TEXT ... CHECK (status IN ('pending', 'paid', 'shipped', 'cancelled'))` | `TEXT`, unconstrained — SQLite cannot express a struct at all |
+| **DuckDB** | `order_status` — a real named type, `CREATE TYPE order_status AS ENUM (...)` runs first | `postal_address` — a real named type, `CREATE TYPE postal_address AS STRUCT(...)` runs first |
 
 Switch to **MariaDB** and `orders` reads, in full:
 

@@ -83,7 +83,7 @@ Source: `src/components/TopBar.tsx`
 | Control | Notes |
 | --- | --- |
 | Workspace name field | Placeholder *Diagram name* while the workspace holds one diagram, *Workspace name* once it holds more. With one diagram the name is the diagram's name too, so renaming either renames both; with several, each diagram is named on its own tab. |
-| Dialect selector | *PostgreSQL*, *MariaDB*, *SQLite (in browser)*. Switching translates known column types; undo reverts it. |
+| Dialect selector | *PostgreSQL*, *MariaDB*, *SQLite (in browser)*, *DuckDB (in browser)*. Switching translates known column types; undo reverts it. |
 | Undo / Redo | `Ctrl+Z`, `Ctrl+Shift+Z` (also `Ctrl+Y`). |
 | **+ Table** | Adds a table (`T`). |
 | The `▾` beside it | *Table* `T`, *View*, *Note* `N`, *Group region* `G` (reads *Group the N selected tables* when several are selected), then *Enum type* and *Composite type*, which both open the **Types** tab. |
@@ -137,7 +137,7 @@ in a handful of stops rather than twenty.
 
 **View** (`ViewEditor.tsx`) — *View definition (SELECT …)*, the checkbox
 *Materialized (store the rows, refresh on demand)* (PostgreSQL emits
-`CREATE MATERIALIZED VIEW`; MariaDB and SQLite fall back to a plain view with a
+`CREATE MATERIALIZED VIEW`; MariaDB, SQLite and DuckDB fall back to a plain view with a
 generator warning, and the flag is kept for switching back), and *Source tables
 (N)* with a **Detect from SQL** button that links the diagram tables named in
 the `SELECT`. A materialized view's canvas badge reads **MAT VIEW** rather than
@@ -246,7 +246,7 @@ Sources: `src/components/ui/contextMenuItems.ts`, which wires in the operations 
 Sources: `src/lib/model.ts`, `src/store/useStore.ts`
 
 - A **new table** is called `new_table` (then `new_table_2`, …) and arrives with
-  one column: `id`, `INTEGER` on PostgreSQL and SQLite or `INT` on MariaDB,
+  one column: `id`, `INTEGER` on PostgreSQL, SQLite and DuckDB or `INT` on MariaDB,
   primary key, not null, auto-increment.
 - A **new column** defaults to `VARCHAR(255)`, or `INTEGER` if it is a primary
   key, and is nullable unless it is a primary key.
@@ -353,7 +353,8 @@ source. Worth a `## Gotchas` entry wherever it is relevant:
   without a warning and are then forgotten, so a round trip drops them.
 - **DBML is export-only.** There is no DBML importer anywhere in the codebase,
   so a `.dbml` file cannot be dropped or pasted. Drop accepts `.sql`, `.txt`,
-  `.dbviz.json` and SQLite database files (`.sqlite`, `.sqlite3`, `.db`).
+  `.dbviz.json`, SQLite database files (`.sqlite`, `.sqlite3`, `.db`) and DuckDB
+  database files (`.duckdb`).
 - **Simulate only draws the current stage's source and target.** A table reached
   only through a `table.column` foreign-key lookup feeds the computation but
   never gets its own grid, so its values cannot be what-if-edited.
@@ -370,7 +371,7 @@ Say so plainly rather than working around it:
   stored functions — the DDL importer drops them with a warning;
 - joins that are not foreign keys inside a derivation — those belong in the
   edge's free-text *Tagged query*;
-- a named enum type on MariaDB or SQLite (PostgreSQL alone emits `CREATE TYPE`;
+- a named enum type on MariaDB or SQLite (PostgreSQL and DuckDB emit `CREATE TYPE`;
   MariaDB inlines `ENUM(...)` per column and SQLite becomes a `CHECK`);
 - a group's rectangle — it is derived from where its member tables sit, never
   stored, so a group cannot be dragged away from its contents;

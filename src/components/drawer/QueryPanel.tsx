@@ -46,7 +46,7 @@ export function QueryPanel() {
   const editor = useRef<HTMLTextAreaElement>(null);
 
   const backend = useMemo(() => backendFor(conn), [conn]);
-  const isSqlite = !isServerDialect(conn.dialect);
+  const embedded = !isServerDialect(conn.dialect);
   const mismatch = conn.dialect !== diagram.dialect;
 
   useEffect(() => {
@@ -151,7 +151,7 @@ export function QueryPanel() {
             </span>
           )}
           <span className="grow" />
-          {isSqlite ? (
+          {embedded ? (
             <span className="small muted">Writes commit immediately</span>
           ) : (
             <label className="checkbox small" title="Without this, only SELECT-style statements run, inside a transaction that is rolled back">
@@ -287,7 +287,7 @@ export function QueryPanel() {
         )}
         {!result && !error && !running && (
           <div className="small muted">
-            Results appear here. Queries run read-only inside a transaction unless you allow writes; the in-browser SQLite database commits directly.
+            Results appear here. Queries run read-only inside a transaction unless you allow writes; an in-browser database (SQLite, DuckDB) commits directly.
           </div>
         )}
       </div>
