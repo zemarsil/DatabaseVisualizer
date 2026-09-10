@@ -67,7 +67,7 @@ export function ImportPanel() {
       res.extensions.length ? `${res.extensions.length} extension(s)` : '',
     ].filter(Boolean);
     const extraNote = extras.length ? ` and ${extras.join(' and ')}` : '';
-    toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} foreign key(s)${extraNote}.`);
+    toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} connection(s)${extraNote}.`);
     const implied = suggestForeignKeys(useStore.getState().diagram).filter((x) => x.confidence === 'high').length;
     if (implied) toast('info', `${implied} foreign key${implied === 1 ? ' looks' : 's look'} implied by column names. Open Problems to add them.`);
     setSql('');
@@ -128,13 +128,14 @@ export function ImportPanel() {
         </div>
         <div className="small muted" style={{ marginBottom: 8 }}>
           Understands CREATE TABLE with column and table constraints, ALTER TABLE … ADD CONSTRAINT, CREATE INDEX, COMMENT ON, CREATE TYPE … AS ENUM and CREATE TYPE
-          … AS (composite). Other statements are skipped with a warning. Tables referenced but not defined get a placeholder.
+          … AS (composite). Other statements are skipped with a warning. Tables referenced but not defined get a placeholder. A script this app exported also
+          carries its data flows, serialized copies, dependencies and tagged queries in its trailing comments, and they come back with it.
         </div>
         {preview && (
           <div style={{ overflow: 'auto', minHeight: 0 }}>
             <div className="row row--wrap" style={{ marginBottom: 4 }}>
               <span className="badge badge--success">{preview.tables.length} tables</span>
-              <span className="badge badge--accent">{preview.relationships.length} foreign keys</span>
+              <span className="badge badge--accent">{preview.relationships.length} connections</span>
               {preview.errors.length > 0 && <span className="badge badge--danger">{preview.errors.length} errors</span>}
               {preview.warnings.length > 0 && <span className="badge">{preview.warnings.length} warnings</span>}
             </div>

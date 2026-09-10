@@ -158,13 +158,17 @@ CREATE TABLE public.authors (
 
 Scroll to the bottom and you will find a commented `-- External sources`
 block that documents `crm_contacts` and `crm_accounts` — table names, columns,
-the note on their group — without a `CREATE TABLE` for either anywhere, and
-after that a block documenting the embed, the dependency and all six
-data-flow edges as comments, because none of the three is ever a constraint.
+the note on their group — without a `CREATE TABLE` for either anywhere; after
+that a block documenting the embed, the dependency and all six data-flow edges
+as comments, because none of the three is ever a constraint; and last a
+`-- dbviz:connections` block saying the same thing again as JSON, which is the
+one **Import SQL** reads when this file comes back.
 
-**You should see:** the badge reading `PostgreSQL` and `57 statements`, and
-the script running from two `CREATE TYPE`s through fifteen real tables and one
-`CREATE VIEW` before the two commented appendices.
+**You should see:** the badge reading `PostgreSQL` and `57 statements`, the
+hint above the code area explaining that the script carries its connections in
+its trailing comments, and the script running from two `CREATE TYPE`s through
+fifteen real tables and one `CREATE VIEW` before the three commented
+appendices.
 
 ### 2. Switch to the Markdown data dictionary
 
@@ -465,6 +469,49 @@ Every one of them is a decision from an earlier walkthrough — the embed from
 08 — and this appendix is the only place in any export where all of them
 survive in one piece.
 
+Below it sits a third appendix, the same eight connections plus the fifteen
+foreign keys once more, this time as JSON inside `--` comments:
+
+```sql
+-- ----------------------------------------------------------------
+-- Connection metadata: the same connections once more, in the form Import SQL
+-- reads. …
+-- dbviz:connections v1
+-- {
+--   "connections": [
+--     {
+--       "kind": "flow",
+--       "verb": "feeds",
+--       "from": "orders",
+--       "to": "customer_cadence",
+--       "name": "nightly rollup",
+--       "note": "Full rebuild, not incremental: …",
+--       "derivations": [
+--         {
+--           "target": "order_count",
+--           "expression": "*",
+--           "aggregate": "COUNT",
+--           "groupBy": [ "customer_id" ],
+--           "filter": "status <> 'cancelled'"
+--         }
+--       ]
+--     }
+--   ]
+-- }
+-- dbviz:end
+```
+
+The appendix above it is for you; this one is for the app. Download the
+script, paste it into **Import SQL** and every connection comes back — all six
+flows with their derived columns, the embed on `books.contributors_json`, the
+dependency, and the verb and note on each foreign key. The two `crm_*` tables
+and the two foreign keys reaching into them do not, because the script never
+creates those tables; positions, colours and the sticky note do not either,
+because they are not connections. That is a much shorter list of losses than
+the one at the top of this walkthrough would have led you to expect, and it is
+the reason a `.sql` file is now a route back into the app rather than only a
+route out.
+
 Then open **Problems**. It reports one finding, at the *info* level, not an
 error or a warning: `customers references crm_contacts, which lives in
 another database; the script documents the link instead of creating a
@@ -502,25 +549,34 @@ from the file above rather than guessed:
 | Format | Foreign keys | Flows & derivations | `order_status` enum | `postal_address` composite | `v_customer_orders` view | Regions | Sticky notes | Positions & colours |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | `.dbviz.json` | structured | structured, in full | structured | structured | structured | structured, with the external flag | yes | yes |
-| SQL script | real `CONSTRAINT`s (the cross-group one as a commented `ALTER TABLE`) | commented `INSERT … SELECT` in the appendix | real `CREATE TYPE` | real `CREATE TYPE` | real `CREATE VIEW` | commented "External sources" appendix | no | no |
+| SQL script | real `CONSTRAINT`s (the cross-group one as a commented `ALTER TABLE`) | commented `INSERT … SELECT` in the appendix, and structured in the metadata block | real `CREATE TYPE` | real `CREATE TYPE` | real `CREATE VIEW` | commented "External sources" appendix | no | no |
 | Markdown | a Relationships table | listed in the Relationships table | a Custom types table | a Custom types table | SELECT shown in a fenced block | a Groups table | no | no |
 | Mermaid | crow's-foot lines | one more line, indistinguishable from the rest | flattened to a plain column type | flattened to a plain column type | drawn as an entity | one `%% external:` comment, no region | no | no |
 | DBML | `Ref` lines | dropped | real `Enum` block | a standalone `Note` block | a `Table` whose note carries the SELECT | `TableGroup` blocks, external only as a note | no | no |
 | PNG / SVG | crow's-foot lines with `1` / `N` cardinality labels, no column or constraint names | drawn as a dashed edge | drawn as a column's type label, no values listed | same | drawn as a node | drawn as the region | drawn, as they appear on canvas | yes, exactly as arranged |
 
 Read the `.dbviz.json` row against every other one. It is the only format that
-keeps the derivations, and the only one that keeps the difference between a
-foreign key, an embed, a flow and a dependency. Everything the last fourteen
-walkthroughs taught you to be careful about lives in that file and nowhere
-else — which is the argument for committing it next to the migrations rather
-than exporting a picture and calling it documentation.
+keeps *everything* — the positions, the colours, the sticky notes, the regions
+and their external flag — and the only one you can open again and carry on
+working in. The SQL script is the one other format you can come back through:
+its trailing comments keep the derivations and the difference between a foreign
+key, an embed, a flow and a dependency, so a script committed next to the
+migrations is documentation the app can read back rather than a picture nobody
+can. Markdown, Mermaid and DBML are still one-way, and so is a PNG.
 
 ## Gotchas
 
-- **Every export except `.dbviz.json` is one-way.** Edit the downloaded
-  `.sql`, `.md`, `.mmd` or `.dbml` file and nothing comes back into the
-  diagram. **Import SQL** can read a `CREATE TABLE` script back in; it cannot
-  read a data dictionary, a Mermaid diagram or DBML.
+- **Markdown, Mermaid and DBML are one-way.** Edit the downloaded `.md`,
+  `.mmd` or `.dbml` file and nothing comes back into the diagram; **Import
+  SQL** cannot read a data dictionary, a Mermaid diagram or DBML. A `.sql`
+  script does come back, connections and all — but only what it contains: the
+  tables of an external group are commented, not created, so the foreign keys
+  into them have nothing to land on and are left behind with them.
+- **The metadata block is a comment, and only that.** Nothing runs it, the
+  statement count in the toolbar does not include it, and deleting it leaves a
+  script that still creates the schema — you just get bare foreign keys back
+  when you import it. Hand-edit it and break the JSON and the import says so
+  and carries on with the DDL.
 - **The unsaved-changes dot only tracks a file, not the browser.** It appears
   when a diagram opened from (or saved to) a real `.dbviz.json` has changed
   since. A diagram opened from **Open recent…** or a share link is not

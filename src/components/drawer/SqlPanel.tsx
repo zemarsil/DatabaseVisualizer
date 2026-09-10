@@ -82,7 +82,7 @@ export function SqlPanel() {
           ))}
         </ul>
       )}
-      {!isSql && meta.hint && (
+      {meta.hint && (!isSql || effectiveScope === 'schema') && (
         <div className="small muted" style={{ marginBottom: 6 }}>
           {meta.hint}
         </div>
