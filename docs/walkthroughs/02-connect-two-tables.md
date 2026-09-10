@@ -478,7 +478,7 @@ picks up later in the series.
 - Right-click the `orders` → `customers` connection and choose **Swap
   direction**. **Problems** immediately reports an error — `customers → orders
   references orders(customer_id), which is not a primary key or UNIQUE.
-  PostgreSQL and SQLite reject the constraint` — the exact mistake you would
+  PostgreSQL, SQLite and DuckDB reject the constraint` — the exact mistake you would
   have built in step 2 by starting the drag at `customers` instead of `orders`.
   Swap it back (or `Ctrl+Z`) to clear the error.
 - With that connection selected, click through **Data flow** and

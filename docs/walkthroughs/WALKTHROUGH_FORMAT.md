@@ -238,7 +238,7 @@ next:
 | `summary` | yes | **One** sentence, ≤ 180 chars, ending in a full stop, saying what the reader ends up with. It becomes the row in the index. |
 | `level` | yes | `beginner`, `intermediate` or `advanced`. |
 | `minutes` | yes | Honest whole number, 3–60, for someone typing along. |
-| `dialect` | yes | `postgresql`, `mariadb` or `sqlite`; must match the companion diagram. |
+| `dialect` | yes | `postgresql`, `mariadb`, `sqlite` or `duckdb`; must match the companion diagram. |
 | `covers` | yes | ≥ 3 short noun phrases naming the features touched. |
 | `shortcuts` | no | Keystrokes the walkthrough teaches. Every entry must be one the app binds. |
 | `start` | yes | The canvas this walkthrough begins from: `empty`, or the previous walkthrough's `diagram` path. Powers **Set up the canvas**. |

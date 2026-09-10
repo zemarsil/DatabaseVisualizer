@@ -113,6 +113,9 @@ const TYPE_WORDS = new Set([
   'VARBINARY', 'DATE', 'TIME', 'DATETIME', 'TIMESTAMP', 'TIMESTAMPTZ', 'TIMETZ', 'INTERVAL', 'YEAR', 'JSON', 'JSONB',
   'UUID', 'ENUM', 'SET', 'BIT', 'MONEY', 'INET', 'INET6', 'CIDR', 'MACADDR', 'POINT', 'GEOMETRY', 'XML', 'TSVECTOR',
   'OID', 'FLOAT4', 'FLOAT8', 'NUMBER', 'NVARCHAR', 'NCHAR', 'CLOB', 'LONG', 'FIXED', 'CITEXT', 'HSTORE', 'ARRAY',
+  // DuckDB
+  'HUGEINT', 'UHUGEINT', 'UTINYINT', 'USMALLINT', 'UINTEGER', 'UBIGINT', 'INT1', 'INT128', 'SHORT', 'SIGNED', 'STRING',
+  'STRUCT', 'MAP', 'UNION', 'LIST', 'BITSTRING', 'VARINT', 'BIGNUM', 'TIMESTAMP_S', 'TIMESTAMP_MS', 'TIMESTAMP_NS', 'LOGICAL', 'BPCHAR',
 ]);
 
 const ACTIONS: Record<string, ReferentialAction> = {
@@ -385,6 +388,9 @@ class Parser {
       case 'INSTALL':
         this.parseInstall();
         return;
+      case 'LOAD':
+        this.parseLoad();
+        return;
       case 'SET':
       case 'USE':
       case 'BEGIN':
@@ -400,7 +406,7 @@ class Parser {
         this.skipStatement();
         return;
       default:
-        this.warn(`Skipped ${t.value.toUpperCase()} statement (only CREATE TABLE / INDEX / TYPE / EXTENSION, ALTER TABLE and COMMENT ON are imported)`);
+        this.warn(`Skipped ${t.value.toUpperCase()} statement (only CREATE TABLE / VIEW / INDEX / TYPE / EXTENSION, ALTER TABLE, COMMENT ON and INSTALL / LOAD are imported)`);
         this.skipStatement();
     }
   }
@@ -454,6 +460,15 @@ class Parser {
     }
     if (this.isWord('EXTENSION')) {
       this.parseCreateExtension();
+      return;
+    }
+    if (this.isWord('SEQUENCE')) {
+      // A sequence is how PostgreSQL (pg_dump) and DuckDB spell an auto-increment
+      // column; the column's nextval() default is what the diagram records.
+      this.next();
+      const name = this.isIdent() || this.isWord('IF') ? (this.acceptWord('IF') ? (this.expectWord('NOT'), this.expectWord('EXISTS'), this.parseQualifiedName().name) : this.parseQualifiedName().name) : '';
+      this.warn(`CREATE SEQUENCE ${name} is not imported on its own: the column whose default reads nextval() from it is marked auto-increment instead`, start);
+      this.skipStatement();
       return;
     }
     const what = this.peek().type === 'word' ? this.peek().upper : '?';
@@ -652,6 +667,9 @@ class Parser {
   private parseType(): string {
     const words: string[] = [];
     let args: string | null = null;
+    // A DuckDB STRUCT(...) / MAP(...) / UNION(...) keeps its body verbatim: the
+    // field names inside are identifiers, not something to upper-case.
+    let nested = false;
     let arraySuffix = '';
     for (;;) {
       const t = this.peek();
@@ -666,7 +684,14 @@ class Parser {
           continue;
         }
         if (CONSTRAINT_STARTERS.has(u) && words.length > 0) break;
-        if (words.length > 0 && args !== null && !/^(UNSIGNED|SIGNED|ZEROFILL|ARRAY|PRECISION|VARYING|BINARY)$/.test(u)) break;
+        if (words.length > 0 && (args !== null || nested) && !/^(UNSIGNED|SIGNED|ZEROFILL|ARRAY|PRECISION|VARYING|BINARY)$/.test(u)) break;
+        if (words.length === 0 && /^(STRUCT|MAP|UNION)$/.test(u) && this.isPunct('(', 1)) {
+          this.next();
+          const body = this.parseParenRaw().replace(/\s+/g, ' ');
+          words.push(`${u}(${body})`);
+          nested = true;
+          continue;
+        }
         this.next();
         words.push(u);
         continue;
@@ -677,15 +702,17 @@ class Parser {
         words.push(t.value);
         continue;
       }
-      if (t.type === 'punct' && t.value === '(' && words.length > 0 && args === null) {
+      if (t.type === 'punct' && t.value === '(' && words.length > 0 && args === null && !nested) {
         args = this.parseTypeArgs();
         continue;
       }
       if (t.type === 'punct' && t.value === '[' && words.length > 0) {
+        // PostgreSQL arrays and DuckDB lists are `type[]`; DuckDB's fixed-size ARRAY is `type[n]`.
         this.next();
-        if (this.peek().type === 'number') this.next();
+        let size = '';
+        if (this.peek().type === 'number') size = this.next().value;
         this.expectPunct(']');
-        arraySuffix += '[]';
+        arraySuffix += `[${size}]`;
         continue;
       }
       break;
@@ -1002,6 +1029,11 @@ class Parser {
 
   private parseAlter(): void {
     const start = this.expectWord('ALTER');
+    if (this.isWord('SEQUENCE')) {
+      // pg_dump's ALTER SEQUENCE ... OWNED BY: the sequence is already implied by the column's nextval() default.
+      this.skipStatement();
+      return;
+    }
     if (!this.isWord('TABLE')) {
       this.warn(`Skipped ALTER ${this.peek().value.toUpperCase()} statement`, start);
       this.skipStatement();
@@ -1095,6 +1127,8 @@ class Parser {
   private parseCreateType(): void {
     this.expectWord('TYPE');
     const { name } = this.parseQualifiedName();
+    // PostgreSQL spells a composite type AS (...), DuckDB AS STRUCT(...).
+    const asStruct = this.isWord('AS') && this.peek(1).type === 'word' && this.peek(1).upper === 'STRUCT' && this.isPunct('(', 2);
     if (this.isWord('AS') && this.peek(1).type === 'word' && this.peek(1).upper === 'ENUM') {
       this.next(); // AS
       this.next(); // ENUM
@@ -1107,8 +1141,9 @@ class Parser {
       }
       this.next();
       this.result.enums.push({ name, values });
-    } else if (this.isWord('AS') && this.peek(1).type === 'punct' && this.peek(1).value === '(') {
+    } else if (this.isWord('AS') && (this.isPunct('(', 1) || asStruct)) {
       this.next(); // AS
+      if (asStruct) this.next(); // STRUCT
       const open = this.expectPunct('(');
       const fields: { name: string; type: string }[] = [];
       while (!this.isPunct(')')) {
@@ -1121,7 +1156,7 @@ class Parser {
       this.expectPunct(')');
       this.result.compositeTypes.push({ name, fields });
     } else {
-      this.warn(`Skipped CREATE TYPE ${name} (only ENUM and composite "AS (...)" types are recorded)`);
+      this.warn(`Skipped CREATE TYPE ${name} (only ENUM and composite "AS (...)" / "AS STRUCT(...)" types are recorded)`);
     }
     this.skipStatement();
   }
@@ -1181,7 +1216,30 @@ class Parser {
       this.skipStatement();
       return;
     }
+    // DuckDB: INSTALL name [FROM repository]. The name may be bare, quoted or a string.
+    const t = this.peek();
+    if (t.type === 'word' || t.type === 'quoted' || t.type === 'string') {
+      this.next();
+      this.addExtension({ name: t.value });
+      this.skipStatement();
+      return;
+    }
     this.warn('Skipped INSTALL statement', start);
+    this.skipStatement();
+  }
+
+  /** DuckDB: LOAD name activates an installed extension for the session; it names the same extension INSTALL did. */
+  private parseLoad(): void {
+    const start = this.expectWord('LOAD');
+    const t = this.peek();
+    // MariaDB's LOAD DATA / LOAD XML / LOAD INDEX move rows, not extensions.
+    if ((t.type === 'word' && !/^(DATA|XML|INDEX)$/.test(t.upper)) || t.type === 'quoted' || t.type === 'string') {
+      this.next();
+      this.addExtension({ name: t.value });
+      this.skipStatement();
+      return;
+    }
+    this.warn('Skipped LOAD statement', start);
     this.skipStatement();
   }
 

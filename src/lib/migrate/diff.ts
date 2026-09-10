@@ -1,6 +1,6 @@
 import type { Column, Diagram, Dialect, IntrospectResponse, Table } from '@shared/types';
 import { externalTableIds } from '../groups';
-import { isSerialType, normalizeType } from '../sql/dialect';
+import { isSerialType, normalizeType, quoteIdent } from '../sql/dialect';
 import { foreignKeyStatement, resolvedColumnType } from '../sql/generator';
 
 /**
@@ -133,6 +133,47 @@ const TYPE_ALIASES: Record<string, string> = {
 
 const INT_FAMILY = /^(TINYINT|SMALLINT|MEDIUMINT|INT|INTEGER|BIGINT)$/;
 
+/**
+ * How DuckDB spells a type back when asked (duckdb_columns): every alias folds
+ * to one canonical name, VARCHAR drops its length, DECIMAL fills in its default
+ * precision and scale, and the time-zone types come back in their long form.
+ */
+const DUCKDB_SPELLING: Record<string, string> = {
+  INT: 'INTEGER',
+  INT4: 'INTEGER',
+  SIGNED: 'INTEGER',
+  INT8: 'BIGINT',
+  LONG: 'BIGINT',
+  OID: 'BIGINT',
+  INT2: 'SMALLINT',
+  SHORT: 'SMALLINT',
+  INT1: 'TINYINT',
+  INT128: 'HUGEINT',
+  TEXT: 'VARCHAR',
+  STRING: 'VARCHAR',
+  CHAR: 'VARCHAR',
+  BPCHAR: 'VARCHAR',
+  NVARCHAR: 'VARCHAR',
+  NCHAR: 'VARCHAR',
+  CHARACTER: 'VARCHAR',
+  REAL: 'FLOAT',
+  FLOAT4: 'FLOAT',
+  'DOUBLE PRECISION': 'DOUBLE',
+  FLOAT8: 'DOUBLE',
+  NUMERIC: 'DECIMAL',
+  DEC: 'DECIMAL',
+  BOOL: 'BOOLEAN',
+  LOGICAL: 'BOOLEAN',
+  BYTEA: 'BLOB',
+  BINARY: 'BLOB',
+  VARBINARY: 'BLOB',
+  DATETIME: 'TIMESTAMP',
+  TIMESTAMPTZ: 'TIMESTAMP WITH TIME ZONE',
+  TIMETZ: 'TIME WITH TIME ZONE',
+  BITSTRING: 'BIT',
+  VARINT: 'BIGNUM',
+};
+
 /** Reduce a type to the spelling both sides agree on, so `int(11)` equals `INT` and `character varying(20)` equals `VARCHAR(20)`. */
 export function comparableType(type: string, dialect: Dialect): string {
   let norm = normalizeType(type);
@@ -164,6 +205,14 @@ export function comparableType(type: string, dialect: Dialect): string {
     if (aliased === 'DOUBLE PRECISION') aliased = 'DOUBLE';
   } else if (dialect === 'sqlite') {
     if (INT_FAMILY.test(upperBase)) args = '';
+  } else if (dialect === 'duckdb') {
+    aliased = DUCKDB_SPELLING[aliased] ?? aliased;
+    if (aliased === 'VARCHAR' || INT_FAMILY.test(aliased)) args = ''; // a VARCHAR length is accepted and forgotten
+    if (aliased === 'DECIMAL') {
+      // DECIMAL alone is DECIMAL(18,3); DECIMAL(p) is DECIMAL(p,0).
+      const m = /^\((\d+)(?:,(\d+))?\)$/.exec(args);
+      args = !args ? '(18,3)' : m ? `(${m[1]},${m[2] ?? '0'})` : args;
+    }
   }
   return `${aliased}${args}${suffix ? (suffix.startsWith('[') ? suffix : ` ${suffix}`) : ''}`.trim();
 }
@@ -180,6 +229,13 @@ export function comparableDefault(value: string | null | undefined, dialect: Dia
   // PostgreSQL casts: 'pending'::character varying, 0::numeric
   v = v.replace(/::[a-z_][a-z0-9_ ]*(\([^)]*\))?(\[\])*/gi, '').trim();
   while (/^\(.*\)$/.test(v)) v = v.slice(1, -1).trim();
+  if (dialect === 'duckdb') {
+    // DuckDB reports a typed literal as a cast: DEFAULT true comes back as CAST('t' AS BOOLEAN).
+    const cast = /^CAST\((.+) AS [A-Z_ ]+(\([^)]*\))?\)$/i.exec(v);
+    if (cast) v = cast[1].trim();
+    if (/^'t'$/i.test(v)) v = 'true';
+    if (/^'f'$/i.test(v)) v = 'false';
+  }
   v = v.replace(/\s+/g, ' ');
   if (/^(now|current_timestamp|localtimestamp|transaction_timestamp|utc_timestamp)(\s*\(\s*\d*\s*\))?$/i.test(v)) return 'current_timestamp';
   if (/^(current_date|curdate)(\s*\(\s*\))?$/i.test(v)) return 'current_date';
@@ -217,10 +273,10 @@ function action(a: string | undefined | null): string {
 
 /* ---------------- Snapshots ---------------- */
 
-/** Which schema names may be dropped from match keys: `public` on PostgreSQL, the database on MariaDB, `main` on SQLite. */
+/** Which schema names may be dropped from match keys: `public` on PostgreSQL, the database on MariaDB, `main` on SQLite and DuckDB. */
 export function defaultSchemaOf(res: IntrospectResponse, dialect: Dialect): string {
   if (dialect === 'postgresql') return 'public';
-  if (dialect === 'sqlite') return 'main';
+  if (dialect === 'sqlite' || dialect === 'duckdb') return 'main';
   const counts = new Map<string, number>();
   for (const t of res.tables) counts.set(t.schema.toLowerCase(), (counts.get(t.schema.toLowerCase()) ?? 0) + 1);
   let best = '';
@@ -229,10 +285,23 @@ export function defaultSchemaOf(res: IntrospectResponse, dialect: Dialect): stri
   return best;
 }
 
-/** The type the script writes for a column: SQLite forces INTEGER on auto-increment keys and serial types, the others keep the resolved type. */
+/**
+ * The type the script writes for a column: SQLite forces INTEGER on
+ * auto-increment keys and serial types, DuckDB reports a composite type as the
+ * STRUCT it expands to (only enums keep their name in its catalog), the others
+ * keep the resolved type.
+ */
 function emittedType(d: Diagram, c: Column, singlePk: boolean): string {
   const type = resolvedColumnType(d, c);
   if (d.dialect === 'sqlite' && ((c.autoIncrement && c.primaryKey && singlePk) || isSerialType(type))) return 'INTEGER';
+  if (d.dialect === 'duckdb') {
+    if (isSerialType(type)) return normalizeType(type) === 'BIGSERIAL' ? 'BIGINT' : normalizeType(type) === 'SMALLSERIAL' ? 'SMALLINT' : 'INTEGER';
+    const ct = d.customTypes.find((t) => t.name.toLowerCase() === c.type.trim().replace(/^["'`]|["'`]$/g, '').toLowerCase());
+    if (ct?.kind === 'composite') {
+      const fields = (ct.fields ?? []).filter((f) => f.name.trim()).map((f) => `${quoteIdent(f.name, 'duckdb')} ${comparableType(f.type, 'duckdb')}`);
+      return `STRUCT(${fields.join(', ')})`;
+    }
+  }
   return type;
 }
 
@@ -283,25 +352,33 @@ export function snapshotFromDiagram(d: Diagram, defaultSchema: string): SchemaSn
         const refCols = r.targetColumnIds.map((id) => tgt.columns.find((c) => c.id === id)?.name).filter((n): n is string => Boolean(n));
         if (!cols.length || cols.length !== refCols.length) continue;
         const stmt = foreignKeyStatement(d, r.id);
+        // DuckDB foreign keys know no referential action beyond refusing the
+        // change; the generator drops the rest, so the snapshot compares as the
+        // database will report it.
+        const duckAction = (a: string | undefined) => (d.dialect === 'duckdb' ? 'NO ACTION' : action(a));
         snap.foreignKeys.push({
           name: stmt?.name ?? r.name ?? `fk_${t.name}_${tgt.name}`,
           columns: cols,
           refKey: keyOf(tgt),
           refTable: tgt.name,
           refColumns: refCols,
-          onDelete: action(r.onDelete),
-          onUpdate: action(r.onUpdate),
+          onDelete: duckAction(r.onDelete),
+          onUpdate: duckAction(r.onUpdate),
           relationshipId: r.id,
         });
       }
     }
     tables.push(snap);
   }
-  const enums: SnapEnum[] =
-    d.dialect === 'postgresql'
-      ? d.customTypes.filter((ct) => ct.kind === 'enum' && (ct.values ?? []).some((v) => v.trim())).map((ct) => ({ name: ct.name, values: (ct.values ?? []).filter((v) => v.trim()), customTypeId: ct.id }))
-      : [];
+  const enums: SnapEnum[] = hasNamedEnums(d.dialect)
+    ? d.customTypes.filter((ct) => ct.kind === 'enum' && (ct.values ?? []).some((v) => v.trim())).map((ct) => ({ name: ct.name, values: (ct.values ?? []).filter((v) => v.trim()), customTypeId: ct.id }))
+    : [];
   return { dialect: d.dialect, tables, enums };
+}
+
+/** Engines with CREATE TYPE ... AS ENUM, so enum types are objects to diff on their own. */
+export function hasNamedEnums(dialect: Dialect): boolean {
+  return dialect === 'postgresql' || dialect === 'duckdb';
 }
 
 export function snapshotFromIntrospection(res: IntrospectResponse, dialect: Dialect): SchemaSnapshot {
@@ -371,8 +448,8 @@ export function diffSchemas(target: SchemaSnapshot, current: SchemaSnapshot): Ch
   const curByKey = new Map(current.tables.map((t) => [t.key, t] as const));
   const tgtByKey = new Map(target.tables.map((t) => [t.key, t] as const));
 
-  // Enums first (PostgreSQL): a column can only use a type that exists.
-  if (dialect === 'postgresql') {
+  // Enums first (PostgreSQL, DuckDB): a column can only use a type that exists.
+  if (hasNamedEnums(dialect)) {
     const curEnums = new Map(current.enums.map((e) => [e.name.toLowerCase(), e] as const));
     const tgtEnums = new Map(target.enums.map((e) => [e.name.toLowerCase(), e] as const));
     for (const e of target.enums) {
@@ -388,7 +465,7 @@ export function diffSchemas(target: SchemaSnapshot, current: SchemaSnapshot): Ch
       if (removed.length) {
         out.push(
           change({ kind: 'enum-values-removed', enum: e, values: removed }, `type:${e.name}`, `${e.name} no longer lists ${removed.join(', ')}`, 'destructive', {
-            detail: 'PostgreSQL cannot remove enum values in place; recreate the type by hand if rows never use them.',
+            detail: `${dialect === 'duckdb' ? 'DuckDB' : 'PostgreSQL'} cannot remove enum values in place; recreate the type by hand if rows never use them.`,
           }),
         );
       }

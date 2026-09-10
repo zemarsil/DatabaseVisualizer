@@ -847,7 +847,7 @@ export const GOALS: Record<string, GoalSpec> = {
   },
 
   dialect: {
-    arg: 'postgresql, mariadb or sqlite',
+    arg: 'postgresql, mariadb, sqlite or duckdb',
     check: (arg, { diagram: d }) => (d.dialect === arg ? { ok: true, detail: `the dialect is ${arg}.` } : { ok: false, detail: `the dialect is ${d.dialect}, not ${arg}.` }),
     apply: (arg, d) => {
       if (d.dialect === arg) return false;

@@ -11,6 +11,7 @@ import { confirmDialog } from '../ui/Modal';
 import { MigrateSection } from './database/MigrateSection';
 import { SeedSection } from './database/SeedSection';
 import { SqliteSection } from './database/SqliteSection';
+import { DuckdbSection } from './database/DuckdbSection';
 
 export function DatabasePanel() {
   const diagram = useStore((s) => s.diagram);
@@ -40,7 +41,7 @@ export function DatabasePanel() {
   const testResult = useConnection((s) => s.testResult);
   const setTestResult = useConnection((s) => s.setTestResult);
   const backend = useMemo(() => backendFor(conn), [conn]);
-  const isSqlite = !isServerDialect(conn.dialect);
+  const embedded = !isServerDialect(conn.dialect);
   const [dropFirst, setDropFirst] = useState(false);
   const [stopOnError, setStopOnError] = useState(true);
   const [results, setResults] = useState<StatementResult[] | null>(null);
@@ -241,7 +242,7 @@ export function DatabasePanel() {
         </div>
         {docker && !docker.available && (
           <div className="small warn" style={{ marginBottom: 8 }}>
-            {docker.error ?? 'Docker is not reachable.'} You can still connect to any database by hand on the right, or pick SQLite to work entirely in the browser.
+            {docker.error ?? 'Docker is not reachable.'} You can still connect to any database by hand on the right, or pick SQLite or DuckDB to work entirely in the browser.
           </div>
         )}
         {docker === null && <div className="small muted">Checking the API server…</div>}
@@ -348,7 +349,7 @@ export function DatabasePanel() {
               ))}
             </select>
           </div>
-          {!isSqlite && (
+          {!embedded && (
             <>
               <div className="field">
                 <span className="field__label">Host</span>
@@ -373,8 +374,8 @@ export function DatabasePanel() {
             </>
           )}
         </div>
-        {isSqlite && <SqliteSection />}
-        <div className="row row--wrap" style={{ marginBottom: 8, marginTop: isSqlite ? 8 : 0 }}>
+        {embedded && (conn.dialect === 'duckdb' ? <DuckdbSection /> : <SqliteSection />)}
+        <div className="row row--wrap" style={{ marginBottom: 8, marginTop: embedded ? 8 : 0 }}>
           <button className="btn" onClick={testConnection} disabled={busy !== null}>
             <Plug /> {busy === 'test' ? 'Testing…' : 'Test connection'}
           </button>

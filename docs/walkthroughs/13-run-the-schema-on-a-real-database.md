@@ -127,7 +127,9 @@ selector and there is no server, no Docker, and no network connection at all
 this browser tab, and it persists between reloads because the app saves it
 to this browser's storage rather than to a server's disk. **Query**,
 **Migrate** and **Seed** talk to that in-browser database through the exact
-same interface they use for a real server, so everything below reads the
+same interface they use for a real server (DuckDB works the same way: its
+dialect runs DuckDB-Wasm in the tab, on a real `.duckdb` file kept in the
+browser's private file storage), so everything below reads the
 same either way — only *Create the schema* and *Read schema* skip the Docker
 column, because there is no container to start.
 

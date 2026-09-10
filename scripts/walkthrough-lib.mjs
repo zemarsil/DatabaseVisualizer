@@ -21,7 +21,7 @@ export const WALKTHROUGH_DIR = 'docs/walkthroughs';
 export const FILE_PATTERN = /^(\d{2})-([a-z0-9]+(?:-[a-z0-9]+)*)\.md$/;
 
 export const LEVELS = ['beginner', 'intermediate', 'advanced'];
-export const DIALECTS = ['postgresql', 'mariadb', 'sqlite'];
+export const DIALECTS = ['postgresql', 'mariadb', 'sqlite', 'duckdb'];
 
 /**
  * Every keystroke the app actually binds, in the spelling walkthroughs must use.
@@ -217,7 +217,7 @@ export const GOAL_VERBS = {
   'external group': 'Name, optionally " : member, member"',
   enum: 'name : value, value, value',
   composite: 'name : field TYPE, field TYPE',
-  dialect: 'postgresql, mariadb or sqlite',
+  dialect: 'postgresql, mariadb, sqlite or duckdb',
   open: 'a drawer tab id, e.g. sql or problems',
   'select table': 'a table name that must be selected',
   'select connection': 'source -> target of the connection that must be selected',

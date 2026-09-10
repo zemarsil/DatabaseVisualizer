@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Database, ScanSearch } from 'lucide-react';
-import type { Table } from '@shared/types';
+import { engineName, type Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { viewSourcesFromSql } from '@/lib/sql/views';
 import { diagramScope } from '@/lib/sqlScope';
@@ -45,7 +45,7 @@ export function ViewEditor({ table }: { table: Table }) {
   // stays visible on the others so the flag is not silently lost when a diagram
   // is switched over and back, but it says what the script will actually say.
   const supportsMaterialized = diagram.dialect === 'postgresql';
-  const engine = diagram.dialect === 'mariadb' ? 'MariaDB' : 'SQLite';
+  const engine = engineName(diagram.dialect);
 
   return (
     <>

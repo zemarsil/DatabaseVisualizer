@@ -7,7 +7,7 @@ export function DropOverlay({ visible }: { visible: boolean }) {
     <div className="canvas__drop">
       <div className="canvas__drop-card">
         <FileDown />
-        <span>Drop a .sql script, a .dbviz.json diagram, or a .sqlite database</span>
+        <span>Drop a .sql script, a .dbviz.json diagram, or a .sqlite / .duckdb database</span>
       </div>
     </div>
   );

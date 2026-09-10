@@ -172,7 +172,7 @@ function HelpContent() {
       <p>
         The SQL tab shows the CREATE TABLE script for the whole diagram (or the selected table), and can switch to Mermaid, DBML or Markdown. The Import tab
         turns CREATE TABLE / CREATE VIEW statements into tables and views; dropping a .sql file on the canvas does the same, and pasting DDL with{' '}
-        <K k="Ctrl" /> <K k="V" /> imports it. Switching the dialect in the top bar translates column types between PostgreSQL, MariaDB and SQLite. The
+        <K k="Ctrl" /> <K k="V" /> imports it. Switching the dialect in the top bar translates column types between PostgreSQL, MariaDB, SQLite and DuckDB. The
         Problems tab lints the schema (missing keys, foreign keys onto non-unique columns, type mismatches, duplicate names, reserved words) and fixes most
         findings with one click; it also suggests foreign keys from column names such as <em>customer_id</em>.
       </p>
@@ -204,8 +204,8 @@ function HelpContent() {
       <p>
         The Database tab talks to the local API server: it can start a PostgreSQL or MariaDB container through Docker, run the generated schema against any
         reachable database, and pull an existing schema into the diagram. <em>Migrate</em> compares the diagram with the live database and writes the ALTER
-        statements that bring it up to date; <em>Seed</em> generates INSERT rows that respect foreign keys, uniqueness and enums. With the SQLite dialect
-        selected the database runs inside the browser instead, no server needed, and the Query tab runs read-only SELECTs against whichever one is connected.
+        statements that bring it up to date; <em>Seed</em> generates INSERT rows that respect foreign keys, uniqueness and enums. With the SQLite or DuckDB
+        dialect selected the database runs inside the browser instead, no server needed, and the Query tab runs read-only SELECTs against whichever one is connected.
       </p>
       <h4>Saving</h4>
       <p>

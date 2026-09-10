@@ -169,8 +169,8 @@ export function TypesPanel() {
       <div className="small muted" style={{ marginBottom: 10 }}>
         Define a named type once, then type its name into any column's TYPE field (it shows up in the autocomplete) to reuse it. An <b>enum</b> is a fixed set of
         allowed values. A <b>struct</b> type has its own named sub-fields, like a composite/record type — PostgreSQL emits a real{' '}
-        <code>CREATE TYPE … AS ENUM</code> / <code>CREATE TYPE … AS (...)</code>; MariaDB has no such feature, so enums are inlined per-column and structs fall
-        back to JSON in generated SQL. SQL databases don't attach methods/functions to types the way a class does — use CHECK constraints on the column for
+        <code>CREATE TYPE … AS ENUM</code> / <code>CREATE TYPE … AS (...)</code>, DuckDB the same with <code>AS STRUCT(...)</code>; MariaDB has no such feature, so
+        enums are inlined per-column and structs fall back to JSON in generated SQL, and SQLite turns enums into a CHECK. SQL databases don't attach methods/functions to types the way a class does — use CHECK constraints on the column for
         validation instead.
       </div>
       {customTypes.length === 0 && <div className="faint small">No custom types yet.</div>}

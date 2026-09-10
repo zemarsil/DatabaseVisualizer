@@ -36,7 +36,9 @@ inside the block. The importer is a purpose-built schema parser, not a full SQL 
 Supported: `CREATE TABLE` with column and table constraints, `ALTER TABLE … ADD
 CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`,
 `COMMENT ON TABLE|COLUMN`, `CREATE VIEW`, `CREATE TYPE … AS ENUM` / `AS (…)`, and
-`CREATE EXTENSION` (plus MariaDB's `INSTALL SONAME` / `INSTALL PLUGIN`).
+`CREATE EXTENSION` (plus MariaDB's `INSTALL SONAME` / `INSTALL PLUGIN` and DuckDB's `INSTALL` / `LOAD`).
+DuckDB's `STRUCT(…)` / `MAP(…)` / `INTEGER[3]` column types, `CREATE TYPE … AS STRUCT(…)` and
+`CREATE SEQUENCE` + `DEFAULT nextval(…)` (read as an auto-increment column) parse as well.
 `pg_dump` and `mysqldump` output parses fine.
 
 Silently dropped (with a warning): generated columns, partitioning, expression indexes,
@@ -64,7 +66,7 @@ A single JSON document in one fenced ```json block. Shape:
 }
 ```
 
-`dialect` is `"postgresql"`, `"mariadb"` or `"sqlite"` and decides how types are
+`dialect` is `"postgresql"`, `"mariadb"`, `"sqlite"` or `"duckdb"` and decides how types are
 generated, so write column types in that dialect's spelling. Only `tables` is required;
 omit an array rather than sending an empty one you have nothing to put in.
 
@@ -115,11 +117,17 @@ omit an array rather than sending an empty one you have nothing to put in.
   `"VARCHAR(255)"`, `"NUMERIC(12,2)"`, `"INT UNSIGNED"`, `"TIMESTAMPTZ"`, `"JSONB"`, or
   the `name` of one of your `customTypes`. Match the declared dialect
   (`SERIAL`/`TIMESTAMPTZ`/`JSONB` for PostgreSQL, `INT AUTO_INCREMENT`/`TIMESTAMP`/`JSON`
-  for MariaDB, `INTEGER`/`TEXT`/`REAL`/`BLOB` for SQLite); the app can translate later,
+  for MariaDB, `INTEGER`/`TEXT`/`REAL`/`BLOB` for SQLite, `INTEGER`/`VARCHAR`/`DOUBLE`/`BLOB`/
+  `TIMESTAMPTZ`/`INTEGER[]`/`STRUCT(x INTEGER, y INTEGER)` for DuckDB); the app can translate later,
   but get it right the first time.
 - `nullable` defaults to `true` if omitted — always set it to `false` on primary keys and
   anything `NOT NULL`.
 - Use `"autoIncrement": true` for identity columns rather than a `nextval(...)` default.
+  On DuckDB that becomes a sequence created before the table plus the `nextval` default.
+- On DuckDB a foreign key's `onDelete` / `onUpdate` can only be `"NO ACTION"` or
+  `"RESTRICT"`; the engine refuses `CASCADE`, `SET NULL` and `SET DEFAULT` outright, and
+  a foreign key that closes a reference cycle cannot be created at all (the script
+  documents it as a comment).
 - `defaultValue` is a raw expression: `"now()"`, `"0"`, `"'pending'"` (note the inner
   quotes for a string literal). `check` is a body only, like the table-level ones.
 - `comment` is the best place for per-column advice — it becomes `COMMENT ON COLUMN` in
@@ -156,8 +164,10 @@ omit both unless the recommendation depends on them.
 **Declare an extension whenever a column's type needs one.** A `vector(1536)`,
 `geometry(Point,4326)`, `citext` or `hstore` column with no matching extension is
 reported as an error in the Problems tab, because the `CREATE TABLE` really will
-fail. On MariaDB and SQLite the declaration documents the dependency but generates
-only a comment, since neither engine installs extensions from a schema script.
+fail. On DuckDB it generates `INSTALL name; LOAD name;` (a `GEOMETRY` column needs
+`spatial`, an `INET` column needs `inet`). On MariaDB and SQLite the declaration
+documents the dependency but generates only a comment, since neither engine installs
+extensions from a schema script.
 
 What an extension *provides* is never part of this file — the app keeps that in its
 own catalog — so do not invent fields for its types or functions. If you are
@@ -177,9 +187,9 @@ recommending something obscure, say what it provides in a `note` instead.
 
 `kind` is `"enum"` (needs `values`) or `"composite"` (needs `fields`, each
 `{ "id", "name", "type", "comment"? }`). Reference one from a column by writing its
-`name` as that column's `type`. Only PostgreSQL emits `CREATE TYPE`; on MariaDB and
-SQLite the type still documents the diagram but nothing is created, so prefer a CHECK
-there and say so in a note.
+`name` as that column's `type`. PostgreSQL and DuckDB emit `CREATE TYPE` (DuckDB spells a
+composite `AS STRUCT(…)`); on MariaDB and SQLite the type still documents the diagram but
+nothing is created, so prefer a CHECK there and say so in a note.
 
 **Group** — a region for tables that live in **another database**.
 

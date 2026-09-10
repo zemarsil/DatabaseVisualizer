@@ -35,7 +35,7 @@ The app merges three sources. Later ones win over earlier ones for the same
 `(dialect, name)`:
 
 1. **Bundled** — shipped with the app (`src/lib/extensions/bundled.ts`). Covers the
-   usual PostgreSQL extensions, MariaDB plugins and SQLite modules. Always available,
+   usual PostgreSQL extensions, MariaDB plugins, SQLite modules and DuckDB extensions. Always available,
    never authoritative.
 2. **Packs** — this format. Kept in the browser's local storage until you remove them.
 3. **A live database** — read straight off the server you are connected to.
@@ -49,8 +49,9 @@ describe an extension nobody wrote a definition for — and describe it correctl
 what the server said, in this format, so it survives a reload or travels to a machine
 with no such server.
 
-MariaDB answers the same question from `information_schema.PLUGINS`, and the
-in-browser SQLite engine from `PRAGMA compile_options`.
+MariaDB answers the same question from `information_schema.PLUGINS`, the in-browser
+SQLite engine from `PRAGMA compile_options`, and DuckDB from `duckdb_extensions()`,
+which lists everything it can install and marks what is loaded in the session.
 
 ---
 
@@ -105,7 +106,7 @@ in-browser SQLite engine from `PRAGMA compile_options`.
 | Field | Required | Meaning |
 | --- | --- | --- |
 | `name` | **yes** | Exactly as the engine spells it (`postgis`, `uuid-ossp`, `ha_connect`). This is the identity, matched case-insensitively, and the only part that reaches the generated SQL. |
-| `dialect` | yes, unless the pack sets one | `postgresql`, `mariadb` or `sqlite`. |
+| `dialect` | yes, unless the pack sets one | `postgresql`, `mariadb`, `sqlite` or `duckdb`. |
 | `label` | no | Display name. `vector` the extension is `pgvector` the project. |
 | `summary` | no | One line, shown on the card and in the picker. |
 | `docsUrl` | no | Linked from the card. |
@@ -134,6 +135,7 @@ Decides what the generator writes for this extension.
 | --- | --- |
 | `create-extension` | `CREATE EXTENSION IF NOT EXISTS <name> [WITH SCHEMA …] [VERSION '…'];` — PostgreSQL's default |
 | `install-soname` | A comment carrying `INSTALL SONAME '<name>';` — MariaDB's default. Not run with the schema: it installs into the whole server, needs SUPER, and only has to be done once |
+| `install-load` | `INSTALL <name>; LOAD <name>;` — DuckDB's default. INSTALL fetches the extension once (the in-browser engine from extensions.duckdb.org), LOAD activates it for the session |
 | `client-loaded` | A comment saying the client has to load it — SQLite's default |
 | `built-in` | Nothing. For something the engine already has, such as `plpgsql` or SQLite's FTS5 |
 
@@ -144,7 +146,7 @@ Decides what the generator writes for this extension.
 - **Names and prose only.** There is no field that carries SQL, and there is no way for
   a pack to introduce a statement the generator will run.
 - **A bad entry is dropped, not fatal.** An entry with no `name`, or with a `dialect`
-  that is not one of the three, is skipped and reported; the rest of the pack loads.
+  that is not one of the four, is skipped and reported; the rest of the pack loads.
 - **One entry per extension per dialect.** A repeat is ignored, and the first wins.
 - **2 MB cap.** A pack is a list of names; anything larger is not one.
 - **Packs live in the browser, not in the diagram.** Removing a pack never changes a

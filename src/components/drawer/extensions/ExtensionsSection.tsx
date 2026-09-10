@@ -151,7 +151,7 @@ function ExtensionCard({ e, usageText }: { e: DiagramExtension; usageText: strin
 
           {def?.note && <div className="field__hint">{def.note}</div>}
           {/* Exactly what the script will contain: the generator answers, so the two cannot disagree. */}
-          <div className="ext-sql">{[plan.statement, ...plan.comments].filter(Boolean).join('\n') || 'Nothing is generated for this one.'}</div>
+          <div className="ext-sql">{[...plan.statements, ...plan.comments].join("\n") || "Nothing is generated for this one."}</div>
           {plan.warning && <div className="field__hint">{plan.warning}</div>}
           {def?.docsUrl && (
             <a className="link-btn small" href={def.docsUrl} target="_blank" rel="noreferrer noopener">
