@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { ArrowLeftRight, ChevronDown, ChevronRight, CopyPlus, Play, Plus, Trash2, Wand2 } from 'lucide-react';
 import {
   AGGREGATE_FUNCTIONS,
@@ -23,6 +23,11 @@ import {
 import { columnNameKey, derivationSummary, matchColumnsByName } from '@/lib/derivation';
 import { createDerivation, relationshipKindPatch } from '@/lib/model';
 import { generateFlowSql } from '@/lib/sql/generator';
+import { relationshipQueryTemplates } from '@/lib/sql/templates';
+import type { CompletionItem } from '@/lib/sql/complete';
+import type { SqlScope } from '@/lib/sql/highlight';
+import { diagramScope, flowScope, reachableTables, type ReachableTable } from '@/lib/sqlScope';
+import { SqlCode, SqlEditor, type SqlEditorHandle } from '@/components/ui/SqlEditor';
 import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
@@ -39,15 +44,23 @@ function listNames(names: string[], max = 4): string {
 function GroupByRow({
   value,
   columns,
+  scope,
+  extras,
   onChange,
   onRemove,
+  onFocusEditor,
 }: {
   value: string;
   columns: Column[];
+  scope: SqlScope;
+  extras: CompletionItem[];
   onChange: (value: string) => void;
   onRemove: () => void;
+  /** Reports this row's editor handle whenever it gains focus, so a reference chip clicked afterwards inserts here. */
+  onFocusEditor?: (handle: SqlEditorHandle) => void;
 }) {
   const isColumn = columns.some((c) => c.name === value);
+  const editor = useRef<SqlEditorHandle | null>(null);
   return (
     <div className="derivation__group">
       <select
@@ -69,12 +82,19 @@ function GroupByRow({
         <option value={-1}>— expression —</option>
       </select>
       {!isColumn && (
-        <input
-          className="input input--sm input--mono"
+        <SqlEditor
+          ref={(h) => {
+            editor.current = h;
+          }}
+          multiline={false}
+          mode="expression"
+          scope={scope}
+          extras={extras}
           value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="e.g. day"
-          spellCheck={false}
+          onChange={onChange}
+          onFocus={() => editor.current && onFocusEditor?.(editor.current)}
+          placeholder="e.g. CAST(placed_at AS DATE)"
+          ariaLabel="Key expression"
         />
       )}
       <button className="icon-btn icon-btn--danger" title="Remove grouping key" onClick={onRemove}>
@@ -84,36 +104,8 @@ function GroupByRow({
   );
 }
 
-/**
- * Columns an expression on `src` may name: its own, and those of every table it
- * reaches through foreign keys (child -> parent, a few hops), written table.column.
- */
-function reachableColumns(tables: Table[], relationships: Relationship[], src: Table): { table: Table; via: string }[] {
-  const out: { table: Table; via: string }[] = [];
-  const seen = new Set<string>([src.id]);
-  let frontier: { id: string; via: string }[] = [{ id: src.id, via: '' }];
-  for (let hop = 0; hop < 3 && frontier.length; hop++) {
-    const next: { id: string; via: string }[] = [];
-    for (const { id, via } of frontier) {
-      const from = tables.find((t) => t.id === id);
-      for (const fk of relationships) {
-        if (fk.kind !== 'fk' || fk.sourceTableId !== id || seen.has(fk.targetTableId)) continue;
-        const parent = tables.find((t) => t.id === fk.targetTableId);
-        if (!parent) continue;
-        seen.add(parent.id);
-        const col = from?.columns.find((c) => c.id === fk.sourceColumnIds[0])?.name ?? '?';
-        const path = via ? `${via} → ${from?.name ?? '?'}.${col}` : `${from?.name ?? '?'}.${col}`;
-        out.push({ table: parent, via: path });
-        next.push({ id: parent.id, via: path });
-      }
-    }
-    frontier = next;
-  }
-  return out;
-}
-
-/** Chips for every column an expression may use; clicking one appends it to the expression. */
-function ReferenceChips({ src, reachable, onInsert }: { src: Table; reachable: { table: Table; via: string }[]; onInsert: (text: string) => void }) {
+/** Chips for every column an expression may use; clicking one puts it into the expression at the caret. */
+function ReferenceChips({ src, reachable, onInsert }: { src: Table; reachable: ReachableTable[]; onInsert: (text: string) => void }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="field field--tight">
@@ -145,7 +137,8 @@ function ReferenceChips({ src, reachable, onInsert }: { src: Table; reachable: {
           ))}
           <span className="field__hint">
             Write SQL: arithmetic, comparisons, AND / OR, CASE, CAST, and functions such as COALESCE, ROUND, UPPER, DATE. A column of another table is
-            looked up through the foreign keys shown, so the diagram says how the tables combine.
+            looked up through the foreign keys shown, so the diagram says how the tables combine. Ctrl+Space in the box lists the same names. Clicking a
+            chip inserts it at the cursor in whichever box below — expression, sequence keys, group by, or filter — you were last in.
           </span>
         </div>
       )}
@@ -171,7 +164,18 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
 
   const src = tables.find((t) => t.id === r.sourceTableId);
   const tgt = tables.find((t) => t.id === r.targetTableId);
-  const reachable = useMemo(() => (src && r.kind === 'flow' ? reachableColumns(tables, diagram.relationships, src) : []), [tables, diagram.relationships, src, r.kind]);
+  const reachable = useMemo(() => (src && r.kind === 'flow' ? reachableTables(tables, diagram.relationships, src) : []), [tables, diagram.relationships, src, r.kind]);
+  /** What a derivation expression may name: the source's columns bare, the reachable tables' as table.column. */
+  const flow = useMemo(() => (src ? flowScope(src, reachable) : null), [src, reachable]);
+  /** What the tagged query may name: every table of the diagram. */
+  const statementScope = useMemo(() => diagramScope(diagram), [diagram]);
+  const templates = useMemo(() => relationshipQueryTemplates(diagram, r), [diagram, r]);
+  /** One editor handle per derivation, so a chip can drop a column name in at the caret. */
+  const expressionEditors = useRef(new Map<string, SqlEditorHandle>());
+  const filterEditors = useRef(new Map<string, SqlEditorHandle>());
+  /** Per derivation, whichever of its editors (expression, filter, group/sequence keys) the user focused most recently — where a clicked chip lands. */
+  const activeEditors = useRef(new Map<string, SqlEditorHandle>());
+  const queryEditor = useRef<SqlEditorHandle>(null);
 
   // Target columns a source column of the same name could fill outright, and
   // the other tables this flow could be repeated onto. Both are the answer to
@@ -239,9 +243,27 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
     const orderBy = dv.window?.orderBy.length ? dv.window.orderBy : [src.columns.find((c) => c.name === dv.expression.trim())?.name ?? src.columns[0]?.name ?? ''].filter(Boolean);
     updateDerivation(dv.id, { window: { fn, orderBy, partitionBy: dv.window?.partitionBy ?? [] } });
   };
-  const appendToExpression = (dv: Derivation, text: string) => {
+  const insertReference = (dv: Derivation, text: string) => {
+    // Land in whichever of this derivation's boxes the user was last in; the main expression is the fallback for a fresh derivation nothing has focused yet.
+    const editor = activeEditors.current.get(dv.id) ?? expressionEditors.current.get(dv.id);
+    if (editor) {
+      editor.insert(text, { spaced: true });
+      editor.focus();
+      return;
+    }
     const cur = dv.expression;
     updateDerivation(dv.id, { expression: cur && !/[\s(]$/.test(cur) ? `${cur} ${text}` : `${cur}${text}` });
+  };
+  const runQuery = () => {
+    if (!r.query?.trim()) return;
+    useUi.getState().setPendingQuery(r.query, true);
+    useStore.getState().openDrawer('query');
+  };
+  /** A template goes in as the whole query when there is none yet, else after what is there. */
+  const insertTemplate = (sql: string) => {
+    const cur = r.query?.trim() ?? '';
+    patch({ query: cur ? `${cur}\n\n${sql}` : sql });
+    queryEditor.current?.focus();
   };
   /** Fill every still-unmapped target column that a source column of the same name can fill. */
   const matchByName = () => {
@@ -494,10 +516,22 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
 
                 <div className="field field--tight">
                   <span className="field__label">Expression on {src.name}</span>
-                  <input
-                    className="input input--sm input--mono"
+                  <SqlEditor
+                    ref={(h) => {
+                      if (h) expressionEditors.current.set(dv.id, h);
+                      else expressionEditors.current.delete(dv.id);
+                    }}
+                    multiline={false}
+                    mode="expression"
+                    scope={flow?.scope}
+                    extras={flow?.extras}
                     value={dv.expression}
-                    onChange={(e) => updateDerivation(dv.id, { expression: e.target.value })}
+                    onChange={(v) => updateDerivation(dv.id, { expression: v })}
+                    onFocus={() => {
+                      const h = expressionEditors.current.get(dv.id);
+                      if (h) activeEditors.current.set(dv.id, h);
+                    }}
+                    ariaLabel={`Expression on ${src.name}`}
                     placeholder={
                       dv.window && !windowMeta(dv.window.fn).needsExpression
                         ? 'not needed for this sequence operation'
@@ -507,10 +541,8 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                             ? `e.g. quantity * unit_price_cents, or ${reachable[0].table.name}.${reachable[0].table.columns[0]?.name ?? 'column'}`
                             : 'e.g. quantity * unit_price_cents'
                     }
-                    spellCheck={false}
                   />
                 </div>
-                <ReferenceChips src={src} reachable={reachable} onInsert={(text) => appendToExpression(dv, text)} />
 
                 <div className="field field--tight">
                   <span className="field__label">Sequence (window)</span>
@@ -533,8 +565,11 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                           key={i}
                           value={key}
                           columns={src.columns}
+                          scope={flow!.scope}
+                          extras={flow!.extras}
                           onChange={(v) => updateDerivation(dv.id, { window: { ...dv.window!, orderBy: dv.window!.orderBy.map((g, j) => (j === i ? v : g)) } })}
                           onRemove={() => updateDerivation(dv.id, { window: { ...dv.window!, orderBy: dv.window!.orderBy.filter((_, j) => j !== i) } })}
+                          onFocusEditor={(h) => activeEditors.current.set(dv.id, h)}
                         />
                       ))}
                       <div>
@@ -556,8 +591,11 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                           key={i}
                           value={key}
                           columns={src.columns}
+                          scope={flow!.scope}
+                          extras={flow!.extras}
                           onChange={(v) => updateDerivation(dv.id, { window: { ...dv.window!, partitionBy: dv.window!.partitionBy.map((g, j) => (j === i ? v : g)) } })}
                           onRemove={() => updateDerivation(dv.id, { window: { ...dv.window!, partitionBy: dv.window!.partitionBy.filter((_, j) => j !== i) } })}
+                          onFocusEditor={(h) => activeEditors.current.set(dv.id, h)}
                         />
                       ))}
                       <div>
@@ -582,8 +620,11 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
                       key={i}
                       value={key}
                       columns={src.columns}
+                      scope={flow!.scope}
+                      extras={flow!.extras}
                       onChange={(v) => updateDerivation(dv.id, { groupBy: dv.groupBy.map((g, j) => (j === i ? v : g)) })}
                       onRemove={() => updateDerivation(dv.id, { groupBy: dv.groupBy.filter((_, j) => j !== i) })}
+                      onFocusEditor={(h) => activeEditors.current.set(dv.id, h)}
                     />
                   ))}
                   <div>
@@ -600,14 +641,26 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
 
                 <div className="field field--tight">
                   <span className="field__label">Filter (WHERE)</span>
-                  <input
-                    className="input input--sm input--mono"
+                  <SqlEditor
+                    ref={(h) => {
+                      if (h) filterEditors.current.set(dv.id, h);
+                      else filterEditors.current.delete(dv.id);
+                    }}
+                    multiline={false}
+                    mode="expression"
+                    scope={flow?.scope}
+                    extras={flow?.extras}
                     value={dv.filter ?? ''}
-                    onChange={(e) => updateDerivation(dv.id, { filter: e.target.value || undefined })}
+                    onChange={(v) => updateDerivation(dv.id, { filter: v || undefined })}
+                    onFocus={() => {
+                      const h = filterEditors.current.get(dv.id);
+                      if (h) activeEditors.current.set(dv.id, h);
+                    }}
                     placeholder="e.g. status = 'paid'"
-                    spellCheck={false}
+                    ariaLabel="Filter"
                   />
                 </div>
+                <ReferenceChips src={src} reachable={reachable} onInsert={(text) => insertReference(dv, text)} />
 
                 <div className="derivation__summary">{derivationSummary(dv, targetColumn?.name)}</div>
               </div>
@@ -643,7 +696,7 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
           {flowSql && (
             <div className="field" style={{ marginTop: 8 }}>
               <span className="field__label">Generated from these derivations</span>
-              <pre className="code-block small">{flowSql}</pre>
+              <SqlCode sql={flowSql} scope={statementScope} className="small" />
               <span className="field__hint">
                 A skeleton, not executed. Columns named table.column are joined through the diagram's foreign keys; joins the diagram does not know
                 about belong in the tagged query below.
@@ -656,34 +709,49 @@ export function RelationshipEditor({ relationship: r }: { relationship: Relation
       <div className="field">
         <div className="row" style={{ justifyContent: 'space-between' }}>
           <span className="field__label">Tagged query</span>
-          <button
-            className="btn btn--sm btn--ghost"
-            disabled={!r.query?.trim()}
-            title="Run this query in the Query tab against the connected database"
-            onClick={() => {
-              useUi.getState().setPendingQuery(r.query ?? '', true);
-              useStore.getState().openDrawer('query');
-            }}
-          >
+          <button className="btn btn--sm btn--ghost" disabled={!r.query?.trim()} title="Run this query in the Query tab against the connected database (Ctrl+Enter in the box)" onClick={runQuery}>
             <Play /> Run
           </button>
         </div>
-        <textarea
-          className="textarea textarea--mono"
-          rows={7}
+        {templates.length > 0 && (
+          <select
+            className="select select--sm"
+            value=""
+            title="Queries written from what the diagram knows about these two tables: a starting point to finish by hand"
+            onChange={(e) => {
+              const t = templates[Number(e.target.value)];
+              if (t) insertTemplate(t.sql);
+            }}
+          >
+            <option value="">{r.query?.trim() ? 'Add a query written for this connection…' : 'Start from a query written for this connection…'}</option>
+            {templates.map((t, i) => (
+              <option key={t.id} value={i} title={t.hint}>
+                {t.label}
+              </option>
+            ))}
+          </select>
+        )}
+        <SqlEditor
+          ref={queryEditor}
           value={r.query ?? ''}
-          onChange={(e) => patch({ query: e.target.value || undefined })}
+          onChange={(v) => patch({ query: v || undefined })}
+          scope={statementScope}
+          rows={7}
+          expandable
+          title={`Tagged query · ${src.name} → ${tgt.name}`}
+          onSubmit={runQuery}
+          ariaLabel="Tagged query"
           placeholder={
             isEmbed
               ? `How the value is read back, e.g.\nSELECT jsonb_array_elements(${r.sourceColumnIds[0] ? src.columns.find((c) => c.id === r.sourceColumnIds[0])?.name ?? 'payload' : 'payload'})\nFROM ${src.name};`
               : `How data crosses this connection, e.g.\nINSERT INTO ${tgt.name} (...)\nSELECT ... FROM ${src.name} ...`
           }
-          spellCheck={false}
         />
         <span className="field__hint">
           {r.kind === 'flow'
             ? 'Free text for anything the derivations above cannot express. Shown as a badge on the edge and as a comment in the generated script.'
-            : 'Shown as a badge on the edge and as a comment in the generated script.'}
+            : 'Shown as a badge on the edge and as a comment in the generated script.'}{' '}
+          Table and column names of the diagram are coloured; Ctrl+Space completes them.
         </span>
       </div>
       <div className="field">

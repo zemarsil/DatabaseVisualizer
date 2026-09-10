@@ -14,6 +14,7 @@ import {
 import { derivationSummaries, flowDerivations, groupDerivations, isDerivationComplete, parseOrderKey } from '../derivation';
 import { foreignKeyPath } from '../schemaInfo';
 import { collectReferences, parseExpression, type ColumnRef, type Expr } from '../simulate/expression';
+import { annotationComment, collectAnnotations } from './annotations';
 import { tokenize, type Token } from './tokenizer';
 import { externalTableIds } from '../groups';
 import { findExtensionDef, installMethod } from '../extensions/registry';
@@ -900,6 +901,12 @@ export function generateSchema(d: Diagram): GeneratedSql {
     if (!fksBySource.has(r.sourceTableId)) fksBySource.set(r.sourceTableId, []);
     fksBySource.get(r.sourceTableId)!.push(r);
   }
+  // Which foreign keys actually reach the script. Those are the ones the file
+  // can rebuild from its own DDL, so everything else is what the annotation
+  // block at the end has to carry.
+  const emittedAsDdl = new Set<string>();
+  for (const list of fksBySource.values()) for (const r of list) if (fkClause(ctx, r)) emittedAsDdl.add(r.id);
+
   for (const r of crossing) {
     const src = ctx.tableById.get(r.sourceTableId);
     const tgt = ctx.tableById.get(r.targetTableId);
@@ -1063,6 +1070,11 @@ export function generateSchema(d: Diagram): GeneratedSql {
     }
     scriptParts.push(lines.join('\n'));
   }
+
+  // Last of all, the same connections in a form the importer can read: the
+  // appendix above is for a person, this is how the file comes home.
+  const annotations = annotationComment(collectAnnotations(d, emittedAsDdl));
+  if (annotations) scriptParts.push(annotations);
 
   return { statements, script: scriptParts.join('\n\n') + '\n', tableSql, warnings };
 }

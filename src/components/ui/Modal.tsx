@@ -81,6 +81,8 @@ export function Modal({ title, onClose, children, footer, wide }: { title: React
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== 'Escape') return;
+      // A SQL editor with its completion list open takes the first Escape itself.
+      if ((e.target as HTMLElement | null)?.dataset?.keepsEscape === 'true') return;
       e.stopPropagation();
       onCloseRef.current();
     };
@@ -296,6 +298,26 @@ function HelpContent() {
           <K k="←" /> <K k="↑" /> <K k="↓" /> <K k="→" />
         </span>
         <span>Nudge the selection by 10 px (<K k="Shift" /> for 50)</span>
+        <span>
+          <K k="Ctrl" /> <K k="Space" />
+        </span>
+        <span>In any SQL box: complete a table, column, keyword or function (the list also opens by itself as you type; <K k="Esc" /> closes it)</span>
+        <span>
+          <K k="Ctrl" /> <K k="Enter" />
+        </span>
+        <span>In a SQL box: run it (Query tab, tagged query), import it (Import tab) or link the source tables (view definition)</span>
+        <span>
+          <K k="Ctrl" /> <K k="Shift" /> <K k="F" />
+        </span>
+        <span>In a multi-line SQL box: format the SQL</span>
+        <span>
+          <K k="Ctrl" /> <K k="/" />
+        </span>
+        <span>In a multi-line SQL box: comment the selected lines out, or back in</span>
+        <span>
+          <K k="Tab" /> / <K k="Shift" /> <K k="Tab" />
+        </span>
+        <span>In a multi-line SQL box: indent / outdent the selected lines (<K k="Enter" /> keeps the indentation)</span>
         <span>
           <K k="Enter" /> in the table form
         </span>

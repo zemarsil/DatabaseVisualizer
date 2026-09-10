@@ -7,6 +7,7 @@ import { backendFor } from '@/lib/backend';
 import { downloadText, fileSlug } from '@/lib/io';
 import { generateSeed } from '@/lib/seed';
 import { confirmDialog } from '../../ui/Modal';
+import { SqlCode } from '../../ui/SqlEditor';
 import '@/styles/migrate.css';
 
 /** Deterministic sample rows for every table, respecting keys, uniqueness and enums. */
@@ -90,7 +91,7 @@ export function SeedSection() {
           ))}
         </ul>
       )}
-      {showScript && <pre className="code-block script-preview">{result.script}</pre>}
+      {showScript && <SqlCode sql={result.script} className="script-preview" />}
       <div className="row row--wrap" style={{ marginBottom: 8 }}>
         <button className="btn btn--sm btn--ghost" onClick={() => setShowScript((v) => !v)} disabled={result.totalRows === 0}>
           {showScript ? 'Hide script' : 'Show script'}

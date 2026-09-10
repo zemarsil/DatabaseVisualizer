@@ -1,8 +1,10 @@
-import { useRef, useState } from 'react';
-import { FileUp, Play, Search } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { FileUp, Play } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { importSql, type ImportResult } from '@/lib/sql/import';
 import { suggestForeignKeys } from '@/lib/suggest';
+import { diagramScope } from '@/lib/sqlScope';
+import { SqlEditor, type SqlEditorHandle } from '@/components/ui/SqlEditor';
 import { DIALECTS } from '@shared/types';
 
 const PLACEHOLDER = `-- Paste CREATE TABLE statements (pg_dump / mysqldump output works too)
@@ -28,12 +30,29 @@ export function ImportPanel() {
   const [groupName, setGroupName] = useState('');
   const [groupExternal, setGroupExternal] = useState(true);
   const fileInput = useRef<HTMLInputElement>(null);
+  const editor = useRef<SqlEditorHandle>(null);
   const dialect = DIALECTS.find((d) => d.id === diagram.dialect)?.label ?? diagram.dialect;
+  const scope = useMemo(() => diagramScope(diagram), [diagram]);
 
-  const run = (apply: boolean) => {
+  // The preview follows the text: a moment after the last keystroke it says what the import would do.
+  useEffect(() => {
+    if (!sql.trim()) {
+      setPreview(null);
+      return;
+    }
+    const id = setTimeout(() => setPreview(importSql(sql, diagram.dialect, mode === 'merge' ? diagram : null)), 400);
+    return () => clearTimeout(id);
+  }, [sql, mode, diagram]);
+
+  /** A message's "line N:M:" prefix, so clicking it puts the caret there. */
+  const jumpTo = (message: string) => {
+    const m = /^line (\d+)(?::(\d+))?/.exec(message);
+    if (m) editor.current?.goTo(Number(m[1]), m[2] ? Number(m[2]) : 1);
+  };
+
+  const run = () => {
     const res = importSql(sql, diagram.dialect, mode === 'merge' ? diagram : null);
     setPreview(res);
-    if (!apply) return;
     if (res.tables.length === 0) {
       toast('error', res.errors.length ? 'Nothing imported: fix the errors below.' : 'No CREATE TABLE statements found.');
       return;
@@ -48,7 +67,7 @@ export function ImportPanel() {
       res.extensions.length ? `${res.extensions.length} extension(s)` : '',
     ].filter(Boolean);
     const extraNote = extras.length ? ` and ${extras.join(' and ')}` : '';
-    toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} foreign key(s)${extraNote}.`);
+    toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} connection(s)${extraNote}.`);
     const implied = suggestForeignKeys(useStore.getState().diagram).filter((x) => x.confidence === 'high').length;
     if (implied) toast('info', `${implied} foreign key${implied === 1 ? ' looks' : 's look'} implied by column names. Open Problems to add them.`);
     setSql('');
@@ -72,7 +91,7 @@ export function ImportPanel() {
           </button>
           <input ref={fileInput} type="file" accept=".sql,.txt,text/plain" hidden onChange={onFile} />
         </div>
-        <textarea className="textarea textarea--mono grow" style={{ resize: 'none', minHeight: 0 }} value={sql} onChange={(e) => setSql(e.target.value)} placeholder={PLACEHOLDER} spellCheck={false} />
+        <SqlEditor ref={editor} value={sql} onChange={setSql} mode="ddl" scope={scope} fill status="always" onSubmit={run} submitLabel="imports" ariaLabel="SQL to import" placeholder={PLACEHOLDER} />
       </div>
       <div className="drawer__col">
         <h3>Import</h3>
@@ -98,22 +117,25 @@ export function ImportPanel() {
           )}
         </div>
         <div className="row" style={{ marginBottom: 10 }}>
-          <button className="btn btn--primary" onClick={() => run(true)} disabled={!sql.trim()}>
+          <button className="btn btn--primary" onClick={run} disabled={!sql.trim() || (preview !== null && preview.tables.length === 0)} title="Ctrl+Enter in the editor">
             <Play /> Import
           </button>
-          <button className="btn" onClick={() => run(false)} disabled={!sql.trim()}>
-            <Search /> Preview only
-          </button>
+          {preview && (
+            <span className="small muted">
+              {preview.tables.length === 0 ? 'Nothing to import yet' : `Ready: ${preview.tables.length} table${preview.tables.length === 1 ? '' : 's'}`}
+            </span>
+          )}
         </div>
         <div className="small muted" style={{ marginBottom: 8 }}>
           Understands CREATE TABLE with column and table constraints, ALTER TABLE … ADD CONSTRAINT, CREATE INDEX, COMMENT ON, CREATE TYPE … AS ENUM and CREATE TYPE
-          … AS (composite). Other statements are skipped with a warning. Tables referenced but not defined get a placeholder.
+          … AS (composite). Other statements are skipped with a warning. Tables referenced but not defined get a placeholder. A script this app exported also
+          carries its data flows, serialized copies, dependencies and tagged queries in its trailing comments, and they come back with it.
         </div>
         {preview && (
           <div style={{ overflow: 'auto', minHeight: 0 }}>
             <div className="row row--wrap" style={{ marginBottom: 4 }}>
               <span className="badge badge--success">{preview.tables.length} tables</span>
-              <span className="badge badge--accent">{preview.relationships.length} foreign keys</span>
+              <span className="badge badge--accent">{preview.relationships.length} connections</span>
               {preview.errors.length > 0 && <span className="badge badge--danger">{preview.errors.length} errors</span>}
               {preview.warnings.length > 0 && <span className="badge">{preview.warnings.length} warnings</span>}
             </div>
@@ -128,12 +150,12 @@ export function ImportPanel() {
             )}
             <ul className="msg-list">
               {preview.errors.map((e, i) => (
-                <li key={`e${i}`} className="danger">
+                <li key={`e${i}`} className="danger msg-list__jump" onClick={() => jumpTo(e)} title="Click to go to the line">
                   ✖ {e}
                 </li>
               ))}
               {preview.warnings.map((w, i) => (
-                <li key={`w${i}`} className="warn">
+                <li key={`w${i}`} className={`warn${/^line \d+/.test(w) ? ' msg-list__jump' : ''}`} onClick={() => jumpTo(w)} title={/^line \d+/.test(w) ? 'Click to go to the line' : undefined}>
                   ⚠ {w}
                 </li>
               ))}

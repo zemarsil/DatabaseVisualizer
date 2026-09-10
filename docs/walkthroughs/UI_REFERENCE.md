@@ -115,7 +115,7 @@ Source: `src/components/drawer/Drawer.tsx` and the panels beside it
 | **Simulate** | *Simulate data flow*: the stage list, the source and target grids, row lineage, and editable raw-input cells. |
 | **Derived** | *Derived columns*: every column the schema computes rather than stores, grouped by table with its formula, and — for whichever one you pick — *What it is computed from* and *What is computed from it*. Carries **Lens on** / **Lens off** (the same lens as `D`) and **Clear**. Badge reads *lens* while the lens is on, otherwise the count of computed columns. |
 | **Problems** | Lint findings with one-click fixes, filterable (*All severities*, *Errors only*, *Warnings only*, *Notes only*), plus *Suggested foreign keys*. Badge shows the error count. |
-| **Query** | Read-only `SELECT`s against the connected database. `Ctrl+Enter` runs, `Tab` indents; snippets, history, CSV/JSON copy. |
+| **Query** | Read-only `SELECT`s against the connected database. `Ctrl+Enter` runs the selection or the statement under the cursor; snippets, history, CSV/JSON copy. The box is the **SQL editor** (below). |
 | **Database** | Left column *Docker* (containers: *Container name*, *Image*, *Host port*, *Engine*), right column *Connection* (*Engine* — a dialect selector independent of the diagram's — *Host*, *Port*, *Database*, *User*, *Password*), then *Create the schema*, *Import from the database*, **Migrate** and *Seed data*. |
 
 ---
@@ -135,7 +135,23 @@ row if it has none. The colour palette and each row's flag toolbar hold one tab
 stop apiece and move internally with the arrow keys, so `Tab` crosses the form
 in a handful of stops rather than twenty.
 
-**View** (`ViewEditor.tsx`) — *View definition (SELECT …)*, the checkbox
+**SQL editor** (`ui/SqlEditor.tsx`) — every box SQL is typed into: a
+connection's *Tagged query*, a view's *View definition*, a derivation's
+*Expression on {source}*, *Filter (WHERE)* and expression keys, a column's
+*Default* and *Check*, *Table checks*, and the **Query** and **Import SQL**
+tabs. It colours the diagram's table and column names, completes tables,
+columns, keywords and functions (`Ctrl+Space`, or as you type; `table.` and an
+alias's `o.` narrow to that table's columns), and reports under the box: an
+expression the simulator cannot parse, a column or table it cannot resolve, an
+unclosed string or parenthesis. The status row shows *Reads* / *Writes* for a
+statement, *Ln, Col*, a **Format** button (`Ctrl+Shift+F`) and, in the
+inspector, an expand button that opens the same box in a dialog. Generated SQL
+shown read-only (*Generated from these derivations*, the table's DDL preview,
+the **SQL** tab, **Trace**, **Migrate** and **Seed** previews) is coloured the
+same way.
+
+**View** (`ViewEditor.tsx`) — *View definition (SELECT …)* (`Ctrl+Enter` there
+is **Detect from SQL**), the checkbox
 *Materialized (store the rows, refresh on demand)* (PostgreSQL emits
 `CREATE MATERIALIZED VIEW`; MariaDB, SQLite and DuckDB fall back to a plain view with a
 generator warning, and the flag is kept for switching back), and *Source tables
@@ -148,7 +164,12 @@ types**), *Reads as* (the verb, previewed in both directions), the direction
 row (*Referencing → referenced* for a foreign key, *Container → embedded* for a
 serialized one, *Source → target* otherwise), *Column pairs* (or *Anchor columns
 (optional)*), *Constraint name* / *Label*, *Reverse label*, *On delete*,
-*On update*, *Tagged query*, a free-text *Note* beside it, *Derived columns (N)* — each with *Expression on
+*On update*, *Tagged query* (with a **Run** button, a *Start from a query written
+for this connection…* menu whose entries come from the connection itself — the
+`JOIN`, orphan check and count for a foreign key; `INSERT … SELECT`, an upsert
+in the dialect's spelling, a rebuild and the statement built from the
+derivations for a data flow; JSON unpacking for a serialized one — and an
+expand button), a free-text *Note* beside it, *Derived columns (N)* — each with *Expression on
 {source}*, *Group by*, *Filter (WHERE)* and *Sequence (window)* — and
 *Generated from these derivations*. On a data flow two shortcuts sit beside
 them: **Match by name**, which adds a plain passthrough derivation for every
@@ -194,8 +215,11 @@ spelling other than the one in the left column.
 | `Alt+P` / `Alt+N` / `Alt+U` / `Alt+I` | In a column row: toggle **PK** / **NN** / **UQ** / **AI** without leaving the box |
 | `Ctrl+Backspace` | On an empty column name: delete the row |
 | `Tab` | In the canvas rename box: commit the name and carry on into the inspector's *Schema* |
-| `Ctrl+Enter` | **Query** tab: run |
-| `Tab` | **Query** tab: indent |
+| `Ctrl+Enter` | In a SQL box: run (**Query** tab — the selection, or the statement under the cursor; *Tagged query* — in the Query tab), import (**Import SQL**) or link the source tables (*View definition*) |
+| `Ctrl+Space` | In a SQL box: open the completion list (`↑` `↓` choose, `Enter` / `Tab` insert, `Esc` close) |
+| `Ctrl+Shift+F` | In a multi-line SQL box: format |
+| `Ctrl+/` | In a multi-line SQL box: comment the selected lines out, or back in |
+| `Tab` / `Shift+Tab` | In a multi-line SQL box: indent / outdent the selected lines; `Enter` keeps the indentation |
 | `←` `→` `Home` `End` | Inside the colour palette or a column's flag toolbar, which share one tab stop each |
 | `Shift+click` | Add a table or note to the selection |
 | `Shift+drag` | Box-select everything the box touches |

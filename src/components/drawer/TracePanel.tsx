@@ -5,6 +5,8 @@ import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { flowDerivations } from '@/lib/derivation';
 import { buildJoinQuery, describeHop } from '@/lib/trace';
+import { diagramScope } from '@/lib/sqlScope';
+import { SqlCode } from '../ui/SqlEditor';
 
 export function TracePanel() {
   const diagram = useStore((s) => s.diagram);
@@ -138,7 +140,7 @@ export function TracePanel() {
             <Play /> Run
           </button>
         </div>
-        <pre className="code-block code-block--fill">{query || '-- Trace two tables to get a SELECT that joins every table on the path.'}</pre>
+        <SqlCode sql={query || '-- Trace two tables to get a SELECT that joins every table on the path.'} scope={diagramScope(diagram)} className="code-block--fill" />
       </div>
     </div>
   );

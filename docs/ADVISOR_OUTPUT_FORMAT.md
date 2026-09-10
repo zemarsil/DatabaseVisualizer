@@ -11,6 +11,12 @@ Two input channels exist. Pick one per recommendation; do not mix them in one fi
 | **`.dbviz.json` diagram** | File menu → Open (`Ctrl+O`) | everything below: tables, columns, indexes, checks, comments, views, enum/composite types, **extensions**, foreign keys, **data-flow edges with derivations**, **dependency and serialized edges**, **external-source groups**, **tagged queries**, **sticky notes**, colours, positions — and, in the workspace form, **several diagrams in one file** | nothing |
 | **Plain DDL** | Bottom drawer → **Import SQL** → paste → *Add to the current diagram* / *Replace* | tables, columns, indexes, uniques, checks, `COMMENT ON`, foreign keys, `CREATE VIEW`, `CREATE TYPE` (enum and composite), `CREATE EXTENSION` | flows, dependencies, derivations, groups, tagged queries, notes, colours, positions |
 
+The "Loses" column describes DDL *you* write. A `.sql` script the app itself exported
+is a third thing: it carries its connections in a `-- dbviz:connections` comment block
+that **Import SQL** reads back, so a user who hands you one is handing you their flows
+and tagged queries too. Read that block for context if it is there; do not hand-write
+one — emit a `.dbviz.json` instead, which is the channel for everything DDL cannot say.
+
 Rule of thumb: if the recommendation is *only* "here is the schema", emit DDL — it is
 easier to read and the user may want to run it. If it contains reasoning, computation
 placement, derived/materialized tables, or "this feeds that", emit a `.dbviz.json`,

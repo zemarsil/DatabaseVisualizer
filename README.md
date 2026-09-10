@@ -16,6 +16,7 @@ A locally hosted web app for designing relational schemas visually.
 - **Command palette** (`Ctrl+K`): jump to any table or run any action by typing a few letters.
 - **Migrate and seed**: diff the diagram against a live database and get the `ALTER` statements that bring it up to date; generate deterministic seed rows that respect foreign keys, uniqueness and enums.
 - **Query**: run read-only `SELECT`s against the connected database with a results grid, snippets built from the diagram, and history.
+- **SQL editing**: every box you type SQL into — a connection's tagged query, a view's `SELECT`, a data flow's expressions and filters, column defaults and checks, the Query and Import tabs — colours the diagram's own table and column names, completes them along with keywords and functions (`Ctrl+Space`), checks as you type, and formats on `Ctrl+Shift+F`. A connection's query can start from one written for it: the `JOIN` of a foreign key, an `INSERT … SELECT` or upsert for a data flow, JSON unpacking for a serialized one.
 - Export as PNG, SVG, SQL, Markdown, Mermaid or DBML; save a `.dbviz.json` file; or copy a **share link** that carries the whole diagram in its URL. Every diagram you work on is kept in the browser's library with thumbnails and named checkpoints.
 - **Docker & database**: start a PostgreSQL or MariaDB container from the UI, create the schema in it (or in any database you can reach), and pull an existing database's schema into the diagram. With the SQLite or DuckDB dialect the database runs *inside the browser*, no server required.
 
@@ -77,9 +78,10 @@ docker compose up --build
 | See what is computed | Any column a data flow fills carries a **Σ** mark, and its table a **Σ n** badge that survives collapsing. `D` (or **View → Derived-column lens**) turns that into a way of reading the whole canvas: computed columns take the green rail, the columns feeding them the flow colour, foreign keys step back. The **Derived** drawer tab lists every one with its formula; pick a column — there, or by right-clicking it → *Show where this comes from* — and the canvas narrows to that column's chain: every column read to produce it, and everything computed from it in turn. `Esc` widens the chain back, then puts the lens away |
 | One source, several look-alike targets | On a data-flow edge, **Match by name** adds a plain passthrough derivation for every target column a source column of the same name can fill (case and underscores ignored; columns already derived are left alone). *Feed other tables the same way* then ticks off the other tables that share those column names and draws the same flow into each, its derivations re-pointed at the columns each table spells the same way. Five tables fed from one is five edges either way — a connection joins two tables — but not five sets of derivations typed by hand |
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
-| Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express |
+| Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express. The menu above the box offers queries written for this connection from what the diagram knows — the `JOIN` of a foreign key, its orphan check, an `INSERT … SELECT` with columns paired by name or a dialect-correct upsert for a data flow, the statement built from the derivations, JSON unpacking for a serialized one — as a starting point; `Ctrl+Enter` runs the query in the Query tab, and the expand button opens it in a bigger window |
+| Write SQL anywhere | Every SQL box is the same editor: the diagram's table and column names are coloured (so a typo shows up as plain text), `Ctrl+Space` completes tables, columns, keywords and functions — `orders.` or an alias's `o.` narrows to that table's columns — and problems show under the box as you type: an expression the simulator cannot parse, a column the source table does not have (with the `table.column` spelling that would reach it), a table the diagram does not have, an unclosed string or parenthesis. `Enter` keeps the indentation, `(` and `'` close themselves, `Tab` / `Shift+Tab` indent, `Ctrl+/` comments lines out, `Ctrl+Shift+F` formats |
 | See / copy DDL | Bottom drawer → **SQL** (whole schema or the selected table). The table inspector also has a preview |
-| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. Dropping a `.sql`, `.dbviz.json`, SQLite or DuckDB database file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
+| Import DDL | Bottom drawer → **Import SQL**, paste or load a `.sql` file, choose add/replace; optionally drop it all into a group. The preview follows the text — tables, foreign keys, errors and warnings appear a moment after you stop typing, and clicking an error puts the caret on its line; `Ctrl+Enter` imports. Dropping a `.sql`, `.dbviz.json`, SQLite or DuckDB database file on the canvas, or pasting DDL with `Ctrl+V`, does the same |
 | Check the schema | Bottom drawer → **Problems**: lint findings with one-click fixes, and suggested foreign keys from column names |
 | Copy / paste tables | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` on the selection; pasting between browser tabs or diagrams works too |
 | Copy tables out as text | One `Ctrl+C` puts the selection on the clipboard three ways and the paste target picks: a text editor gets the `CREATE TABLE` script (one statement block per table), a Markdown editor such as Obsidian gets the data dictionary — a table of columns per table, then the connections, then the DDL in a `sql` fence — and this app gets the tables back with their positions, colours and every connection kind. Right-click → **Copy as** (or `Ctrl+K` → *Copy the selected tables as…*) picks one format explicitly. Every format covers only the tables you selected: a foreign key to a table you did not copy is left out, and the text says which ones and why |
@@ -94,7 +96,7 @@ docker compose up --build
 | Export | File menu → PNG, SVG, SQL script, Markdown data dictionary, Mermaid ER diagram, or DBML; the SQL tab previews all the text formats |
 | Share | **File → Copy share link**: the whole diagram is compressed into the URL, so whoever opens it gets a copy with nothing to install |
 | Docker & database | **Database** button → left column manages containers, right column tests a connection, runs the schema, reads an existing schema, **migrates** a live database to match the diagram, or **seeds** it with generated rows |
-| Query | Bottom drawer → **Query**: read-only `SELECT`s against the connected database, with `Ctrl+Enter` to run, snippets from the diagram, history and CSV / JSON copy |
+| Query | Bottom drawer → **Query**: read-only `SELECT`s against the connected database, with `Ctrl+Enter` to run the selection or the statement under the cursor, snippets from the diagram, history and CSV / JSON copy |
 | SQLite in the browser | Pick the SQLite dialect and the Database tab runs the schema in an in-browser database (persisted in this browser) that Query, Migrate and Seed all talk to |
 | DuckDB in the browser | Pick the DuckDB dialect and the Database tab runs DuckDB-Wasm: the database is a real `.duckdb` file kept in the browser's private file storage, so it survives reloads, can be downloaded, and a `.duckdb` file can be opened or dropped on the canvas |
 
@@ -147,9 +149,13 @@ changes the words.
 | Kind | Drawn as | In the script | Means |
 | --- | --- | --- | --- |
 | Foreign key | solid, crow's foot | `FOREIGN KEY … REFERENCES …` | A constraint the database enforces |
-| Data flow | dashed, filled arrow | a comment | Rows in the target are built from the source by a job, rollup, or trigger |
-| Serialized | solid, filled diamond at the container | a comment | The target's rows live encoded inside one column of the source (JSONB, an array, a blob, a composite type) |
-| Dependency | dotted, open arrow | a comment | The source reads the target through a view, a job, or application code, with nothing enforcing it |
+| Data flow | dashed, filled arrow | a comment, read back on import | Rows in the target are built from the source by a job, rollup, or trigger |
+| Serialized | solid, filled diamond at the container | a comment, read back on import | The target's rows live encoded inside one column of the source (JSONB, an array, a blob, a composite type) |
+| Dependency | dotted, open arrow | a comment, read back on import | The source reads the target through a view, a job, or application code, with nothing enforcing it |
+
+"a comment" is not the same as "lost": the script's own comments carry every
+connection back, so exporting SQL and importing it again returns the diagram
+you exported. See [Exporting a script and importing it back](#exporting-a-script-and-importing-it-back).
 
 Verbs are always stored source → target, so every one of them also gives you
 the reverse reading for free — which is where the rest of the vocabulary comes
@@ -229,6 +235,7 @@ is reported as a warning on the stage rather than guessed.
 ```
 src/shared/types.ts      data model + API contracts shared by client and server
 src/lib/sql/             tokenizer, parser (DDL -> model), generator (model -> DDL), dialect helpers
+src/lib/sql/annotations.ts  the connections a script carries in its comments, so exported SQL imports back whole
 src/lib/groups.ts        table groups: region geometry, membership, external tables
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
@@ -392,6 +399,61 @@ before it:
 A definition only ever teaches the app names and prose. Nothing in a pack becomes SQL,
 and an extension with no definition at all still generates the right statement — it
 just gets no autocomplete and no checks.
+
+## Exporting a script and importing it back
+
+A `.sql` file can only say what an engine understands, and most of what the
+diagram knows about a connection has no SQL to be written in: a data flow, a
+serialized copy, a dependency, the verb a connection reads with, the note and
+the query tagged onto it, the derived columns behind a rollup. So the generated
+script says all of it twice at the end — once as prose, for whoever opens the
+file, and once as JSON inside `--` comments, for **Import SQL**:
+
+```sql
+-- [flow] orders feeds customer_cadence (nightly rollup)
+--   Full rebuild, not incremental.
+--   Derived columns:
+--     order_count = COUNT(*) GROUP BY customer_id WHERE status <> 'cancelled'
+
+-- ----------------------------------------------------------------
+-- Connection metadata: the same connections once more, in the form Import SQL
+-- reads. …
+-- dbviz:connections v1
+-- {
+--   "connections": [
+--     {
+--       "kind": "flow",
+--       "verb": "feeds",
+--       "from": "orders",
+--       "to": "customer_cadence",
+--       "name": "nightly rollup",
+--       "derivations": [ … ]
+--     }
+--   ]
+-- }
+-- dbviz:end
+```
+
+Export, edit the file in a text editor, import it again, and the connections
+come home with it. Three things follow from how it is written:
+
+- **It is a comment.** Every engine ignores it, the statement list the
+  **Database** tab runs never contains it, and deleting the block costs you the
+  annotations and nothing else.
+- **It names tables and columns rather than ids.** Rename a table in the DDL
+  and rename it in the block and the two still match; paste the script into a
+  diagram whose ids came from somewhere else and it still lands. A foreign key
+  the DDL already carries is enriched by the block, not duplicated by it.
+- **It only covers what the script creates.** A connection with an end in an
+  external group is left to the "External sources" appendix, because the script
+  does not create those tables and there would be nothing to attach it to.
+  Positions, colours, groups and sticky notes are not connections and are not
+  in it either — `.dbviz.json` is still the format that keeps the whole diagram.
+
+An unreadable block (a hand edit that broke the JSON, or a version a later
+build wrote) is reported as a warning and the DDL imports regardless, and a
+script that has no block at all — anything `pg_dump` or `mysqldump` wrote —
+imports exactly as it always did.
 
 ## Notes on the SQL support
 
