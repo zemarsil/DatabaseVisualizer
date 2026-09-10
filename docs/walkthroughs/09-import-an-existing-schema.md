@@ -329,6 +329,15 @@ converter behind that — is reachable from several other places too:
 - **`Ctrl+K`**, then type "import" or "database" to jump to either drawer tab
   without touching the mouse.
 
+One case is not somebody else's dump at all: **a `.sql` file this app
+exported**. The generator writes every connection the DDL cannot hold — the
+flows and their derived columns, the embeds, the dependencies, the verb each
+connection reads with, the note and the query tagged onto it — into comments at
+the end of the script, and Import SQL reads them back. So exporting SQL and
+importing it again is a round trip rather than a one-way door: what you lose is
+what was never a connection to begin with — positions, colours, sticky notes,
+and the tables of an external group, which the script never creates.
+
 One route skips DDL and the parser entirely: **hand-writing the
 `.dbviz.json`** directly, which is how this walkthrough's own companion file
 was made — you write the model the parser would have produced, instead of the

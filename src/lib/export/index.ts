@@ -16,7 +16,13 @@ export interface ExportFormatMeta {
 }
 
 export const EXPORT_FORMATS: ExportFormatMeta[] = [
-  { id: 'sql', label: 'SQL script', extension: 'sql', mime: 'text/sql' },
+  {
+    id: 'sql',
+    label: 'SQL script',
+    extension: 'sql',
+    mime: 'text/sql',
+    hint: 'Carries the connections SQL cannot express — data flows, serialized copies, dependencies and the query tagged on each one — as comments at the end, so Import SQL brings them back.',
+  },
   { id: 'mermaid', label: 'Mermaid ER diagram', extension: 'mmd', mime: 'text/plain', hint: 'Paste into a GitHub README inside a ```mermaid fence, or into mermaid.live.' },
   { id: 'dbml', label: 'DBML', extension: 'dbml', mime: 'text/plain', hint: 'Opens in dbdiagram.io and dbdocs.' },
   { id: 'markdown', label: 'Markdown data dictionary', extension: 'md', mime: 'text/markdown', hint: 'A README-ready reference with one section per table.' },

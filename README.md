@@ -148,9 +148,13 @@ changes the words.
 | Kind | Drawn as | In the script | Means |
 | --- | --- | --- | --- |
 | Foreign key | solid, crow's foot | `FOREIGN KEY … REFERENCES …` | A constraint the database enforces |
-| Data flow | dashed, filled arrow | a comment | Rows in the target are built from the source by a job, rollup, or trigger |
-| Serialized | solid, filled diamond at the container | a comment | The target's rows live encoded inside one column of the source (JSONB, an array, a blob, a composite type) |
-| Dependency | dotted, open arrow | a comment | The source reads the target through a view, a job, or application code, with nothing enforcing it |
+| Data flow | dashed, filled arrow | a comment, read back on import | Rows in the target are built from the source by a job, rollup, or trigger |
+| Serialized | solid, filled diamond at the container | a comment, read back on import | The target's rows live encoded inside one column of the source (JSONB, an array, a blob, a composite type) |
+| Dependency | dotted, open arrow | a comment, read back on import | The source reads the target through a view, a job, or application code, with nothing enforcing it |
+
+"a comment" is not the same as "lost": the script's own comments carry every
+connection back, so exporting SQL and importing it again returns the diagram
+you exported. See [Exporting a script and importing it back](#exporting-a-script-and-importing-it-back).
 
 Verbs are always stored source → target, so every one of them also gives you
 the reverse reading for free — which is where the rest of the vocabulary comes
@@ -230,6 +234,7 @@ is reported as a warning on the stage rather than guessed.
 ```
 src/shared/types.ts      data model + API contracts shared by client and server
 src/lib/sql/             tokenizer, parser (DDL -> model), generator (model -> DDL), dialect helpers
+src/lib/sql/annotations.ts  the connections a script carries in its comments, so exported SQL imports back whole
 src/lib/groups.ts        table groups: region geometry, membership, external tables
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
@@ -390,6 +395,61 @@ before it:
 A definition only ever teaches the app names and prose. Nothing in a pack becomes SQL,
 and an extension with no definition at all still generates the right statement — it
 just gets no autocomplete and no checks.
+
+## Exporting a script and importing it back
+
+A `.sql` file can only say what an engine understands, and most of what the
+diagram knows about a connection has no SQL to be written in: a data flow, a
+serialized copy, a dependency, the verb a connection reads with, the note and
+the query tagged onto it, the derived columns behind a rollup. So the generated
+script says all of it twice at the end — once as prose, for whoever opens the
+file, and once as JSON inside `--` comments, for **Import SQL**:
+
+```sql
+-- [flow] orders feeds customer_cadence (nightly rollup)
+--   Full rebuild, not incremental.
+--   Derived columns:
+--     order_count = COUNT(*) GROUP BY customer_id WHERE status <> 'cancelled'
+
+-- ----------------------------------------------------------------
+-- Connection metadata: the same connections once more, in the form Import SQL
+-- reads. …
+-- dbviz:connections v1
+-- {
+--   "connections": [
+--     {
+--       "kind": "flow",
+--       "verb": "feeds",
+--       "from": "orders",
+--       "to": "customer_cadence",
+--       "name": "nightly rollup",
+--       "derivations": [ … ]
+--     }
+--   ]
+-- }
+-- dbviz:end
+```
+
+Export, edit the file in a text editor, import it again, and the connections
+come home with it. Three things follow from how it is written:
+
+- **It is a comment.** Every engine ignores it, the statement list the
+  **Database** tab runs never contains it, and deleting the block costs you the
+  annotations and nothing else.
+- **It names tables and columns rather than ids.** Rename a table in the DDL
+  and rename it in the block and the two still match; paste the script into a
+  diagram whose ids came from somewhere else and it still lands. A foreign key
+  the DDL already carries is enriched by the block, not duplicated by it.
+- **It only covers what the script creates.** A connection with an end in an
+  external group is left to the "External sources" appendix, because the script
+  does not create those tables and there would be nothing to attach it to.
+  Positions, colours, groups and sticky notes are not connections and are not
+  in it either — `.dbviz.json` is still the format that keeps the whole diagram.
+
+An unreadable block (a hand edit that broke the JSON, or a version a later
+build wrote) is reported as a warning and the DDL imports regardless, and a
+script that has no block at all — anything `pg_dump` or `mysqldump` wrote —
+imports exactly as it always did.
 
 ## Notes on the SQL support
 
