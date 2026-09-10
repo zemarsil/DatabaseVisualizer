@@ -8,6 +8,7 @@ import { downloadText, fileSlug } from '@/lib/io';
 import { diffDiagramAgainst, summarizeChanges, type Change, type SchemaSnapshot } from '@/lib/migrate/diff';
 import { generateMigration } from '@/lib/migrate/alter';
 import { confirmDialog } from '../../ui/Modal';
+import { SqlCode } from '../../ui/SqlEditor';
 import '@/styles/migrate.css';
 
 interface Comparison {
@@ -195,7 +196,7 @@ export function MigrateSection() {
                   ))}
                 </ul>
               )}
-              {migration && showScript && <pre className="code-block script-preview">{migration.script}</pre>}
+              {migration && showScript && <SqlCode sql={migration.script} className="script-preview" />}
               <div className="row row--wrap" style={{ marginBottom: 8 }}>
                 <label className="checkbox small">
                   <input type="checkbox" checked={stopOnError} onChange={(e) => setStopOnError(e.target.checked)} /> Stop on first error

@@ -1,0 +1,303 @@
+/* ------------------------------------------------------------------ */
+/* SQL editor: a textarea with a coloured copy laid over it              */
+/* ------------------------------------------------------------------ */
+.sqled {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.sqled--fill {
+  flex: 1;
+  min-height: 0;
+}
+.sqled__box {
+  position: relative;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  transition: border-color 0.12s, box-shadow 0.12s;
+}
+.sqled--fill .sqled__box {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+.sqled__box:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.sqled--error .sqled__box:not(:focus-within) {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--border));
+}
+
+/* The overlay and the textarea must wrap and scroll identically: same font, padding, tab size and gutter. */
+.sqled__hl,
+.sqled__ta {
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  letter-spacing: normal;
+  tab-size: 2;
+  padding: 6px 8px;
+  margin: 0;
+  border: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  scrollbar-gutter: stable;
+  box-sizing: border-box;
+}
+.sqled__hl {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  color: var(--text);
+}
+.sqled__ta {
+  position: relative;
+  display: block;
+  width: 100%;
+  min-height: 70px;
+  resize: vertical;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--text);
+  outline: none;
+  overflow: auto;
+}
+.sqled--fill .sqled__ta {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+  resize: none;
+}
+.sqled__ta::placeholder {
+  color: var(--text-faint);
+}
+.sqled__ta::selection {
+  background: rgba(122, 162, 247, 0.35);
+}
+[data-theme='light'] .sqled__ta::selection {
+  background: rgba(75, 111, 240, 0.25);
+}
+.sqled__ta:disabled {
+  opacity: 0.6;
+}
+
+/* One line: no wrapping, no resize handle, scrolls sideways with the caret. */
+.sqled--single .sqled__hl,
+.sqled--single .sqled__ta {
+  white-space: pre;
+  word-break: normal;
+  overflow-wrap: normal;
+  padding: 4px 6px;
+  line-height: 16px;
+  scrollbar-gutter: auto;
+}
+.sqled--single .sqled__ta {
+  min-height: 0;
+  height: 26px;
+  resize: none;
+  overflow: hidden;
+  scrollbar-width: none;
+}
+.sqled--single .sqled__ta::-webkit-scrollbar {
+  display: none;
+}
+
+/* Too much text to colour: back to a plain textarea. */
+.sqled--plain .sqled__ta {
+  color: var(--text);
+}
+
+/* Tokens. Colour only — bold or italic could change glyph widths and drift the overlay. */
+.sqled__tk--keyword {
+  color: var(--accent);
+}
+.sqled__tk--type {
+  color: var(--accent);
+  opacity: 0.8;
+}
+.sqled__tk--function {
+  color: var(--embed);
+}
+.sqled__tk--string {
+  color: var(--success);
+}
+.sqled__tk--number {
+  color: var(--warn);
+}
+.sqled__tk--comment {
+  color: var(--text-faint);
+}
+.sqled__tk--table,
+.sqled__tk--alias {
+  color: var(--trace);
+}
+.sqled__tk--column,
+.sqled__tk--quoted {
+  color: var(--dep);
+}
+.sqled__tk--param {
+  color: var(--embed);
+}
+.sqled__tk--punct {
+  color: var(--text-muted);
+}
+.sqled__tk--unknown {
+  text-decoration: underline wavy var(--warn);
+  text-decoration-skip-ink: none;
+  text-underline-offset: 3px;
+}
+.sqled__mark {
+  display: inline-block;
+  width: 0;
+  height: 1em;
+  vertical-align: text-top;
+}
+
+/* Status row under the editor. */
+.sqled__status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 18px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.sqled__diag,
+.sqled__mentions,
+.sqled__hint {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sqled__diag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sqled__diag > svg + * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sqled__code {
+  font-size: 12px;
+}
+.sqled__code.small {
+  font-size: 11px;
+}
+.sqled__diag--error {
+  color: var(--danger);
+}
+.sqled__diag--warning {
+  color: var(--warn);
+}
+.sqled__diag svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+.sqled__mentions b {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+.sqled__hint {
+  color: var(--text-faint);
+}
+.sqled__pos {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.sqled__status .sqled__btn {
+  width: 22px;
+  height: 22px;
+}
+.sqled__status .sqled__btn svg {
+  width: 13px;
+  height: 13px;
+}
+.sqled-modal {
+  height: min(70vh, 640px);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Completion list, portalled to the body and placed under the word being typed. */
+.sqled-pop {
+  position: fixed;
+  z-index: 3000;
+  min-width: 240px;
+  max-width: 400px;
+  max-height: 250px;
+  overflow: auto;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+  padding: 4px;
+  font-size: 12px;
+}
+.sqled-pop__item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 3px 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--text);
+}
+.sqled-pop__item--active {
+  background: var(--accent-soft);
+}
+.sqled-pop__kind {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
+.sqled-pop__kind--column {
+  color: var(--dep);
+}
+.sqled-pop__kind--table {
+  color: var(--trace);
+}
+.sqled-pop__kind--keyword {
+  color: var(--accent);
+}
+.sqled-pop__kind--function {
+  color: var(--embed);
+}
+.sqled-pop__label {
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sqled-pop__detail {
+  color: var(--text-faint);
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 160px;
+}
+.sqled-pop__foot {
+  margin-top: 2px;
+  padding: 3px 6px;
+  border-top: 1px solid var(--border);
+  color: var(--text-faint);
+  font-size: 10px;
+}

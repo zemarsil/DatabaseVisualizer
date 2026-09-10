@@ -5,6 +5,8 @@ import { generateDropStatements, generateSchema, generateTableSql } from '@/lib/
 import { downloadText } from '@/lib/io';
 import { EXPORT_FORMATS, exportDiagram, type ExportFormat } from '@/lib/export';
 import { DIALECTS } from '@shared/types';
+import { diagramScope } from '@/lib/sqlScope';
+import { SqlCode } from '../ui/SqlEditor';
 
 export function SqlPanel() {
   const diagram = useStore((s) => s.diagram);
@@ -17,6 +19,7 @@ export function SqlPanel() {
   const isSql = format === 'sql';
   const effectiveScope = isSql && scope === 'table' && selected ? 'table' : 'schema';
   const generated = useMemo(() => generateSchema(diagram), [diagram]);
+  const sqlScope = useMemo(() => diagramScope(diagram), [diagram]);
   const exported = useMemo(() => (isSql ? null : exportDiagram(diagram, format)), [diagram, format, isSql]);
   const text = useMemo(() => {
     if (exported) return exported.text;
@@ -84,7 +87,11 @@ export function SqlPanel() {
           {meta.hint}
         </div>
       )}
-      <pre className="code-block code-block--fill">{text || '-- Add a table to see its CREATE TABLE statement here.'}</pre>
+      {isSql ? (
+        <SqlCode sql={text || '-- Add a table to see its CREATE TABLE statement here.'} scope={sqlScope} className="code-block--fill" />
+      ) : (
+        <pre className="code-block code-block--fill">{text}</pre>
+      )}
     </>
   );
 }
