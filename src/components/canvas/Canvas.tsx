@@ -197,17 +197,15 @@ export function Canvas() {
   const [drag, setDrag] = useState<DragState | null>(null);
   const [dropTargetId, setDropTargetId] = useState<string | null>(null);
 
-  const bounds = useMemo(
-    () =>
-      groupBounds(diagram, {
-        sizes: nodeSizes,
-        // While tables are in flight their region holds still, so you can see
-        // whether you are dropping them inside it or outside it.
-        exclude: drag?.kind === 'tables' ? new Set(drag.ids) : undefined,
-        fallback: drag?.boundsAtStart,
-      }),
-    [diagram, nodeSizes, drag],
-  );
+  const bounds = useMemo(() => {
+    // While tables are in flight their regions hold still at their pre-drag
+    // boxes: recomputing from the remaining members would shrink a group's
+    // box the instant you pick up one of its tables, well before the table
+    // has actually left it. Membership (and any resulting shrink or grow) is
+    // only decided once the drag ends, in onNodeDragStop.
+    if (drag?.kind === 'tables') return drag.boundsAtStart;
+    return groupBounds(diagram, { sizes: nodeSizes, fallback: drag?.boundsAtStart });
+  }, [diagram, nodeSizes, drag]);
 
   const groupTableCounts = useMemo(() => {
     const counts: Record<string, number> = {};
