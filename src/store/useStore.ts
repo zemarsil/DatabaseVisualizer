@@ -10,6 +10,8 @@ import {
   type Group,
   type Index,
   type Note,
+  type Program,
+  type ProgramStep,
   type Relationship,
   type Sheet,
   type Table,
@@ -25,6 +27,8 @@ import {
   createGroup,
   createIndex,
   createNote,
+  createProgram,
+  createProgramStep,
   createRelationship,
   createTable,
   derivationsMatchedByName,
@@ -38,10 +42,12 @@ import {
   extensionByName,
   uniqueCustomTypeName,
   uniqueGroupName,
+  uniqueProgramName,
   uniqueSheetName,
   uniqueTableName,
 } from '@/lib/model';
 import { nextGroupPosition } from '@/lib/groups';
+import { nextProgramPosition } from '@/lib/programs';
 import { placementSizes, type SizeMap } from '@/lib/geometry';
 import { PALETTE } from '@/lib/palette';
 import { translateType } from '@/lib/sql/dialect';
@@ -232,7 +238,7 @@ interface Actions {
   pasteTables: (tables: Table[], relationships: Relationship[], customTypes?: CustomType[], offset?: { x: number; y: number }, extensions?: DiagramExtension[]) => string[];
   setTableDisplay: (ids: string[], collapsed: TableDisplay | undefined) => void;
   /** Recolour a group of tables and/or notes in one history step. */
-  colorElements: (ids: { tableIds?: string[]; noteIds?: string[] }, color: string) => void;
+  colorElements: (ids: { tableIds?: string[]; noteIds?: string[]; programIds?: string[] }, color: string) => void;
   deleteTables: (ids: string[]) => void;
   duplicateTable: (id: string) => void;
   /** The new column id is also exposed as focusColumnId so the editor can focus it. */
@@ -291,9 +297,21 @@ interface Actions {
   duplicateNote: (id: string) => void;
   deleteNote: (id: string) => void;
 
+  // programs
+  addProgram: (opts?: { name?: string; position?: { x: number; y: number }; language?: Program['language'] }) => string;
+  updateProgram: (id: string, patch: Partial<Omit<Program, 'id' | 'steps'>>) => void;
+  duplicateProgram: (id: string) => void;
+  deleteProgram: (id: string) => void;
+  /** Appends a step. `at` inserts before that index instead, so a step can be added mid-sequence. */
+  addProgramStep: (programId: string, partial?: Partial<ProgramStep>, at?: number) => string;
+  updateProgramStep: (programId: string, stepId: string, patch: Partial<Omit<ProgramStep, 'id'>>) => void;
+  removeProgramStep: (programId: string, stepId: string) => void;
+  /** Reorder: delta is -1 for earlier, +1 for later. Out-of-range moves do nothing. */
+  moveProgramStep: (programId: string, stepId: string, delta: number) => void;
+
   // canvas
-  /** Deletes tables, notes and relationships together, as a single undo step. */
-  removeElements: (ids: { tableIds?: string[]; noteIds?: string[]; relationshipIds?: string[] }) => void;
+  /** Deletes tables, notes, programs and relationships together, as a single undo step. */
+  removeElements: (ids: { tableIds?: string[]; noteIds?: string[]; programIds?: string[]; relationshipIds?: string[] }) => void;
   /** Delete whatever is selected (tables, notes, a relationship, or a group region). */
   deleteSelection: () => void;
   moveItems: (moves: { id: string; position: { x: number; y: number } }[]) => void;
@@ -505,25 +523,30 @@ export const useStore = create<Store>()(
       leaveSheetUi();
     };
 
-    const removeElements: Actions['removeElements'] = ({ tableIds = [], noteIds = [], relationshipIds = [] }) => {
+    const removeElements: Actions['removeElements'] = ({ tableIds = [], noteIds = [], programIds = [], relationshipIds = [] }) => {
       const tables = new Set(tableIds);
       const notes = new Set(noteIds);
+      const programs = new Set(programIds);
       const rels = new Set(relationshipIds);
-      if (!tables.size && !notes.size && !rels.size) return;
+      if (!tables.size && !notes.size && !programs.size && !rels.size) return;
       mutate((d) => {
         if (tables.size) d.tables = d.tables.filter((t) => !tables.has(t.id));
         if (notes.size) d.notes = d.notes.filter((n) => !notes.has(n.id));
+        if (programs.size) d.programs = d.programs.filter((p) => !programs.has(p.id));
         if (rels.size) d.relationships = d.relationships.filter((r) => !rels.has(r.id));
         if (tables.size) {
-          // Drop the relationships and index entries left dangling by the removed tables.
+          // Drop the relationships, index entries and program column references
+          // left dangling by the removed tables.
           const pruned = pruneRelationships(d);
           d.relationships = pruned.relationships;
           d.tables = pruned.tables;
+          d.programs = pruned.programs;
         }
       });
       set((s) => {
         if (tables.size) s.selection.tableIds = s.selection.tableIds.filter((x) => !tables.has(x));
         if (notes.size) s.selection.noteIds = s.selection.noteIds.filter((x) => !notes.has(x));
+        if (programs.size) s.selection.programIds = s.selection.programIds.filter((x) => !programs.has(x));
         if (s.selection.relationshipId && rels.has(s.selection.relationshipId)) s.selection.relationshipId = null;
         if (s.trace.fromId && tables.has(s.trace.fromId)) s.trace.fromId = null;
         if (s.trace.toId && tables.has(s.trace.toId)) s.trace.toId = null;
@@ -794,13 +817,15 @@ export const useStore = create<Store>()(
           for (const t of d.tables) if (idSet.has(t.id)) t.collapsed = collapsed;
         });
       },
-      colorElements: ({ tableIds = [], noteIds = [] }, color) => {
-        if (!tableIds.length && !noteIds.length) return;
+      colorElements: ({ tableIds = [], noteIds = [], programIds = [] }, color) => {
+        if (!tableIds.length && !noteIds.length && !programIds.length) return;
         const tables = new Set(tableIds);
         const notes = new Set(noteIds);
+        const programs = new Set(programIds);
         mutate((d) => {
           for (const t of d.tables) if (tables.has(t.id)) t.color = color;
           for (const n of d.notes) if (notes.has(n.id)) n.color = color;
+          for (const pr of d.programs) if (programs.has(pr.id)) pr.color = color;
         });
       },
       deleteTables: (ids) => removeElements({ tableIds: ids }),
@@ -1173,12 +1198,103 @@ export const useStore = create<Store>()(
       },
       deleteNote: (id) => removeElements({ noteIds: [id] }),
 
+      /* ---------------- programs ---------------- */
+      addProgram: (opts = {}) => {
+        const name = uniqueProgramName(get().diagram, opts.name ?? 'new_program');
+        const prg = createProgram({
+          name,
+          position: opts.position ?? nextProgramPosition(get().diagram),
+          ...(opts.language ? { language: opts.language } : {}),
+        });
+        mutate((d) => {
+          d.programs.push(prg);
+        });
+        set((s) => {
+          s.selection = { ...emptySelection(), programIds: [prg.id] };
+        });
+        return prg.id;
+      },
+      updateProgram: (id, patch) =>
+        mutate(
+          (d) => {
+            const p = d.programs.find((x) => x.id === id);
+            if (p) Object.assign(p, patch);
+          },
+          { coalesce: textPatchKey(`program:${id}`, patch) },
+        ),
+      duplicateProgram: (id) => {
+        const src = get().diagram.programs.find((p) => p.id === id);
+        if (!src) return;
+        const copy = createProgram({
+          ...src,
+          id: undefined,
+          name: uniqueProgramName(get().diagram, src.name),
+          position: { x: src.position.x + 28, y: src.position.y + 28 },
+          // Steps are copied with fresh ids: they are the program's own, and two
+          // programs sharing a step id would confuse every edge keyed on it.
+          steps: src.steps.map((s) => createProgramStep({ ...s, id: undefined, columnIds: [...s.columnIds] })),
+        });
+        mutate((d) => {
+          d.programs.push(copy);
+        });
+        set((s) => {
+          s.selection = { ...emptySelection(), programIds: [copy.id] };
+        });
+      },
+      deleteProgram: (id) => removeElements({ programIds: [id] }),
+      addProgramStep: (programId, partial = {}, at) => {
+        const step = createProgramStep(partial);
+        mutate((d) => {
+          const p = d.programs.find((x) => x.id === programId);
+          if (!p) return;
+          if (at === undefined || at < 0 || at > p.steps.length) p.steps.push(step);
+          else p.steps.splice(at, 0, step);
+        });
+        return step.id;
+      },
+      updateProgramStep: (programId, stepId, patch) =>
+        mutate(
+          (d) => {
+            const s = d.programs.find((x) => x.id === programId)?.steps.find((x) => x.id === stepId);
+            if (!s) return;
+            Object.assign(s, patch);
+            // Switching to compute drops what a compute step cannot have, so the
+            // model never holds a contradiction; switching back starts clean.
+            if (s.op === 'compute') {
+              delete s.tableId;
+              delete s.sql;
+              s.columnIds = [];
+            }
+          },
+          { coalesce: textPatchKey(`step:${stepId}`, patch) },
+        ),
+      removeProgramStep: (programId, stepId) =>
+        mutate((d) => {
+          const p = d.programs.find((x) => x.id === programId);
+          if (p) p.steps = p.steps.filter((s) => s.id !== stepId);
+        }),
+      moveProgramStep: (programId, stepId, delta) =>
+        mutate((d) => {
+          const p = d.programs.find((x) => x.id === programId);
+          if (!p) return;
+          const from = p.steps.findIndex((s) => s.id === stepId);
+          const to = from + delta;
+          if (from === -1 || to < 0 || to >= p.steps.length) return;
+          const [moved] = p.steps.splice(from, 1);
+          p.steps.splice(to, 0, moved);
+        }),
+
       /* ---------------- canvas ---------------- */
       removeElements,
       deleteSelection: () => {
         const { selection } = get();
-        if (selection.tableIds.length || selection.noteIds.length || selection.relationshipId) {
-          removeElements({ tableIds: selection.tableIds, noteIds: selection.noteIds, relationshipIds: selection.relationshipId ? [selection.relationshipId] : [] });
+        if (selection.tableIds.length || selection.noteIds.length || selection.programIds.length || selection.relationshipId) {
+          removeElements({
+            tableIds: selection.tableIds,
+            noteIds: selection.noteIds,
+            programIds: selection.programIds,
+            relationshipIds: selection.relationshipId ? [selection.relationshipId] : [],
+          });
         } else if (selection.groupId) {
           get().deleteGroup(selection.groupId, false);
         }
@@ -1187,11 +1303,13 @@ export const useStore = create<Store>()(
         const { selection } = get();
         const tableIds = new Set(selection.tableIds);
         const noteIds = new Set(selection.noteIds);
-        if (tableIds.size === 0 && noteIds.size === 0) return;
+        const programIds = new Set(selection.programIds);
+        if (tableIds.size === 0 && noteIds.size === 0 && programIds.size === 0) return;
         mutate(
           (d) => {
             for (const t of d.tables) if (tableIds.has(t.id)) t.position = { x: t.position.x + dx, y: t.position.y + dy };
             for (const n of d.notes) if (noteIds.has(n.id)) n.position = { x: n.position.x + dx, y: n.position.y + dy };
+            for (const pr of d.programs) if (programIds.has(pr.id)) pr.position = { x: pr.position.x + dx, y: pr.position.y + dy };
           },
           { coalesce: 'nudge' },
         );
@@ -1206,7 +1324,12 @@ export const useStore = create<Store>()(
                 continue;
               }
               const n = d.notes.find((x) => x.id === m.id);
-              if (n) n.position = m.position;
+              if (n) {
+                n.position = m.position;
+                continue;
+              }
+              const pr = d.programs.find((x) => x.id === m.id);
+              if (pr) pr.position = m.position;
             }
           },
           { history: false },
@@ -1489,3 +1612,7 @@ export const selectSelectedNote = (s: Store): Note | undefined =>
   s.selection.noteIds.length === 1 && s.selection.tableIds.length === 0 ? s.diagram.notes.find((n) => n.id === s.selection.noteIds[0]) : undefined;
 export const selectSelectedGroup = (s: Store): Group | undefined =>
   s.selection.groupId ? s.diagram.groups.find((g) => g.id === s.selection.groupId) : undefined;
+export const selectSelectedProgram = (s: Store): Program | undefined =>
+  s.selection.programIds.length === 1 && s.selection.tableIds.length === 0 && s.selection.noteIds.length === 0
+    ? s.diagram.programs.find((p) => p.id === s.selection.programIds[0])
+    : undefined;

@@ -50,7 +50,7 @@ function makeEnv(diagram: Diagram, over: Partial<Store> = {}) {
     future: [],
     nodeSizes: {},
     placementSizes: () => placementSizes(diagram, {}, false),
-    selection: { tableIds: [], noteIds: [], relationshipId: null, groupId: null },
+    selection: { tableIds: [], noteIds: [], programIds: [], relationshipId: null, groupId: null },
     trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
     ...actions,
     ...over,
@@ -93,7 +93,7 @@ describe('group region menu', () => {
     ]);
 
     action(items, 'select').run();
-    expect(store.setSelection).toHaveBeenCalledWith({ tableIds: members.map((t) => t.id), noteIds: [], relationshipId: null, groupId: null });
+    expect(store.setSelection).toHaveBeenCalledWith({ tableIds: members.map((t) => t.id), noteIds: [], programIds: [], relationshipId: null, groupId: null });
   });
 
   it('toggles whether the group lives in another database', () => {
@@ -175,7 +175,7 @@ describe('table menu', () => {
   it('acts on the whole group when the clicked table is part of a multi-selection', () => {
     const d = sampleDiagram();
     const [a, b] = d.tables;
-    const { env, actions } = makeEnv(d, { selection: { tableIds: [a.id, b.id], noteIds: [], relationshipId: null, groupId: null } });
+    const { env, actions } = makeEnv(d, { selection: { tableIds: [a.id, b.id], noteIds: [], programIds: [], relationshipId: null, groupId: null } });
     const items = buildContextMenu({ type: 'table', tableId: b.id }, env);
     expect(heading(items)).toMatchObject({ label: '2 tables selected' });
     expect(action(items, 'delete').label).toBe('Delete 2 tables');
@@ -190,7 +190,7 @@ describe('table menu', () => {
     const d = sampleDiagram();
     const [a, b] = d.tables;
     const note = d.notes[0];
-    const selection = { tableIds: [a.id, b.id], noteIds: [note.id], relationshipId: null, groupId: null };
+    const selection = { tableIds: [a.id, b.id], noteIds: [note.id], programIds: [], relationshipId: null, groupId: null };
     const { env, actions } = makeEnv(d, { selection });
     for (const target of [
       { type: 'table' as const, tableId: a.id },
@@ -214,7 +214,7 @@ describe('table menu', () => {
     const note = d.notes[0];
     const extra = { ...note, id: 'note2' };
     d.notes.push(extra);
-    const { env } = makeEnv(d, { selection: { tableIds: [], noteIds: [note.id, extra.id], relationshipId: null, groupId: null } });
+    const { env } = makeEnv(d, { selection: { tableIds: [], noteIds: [note.id, extra.id], programIds: [], relationshipId: null, groupId: null } });
     const items = buildContextMenu({ type: 'note', noteId: note.id }, env);
     expect(heading(items)).toMatchObject({ label: '2 notes selected' });
     expect(ids(items)).toEqual(['clear', 'delete']);
@@ -388,7 +388,7 @@ describe('"Copy as" rows', () => {
   it('copies a multi-table selection as one script, keeping only the connections inside it', () => {
     const d = sampleDiagram();
     const tableIds = [orders(d).id, orderItems(d).id];
-    const { env } = makeEnv(d, { selection: { tableIds, noteIds: [], relationshipId: null, groupId: null } });
+    const { env } = makeEnv(d, { selection: { tableIds, noteIds: [], programIds: [], relationshipId: null, groupId: null } });
     const items = buildContextMenu({ type: 'selection' }, env);
     expect(action(items, 'copy-sql').label).toBe('SQL script');
 
@@ -405,7 +405,7 @@ describe('"Copy as" rows', () => {
   it('copies a selection as diagram JSON that carries the same tables back', () => {
     const d = sampleDiagram();
     const tableIds = [orders(d).id, orderItems(d).id];
-    const { env } = makeEnv(d, { selection: { tableIds, noteIds: [], relationshipId: null, groupId: null } });
+    const { env } = makeEnv(d, { selection: { tableIds, noteIds: [], programIds: [], relationshipId: null, groupId: null } });
     action(buildContextMenu({ type: 'selection' }, env), 'copy-json').run();
     const [json] = (env.copy as ReturnType<typeof vi.fn>).mock.calls.at(-1)!;
     const payload = decodeClipboard(json)!;

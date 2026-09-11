@@ -10,6 +10,9 @@ import {
   type Group,
   type Index,
   type Note,
+  type Program,
+  type ProgramLanguage,
+  type ProgramStep,
   type Relationship,
   type RelationshipKind,
   type Table,
@@ -20,7 +23,7 @@ import { newId } from './ids';
 import { colorForName } from './palette';
 
 export function emptyDiagram(dialect: Dialect = 'postgresql', name = 'Untitled diagram'): Diagram {
-  return { version: 1, name, dialect, tables: [], relationships: [], notes: [], groups: [], customTypes: [], extensions: [] };
+  return { version: 1, name, dialect, tables: [], relationships: [], notes: [], groups: [], customTypes: [], extensions: [], programs: [] };
 }
 
 export function newSheetId(): string {
@@ -109,6 +112,43 @@ export function createDerivation(partial: Partial<Derivation> = {}): Derivation 
 export function createNote(partial: Partial<Note> = {}): Note {
   const { id, ...rest } = partial;
   return { id: id ?? newId('note'), text: 'New note', position: { x: 0, y: 0 }, width: 220, height: 120, color: 'yellow', ...rest };
+}
+
+export function createProgramStep(partial: Partial<ProgramStep> = {}): ProgramStep {
+  const { id, op, tableId, ...rest } = partial;
+  const step: ProgramStep = { id: id ?? newId('pstep'), op: op ?? 'read', columnIds: [], ...rest };
+  // A compute step is defined by not touching the database, so a table on one
+  // would be a contradiction the rest of the app would have to keep checking for.
+  if (step.op !== 'compute' && tableId) step.tableId = tableId;
+  if (step.op === 'compute') step.columnIds = [];
+  return step;
+}
+
+export function createProgram(partial: Partial<Program> = {}): Program {
+  const { id, name, ...rest } = partial;
+  const finalName = name ?? 'new_program';
+  return {
+    id: id ?? newId('prg'),
+    language: 'python' as ProgramLanguage,
+    position: { x: 0, y: 0 },
+    color: colorForName(finalName),
+    steps: [],
+    ...rest,
+    name: finalName,
+  };
+}
+
+/** Next free program name like "worker_2". Programs share a namespace with each other only. */
+export function uniqueProgramName(d: Diagram, base = 'new_program'): string {
+  const names = new Set(d.programs.map((p) => p.name.toLowerCase()));
+  if (!names.has(base.toLowerCase())) return base;
+  let i = 2;
+  while (names.has(`${base}_${i}`.toLowerCase())) i++;
+  return `${base}_${i}`;
+}
+
+export function programById(d: Diagram, id: string): Program | undefined {
+  return d.programs.find((p) => p.id === id);
 }
 
 export function createCustomTypeField(partial: Partial<CustomTypeField> & { name: string }): CustomTypeField {
@@ -302,6 +342,24 @@ export function flowCopyForTable(r: Relationship, from: Table, to: Table): Omit<
   };
 }
 
+/**
+ * Program steps after tables and columns have been deleted.
+ *
+ * Column references are dropped, because a column that is gone says nothing.
+ * A step whose *table* is gone is deliberately kept, dangling id and all: it
+ * may carry hand-written code and a note, and silently deleting that to tidy up
+ * a reference would throw away the only copy. The canvas simply draws no edge
+ * for it and the linter reports it, with a one-click fix that removes the step
+ * once the user agrees that is what they want.
+ */
+export function pruneProgramRefs(d: Diagram): Program[] {
+  const columns = new Set(d.tables.flatMap((t) => t.columns.map((c) => c.id)));
+  return d.programs.map((p) => ({
+    ...p,
+    steps: p.steps.map((s) => ({ ...s, columnIds: s.columnIds.filter((id) => columns.has(id)) })),
+  }));
+}
+
 /** Remove dangling references after tables/columns are deleted. */
 export function pruneRelationships(d: Diagram): Diagram {
   const tables = new Set(d.tables.map((t) => t.id));
@@ -322,7 +380,7 @@ export function pruneRelationships(d: Diagram): Diagram {
     ...t,
     indexes: t.indexes.map((i) => ({ ...i, columnIds: i.columnIds.filter((id) => columns.has(id)) })).filter((i) => i.columnIds.length > 0),
   }));
-  return { ...d, tables: tablesOut, relationships };
+  return { ...d, tables: tablesOut, relationships, programs: pruneProgramRefs(d) };
 }
 
 /**

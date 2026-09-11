@@ -1,5 +1,8 @@
 import {
   AGGREGATE_FUNCTIONS,
+  isProgramLanguage,
+  isProgramRole,
+  isProgramStepOp,
   isRelationshipKind,
   isWindowFunction,
   normalizeVerb,
@@ -10,6 +13,8 @@ import {
   type DiagramExtension,
   type Group,
   type Note,
+  type Program,
+  type ProgramStep,
   type Relationship,
   type Sheet,
   type Table,
@@ -67,6 +72,56 @@ function parseDerivations(v: unknown): Derivation[] | undefined {
         ...(window ? { window } : {}),
       };
     });
+}
+
+/**
+ * Programs and their steps. Absent -> an empty list, which is what every file
+ * written before programs existed means.
+ *
+ * A step is sanitised rather than trusted: an unknown op becomes a read, a
+ * compute step is stripped of any table and columns a hand-edited file gave it,
+ * and an entry with no usable shape is skipped. Table and column ids are *not*
+ * checked against the diagram here, because the caller may be merging this
+ * diagram into another one; the linter is where a reference with nothing at the
+ * end of it gets reported.
+ */
+function parsePrograms(v: unknown): Program[] {
+  if (!Array.isArray(v)) return [];
+  const out: Program[] = [];
+  for (const rp of v) {
+    if (!rp || typeof rp !== 'object') continue;
+    const p = rp as Record<string, unknown>;
+    if (typeof p.id !== 'string' || typeof p.name !== 'string') continue;
+    const pos = (p.position ?? {}) as Record<string, unknown>;
+    const steps: ProgramStep[] = [];
+    for (const rs of Array.isArray(p.steps) ? p.steps : []) {
+      if (!rs || typeof rs !== 'object') continue;
+      const s = rs as Record<string, unknown>;
+      const op = isProgramStepOp(s.op) ? s.op : 'read';
+      const compute = op === 'compute';
+      steps.push({
+        id: typeof s.id === 'string' && s.id ? s.id : newId('pstep'),
+        op,
+        ...(!compute && typeof s.tableId === 'string' && s.tableId ? { tableId: s.tableId } : {}),
+        columnIds: compute ? [] : strArray(s.columnIds),
+        ...(!compute && typeof s.sql === 'string' && s.sql ? { sql: s.sql } : {}),
+        ...(typeof s.code === 'string' && s.code ? { code: s.code } : {}),
+        ...(typeof s.note === 'string' && s.note ? { note: s.note } : {}),
+      });
+    }
+    out.push({
+      id: p.id,
+      name: p.name,
+      language: isProgramLanguage(p.language) ? p.language : 'other',
+      ...(isProgramRole(p.role) ? { role: p.role } : {}),
+      ...(typeof p.entrypoint === 'string' && p.entrypoint ? { entrypoint: p.entrypoint } : {}),
+      position: { x: num(pos.x), y: num(pos.y) },
+      color: str(p.color, 'slate'),
+      ...(typeof p.comment === 'string' && p.comment ? { comment: p.comment } : {}),
+      steps,
+    });
+  }
+  return out;
 }
 
 function readJson(text: string): unknown {
@@ -245,6 +300,8 @@ function parseDiagramValue(raw: unknown): Diagram {
     });
   }
   d.extensions = extensions;
+
+  d.programs = parsePrograms(o.programs);
 
   if (o.viewport && typeof o.viewport === 'object') {
     const v = o.viewport as Record<string, unknown>;
