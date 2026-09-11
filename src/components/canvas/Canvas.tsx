@@ -24,6 +24,7 @@ import { isContextMenuOpen, openContextMenu } from '@/components/ui/ContextMenu'
 import type { SelectionChange } from '@/lib/selection';
 import { paletteHue } from '@/lib/palette';
 import { GROUP_STICKINESS, groupAtPoint, groupBounds, inflate, rectCenter, rectContains, tableRect, type Rect } from '@/lib/groups';
+import { programLinks, programRoundTrips } from '@/lib/programs';
 import { effectiveDisplay, visibleColumns } from '@/lib/visibleColumns';
 import { isJoinTable, relationshipCardinality } from '@/lib/schemaInfo';
 import { buildLineage, derivedColumnIds, describeColumnOrigin, downstream, lineageReach, upstream } from '@/lib/lineage';
@@ -33,6 +34,8 @@ import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode
 import { NoteNode, type NoteNodeType } from './NoteNode';
 import { GroupNode, GROUP_DRAG_HANDLE, type GroupNodeType } from './GroupNode';
 import { RelationEdge, type RelationEdgeData, type RelationEdgeType } from './RelationEdge';
+import { ProgramNode, type ProgramNodeType, type ProgramStepView } from './ProgramNode';
+import { ProgramEdge, type ProgramEdgeType } from './ProgramEdge';
 import { FocusBanner, MAX_FOCUS_HOPS } from './FocusBanner';
 import { SimulationBanner } from './SimulationBanner';
 import { DerivedBanner } from './DerivedBanner';
@@ -48,10 +51,11 @@ function isEditable(el: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
-const nodeTypes = { table: TableNode, note: NoteNode, tablegroup: GroupNode };
-const edgeTypes = { relation: RelationEdge };
+const nodeTypes = { table: TableNode, note: NoteNode, tablegroup: GroupNode, program: ProgramNode };
+const edgeTypes = { relation: RelationEdge, programlink: ProgramEdge };
 
-type CanvasNode = TableNodeType | NoteNodeType | GroupNodeType;
+type CanvasNode = TableNodeType | NoteNodeType | GroupNodeType | ProgramNodeType;
+type CanvasEdge = RelationEdgeType | ProgramEdgeType;
 
 /**
  * What is currently being dragged. Regions are sized from where their tables
@@ -142,6 +146,7 @@ export function Canvas() {
   const lodCollapsed = useUi((s) => s.lodCollapsed);
   const setLodCollapsed = useUi((s) => s.setLodCollapsed);
   const renamingTableId = useUi((s) => s.renamingTableId);
+  const activeProgramStepId = useUi((s) => s.activeProgramStepId);
   const setRenamingTableId = useUi((s) => s.setRenamingTableId);
 
   const { fitView, screenToFlowPosition, setViewport, setCenter, getViewport } = useReactFlow();
@@ -377,13 +382,47 @@ export function Canvas() {
         style: { pointerEvents: 'none' },
       };
     });
-    return [...groupNodes, ...noteNodes, ...tableNodes];
+    // Programs sit above the regions and below nothing: they are foreground, and
+    // a step row has to stay clickable.
+    const programNodes: ProgramNodeType[] = diagram.programs.map((prg) => {
+      const steps: ProgramStepView[] = prg.steps.map((s) => {
+        const table = s.tableId ? tableMap.get(s.tableId) : undefined;
+        return {
+          id: s.id,
+          op: s.op,
+          table: s.op === 'compute' ? null : (table?.name ?? null),
+          columns: s.columnIds.map((id) => table?.columns.find((c) => c.id === id)?.name).filter((n): n is string => Boolean(n)),
+          missing: s.op !== 'compute' && Boolean(s.tableId) && !table,
+          note: s.note?.trim() ?? '',
+          hasCode: Boolean(s.code?.trim()),
+        };
+      });
+      return {
+        id: prg.id,
+        type: 'program',
+        position: prg.position,
+        data: {
+          program: prg,
+          steps,
+          roundTrips: programRoundTrips(prg).map((id) => tableMap.get(id)?.name ?? '?'),
+          // A program is not part of a trace, a simulation or a lineage chain, so
+          // every one of those modes pushes it back the way it does a note.
+          dimmed: tracing || simulating || lensing || focusSet !== null,
+        },
+        selected: selection.programIds.includes(prg.id),
+        measured: nodeSizes[prg.id],
+      };
+    });
+    return [...groupNodes, ...noteNodes, ...tableNodes, ...programNodes];
   }, [
     diagram.tables,
     diagram.notes,
     diagram.groups,
+    diagram.programs,
+    tableMap,
     selection.tableIds,
     selection.noteIds,
+    selection.programIds,
     selection.groupId,
     nodeSizes,
     trace.result,
@@ -413,7 +452,49 @@ export function Canvas() {
     derivedLens,
   ]);
 
-  const edges = useMemo<RelationEdgeType[]>(() => {
+  /**
+   * The arrows a program's steps imply. Derived, never stored: a step that names
+   * a table draws one, and it is keyed on the step, so reordering the list
+   * renumbers the arrows without anything having to be kept in sync.
+   */
+  const programEdges = useMemo<ProgramEdgeType[]>(() => {
+    if (!diagram.programs.length) return [];
+    const known = new Set(diagram.tables.map((t) => t.id));
+    const activeProgram = selection.programIds;
+    const roundTripKeys = new Set<string>();
+    for (const prg of diagram.programs) for (const id of programRoundTrips(prg)) roundTripKeys.add(`${prg.id}|${id}`);
+    return programLinks(diagram, known).map((link) => {
+      const table = tableMap.get(link.tableId);
+      const shown = table ? (shownColumns.get(table.id) ?? table.columns) : [];
+      // Anchor on the first named column when it is actually drawn; otherwise
+      // meet the header, exactly as a relationship does.
+      const tableRow = link.columnIds.length ? shown.findIndex((c) => c.id === link.columnIds[0]) : -1;
+      const stepIndex = (diagram.programs.find((p) => p.id === link.programId)?.steps ?? []).findIndex((s) => s.id === link.stepId);
+      return {
+        id: link.id,
+        type: 'programlink' as const,
+        source: link.programId,
+        target: link.tableId,
+        // The step is the thing you delete, not the arrow, so the arrow refuses
+        // to be selected or deleted on its own.
+        selectable: false,
+        deletable: false,
+        data: {
+          step: link.step,
+          op: link.op,
+          stepId: link.stepId,
+          stepIndex: Math.max(0, stepIndex),
+          tableRow,
+          columns: link.columnIds.map((id) => table?.columns.find((c) => c.id === id)?.name).filter((n): n is string => Boolean(n)),
+          dimmed: tracing || simulating || lensing || (focusSet !== null && !focusSet.has(link.tableId)),
+          highlighted: activeProgram.includes(link.programId) || link.stepId === activeProgramStepId,
+          roundTrip: roundTripKeys.has(`${link.programId}|${link.tableId}`),
+        },
+      };
+    });
+  }, [diagram, tableMap, shownColumns, selection.programIds, activeProgramStepId, tracing, simulating, lensing, focusSet]);
+
+  const relationEdges = useMemo<RelationEdgeType[]>(() => {
     const prepared = diagram.relationships.map((r) => {
       const src = tableMap.get(r.sourceTableId);
       const tgt = tableMap.get(r.targetTableId);
@@ -501,9 +582,12 @@ export function Canvas() {
     return out;
   }, [diagram, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet, simResult, simFlowIndex, simStage, simNonce, simPlaying, simLookupRels, simulating, lensing, lensReach]);
 
+  const edges = useMemo<CanvasEdge[]>(() => [...programEdges, ...relationEdges], [programEdges, relationEdges]);
+
   /* ---------- change handlers ---------- */
 
   const noteIds = useMemo(() => new Set(diagram.notes.map((n) => n.id)), [diagram.notes]);
+  const programIds = useMemo(() => new Set(diagram.programs.map((p) => p.id)), [diagram.programs]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<CanvasNode>[]) => {
@@ -545,9 +629,9 @@ export function Canvas() {
         }
       }
       if (moves.length) moveItems(moves);
-      if (selects.length) applyNodeSelection(selects, (id) => noteIds.has(id));
+      if (selects.length) applyNodeSelection(selects, (id) => noteIds.has(id), (id) => programIds.has(id));
     },
-    [noteIds, groupIds, moveItems, mutate, setNodeSize, applyNodeSelection],
+    [noteIds, programIds, groupIds, moveItems, mutate, setNodeSize, applyNodeSelection],
   );
 
   const onEdgesChange = useCallback(
@@ -568,7 +652,10 @@ export function Canvas() {
       removeElements({
         tableIds: goneNodes.filter((n) => n.type === 'table').map((n) => n.id),
         noteIds: goneNodes.filter((n) => n.type === 'note').map((n) => n.id),
-        relationshipIds: goneEdges.map((e) => e.id),
+        programIds: goneNodes.filter((n) => n.type === 'program').map((n) => n.id),
+        // A program's arrows belong to its steps, so they are never deleted from
+        // the canvas; only real relationships are.
+        relationshipIds: goneEdges.filter((e) => e.type !== 'programlink').map((e) => e.id),
       });
     },
     [removeElements],

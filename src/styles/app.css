@@ -31,6 +31,9 @@
   /* Computed rather than stored: the Σ mark and the derived lens. */
   --derived: #9ece6a;
   --derived-soft: rgba(158, 206, 106, 0.16);
+  /* Work that happens outside the database: program nodes and their arrows. */
+  --program: #f2a6d8;
+  --program-soft: rgba(242, 166, 216, 0.16);
   --canvas-bg: #0c0e14;
   --canvas-dot: #2a3040;
   --node-bg: #1a1e2a;
@@ -77,6 +80,8 @@
   --trace-soft: rgba(16, 158, 145, 0.16);
   --derived: #3f9d4c;
   --derived-soft: rgba(63, 157, 76, 0.14);
+  --program: #b2429a;
+  --program-soft: rgba(178, 66, 154, 0.13);
   --canvas-bg: #eaedf3;
   --canvas-dot: #c6ccd9;
   --node-bg: #ffffff;

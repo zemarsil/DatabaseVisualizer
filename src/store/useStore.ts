@@ -349,7 +349,7 @@ interface Actions {
   selectGroup: (id: string | null) => void;
   clearSelection: () => void;
   /** Replays React Flow node select/deselect deltas onto the live selection. */
-  applyNodeSelection: (changes: SelectionChange[], isNote: (id: string) => boolean) => void;
+  applyNodeSelection: (changes: SelectionChange[], isNote: (id: string) => boolean, isProgram?: (id: string) => boolean) => void;
   /** Replays React Flow edge select/deselect deltas onto the live selection. */
   applyEdgeSelection: (changes: SelectionChange[]) => void;
 
@@ -1433,7 +1433,7 @@ export const useStore = create<Store>()(
           Object.assign(s.selection, sel);
           // Same rule the React Flow reducers apply: picking anything else up
           // takes over from a selected region, unless the caller says otherwise.
-          if (sel.groupId === undefined && (s.selection.tableIds.length || s.selection.noteIds.length || s.selection.relationshipId)) {
+          if (sel.groupId === undefined && (s.selection.tableIds.length || s.selection.noteIds.length || s.selection.programIds.length || s.selection.relationshipId)) {
             s.selection.groupId = null;
           }
         }),
@@ -1469,8 +1469,8 @@ export const useStore = create<Store>()(
        * fire several selection updates (pointer move plus auto-pan) before React re-renders, and
        * replaying a delta onto a stale selection silently drops nodes the box already picked up.
        */
-      applyNodeSelection: (changes, isNote) => {
-        const next = applyNodeSelectionChanges(get().selection, changes, isNote);
+      applyNodeSelection: (changes, isNote, isProgram) => {
+        const next = applyNodeSelectionChanges(get().selection, changes, isNote, isProgram);
         if (next) set((s) => void (s.selection = next));
       },
       applyEdgeSelection: (changes) => {

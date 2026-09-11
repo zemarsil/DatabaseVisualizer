@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Boxes, Database, Eye, PanelLeftClose, Plus, Search, StickyNote } from 'lucide-react';
+import { Boxes, Cpu, Database, Eye, PanelLeftClose, Plus, Search, StickyNote } from 'lucide-react';
 import type { Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { paletteHue } from '@/lib/palette';
@@ -9,6 +9,7 @@ import { ResizeHandle } from '@/components/ui/ResizeHandle';
 export function Sidebar() {
   const tables = useStore((s) => s.diagram.tables);
   const notes = useStore((s) => s.diagram.notes);
+  const programs = useStore((s) => s.diagram.programs);
   const groups = useStore((s) => s.diagram.groups);
   const selection = useStore((s) => s.selection);
   const trace = useStore((s) => s.trace);
@@ -108,6 +109,28 @@ export function Sidebar() {
 
         {groups.length > 0 && sections.ungrouped.length > 0 && <div className="sidebar__section">Ungrouped</div>}
         {sections.ungrouped.map(renderTable)}
+
+        {programs.length > 0 && (
+          <>
+            <div className="sidebar__section">Programs</div>
+            {programs.map((prg) => (
+              <button
+                key={prg.id}
+                className={`sidebar__item${selection.programIds.includes(prg.id) ? ' sidebar__item--active' : ''}`}
+                onClick={() => setSelection({ programIds: [prg.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null })}
+                onContextMenu={(e) => {
+                  if (!selection.programIds.includes(prg.id)) setSelection({ programIds: [prg.id], tableIds: [], noteIds: [], relationshipId: null });
+                  openContextMenu(e, { type: 'program', programId: prg.id });
+                }}
+                title={prg.comment || prg.name}
+              >
+                <Cpu size={13} style={{ color: paletteHue(prg.color) }} />
+                <span className="sidebar__name">{prg.name}</span>
+                <span className="sidebar__count">{prg.steps.length}</span>
+              </button>
+            ))}
+          </>
+        )}
 
         {notes.length > 0 && (
           <>

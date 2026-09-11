@@ -55,6 +55,14 @@ interface UiState {
   renamingTableId: string | null;
   setRenamingTableId: (id: string | null) => void;
 
+  /**
+   * Program step the canvas last pointed at. Clicking a step on a program node
+   * sets it, and the inspector opens on that step, so the two halves of the
+   * screen stay looking at the same thing.
+   */
+  activeProgramStepId: string | null;
+  setActiveProgramStepId: (id: string | null) => void;
+
   /** Persisted canvas preferences. */
   snapToGrid: boolean;
   setSnapToGrid: (on: boolean) => void;
@@ -125,6 +133,9 @@ export const useUi = create<UiState>()((set, get) => {
 
     renamingTableId: null,
     setRenamingTableId: (id) => set({ renamingTableId: id }),
+
+    activeProgramStepId: null,
+    setActiveProgramStepId: (id) => set({ activeProgramStepId: id }),
 
     snapToGrid: prefs.snapToGrid,
     setSnapToGrid: (on) => {
