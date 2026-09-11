@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
-import { ArrowDownToLine, ArrowUpFromLine, Cpu, TriangleAlert } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, Cpu, Terminal, TriangleAlert } from 'lucide-react';
 import { programLanguageMeta, programRoleMeta, type Program, type ProgramStepOp } from '@shared/types';
 import { paletteHue } from '@/lib/palette';
 import { useUi } from '@/store/useUi';
@@ -55,6 +55,7 @@ function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
   return (
     <div className={classes.join(' ')} style={{ '--hue': paletteHue(program.color) } as React.CSSProperties}>
       <div className="program-node__header" title={program.comment || program.entrypoint || undefined}>
+        <Terminal className="program-node__prompt" />
         <span className="program-node__lang" title={`Written in ${lang.label}`}>
           {lang.label}
         </span>

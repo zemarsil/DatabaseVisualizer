@@ -3,26 +3,30 @@
 /* ------------------------------------------------------------------ */
 
 /*
- * Deliberately not a table. A table node is a box of columns with a coloured
- * header; a program is a numbered list of things that happen in order, and it
- * reads as one — squarer corners, a monospace name, an accent of its own — so
- * nobody mistakes it for something the schema contains.
+ * Deliberately not a table, and deliberately not "a table with a different
+ * border" the way a view is. A table and a view are still both SQL — same
+ * rounded shape, same header language, just solid vs dashed. Code runs
+ * outside the database entirely, so it reads as a different kind of object
+ * on sight: square corners instead of rounded, a permanent tinted outline
+ * instead of a border that only lights up on selection, a code-editor
+ * line-number gutter down the left of every step, and a terminal glyph in
+ * the header. Nothing about it should read as "a table."
  */
 .program-node {
   --hue: #f2a6d8;
   width: 260px;
-  border-radius: 4px;
-  border: 1px dashed var(--program);
+  border-radius: 0;
+  border: 2px solid var(--program);
   background: var(--node-bg);
-  box-shadow: var(--node-shadow);
+  box-shadow: var(--node-shadow), 0 0 0 3px var(--program-soft);
   font-size: 12.5px;
+  font-family: var(--mono);
   transition: opacity 0.2s, box-shadow 0.15s, border-color 0.15s;
   position: relative;
 }
 .program-node--selected {
   border-color: var(--accent);
-  border-style: solid;
-  box-shadow: 0 0 0 2px var(--accent-soft), var(--node-shadow);
+  box-shadow: var(--node-shadow), 0 0 0 3px var(--accent-soft);
 }
 .program-node--dim {
   opacity: 0.22;
@@ -34,10 +38,15 @@
   gap: 7px;
   height: 44px;
   padding: 0 11px;
-  border-radius: 3px 3px 0 0;
-  border-bottom: 1px solid var(--node-border);
-  background: color-mix(in srgb, var(--hue) 16%, var(--node-bg));
+  border-bottom: 2px solid var(--program);
+  background: color-mix(in srgb, var(--hue) 32%, var(--node-bg));
   position: relative;
+}
+.program-node__prompt {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  color: var(--program);
 }
 .program-node__lang {
   flex: none;
@@ -84,7 +93,7 @@
   align-items: center;
   gap: 7px;
   height: 26px;
-  padding: 0 11px;
+  padding: 0 11px 0 0;
   position: relative;
   cursor: pointer;
 }
@@ -94,13 +103,23 @@
 .program-node__step--active {
   background: var(--accent-soft);
 }
+/* A code editor's line-number gutter, not a table's row icon: a shaded
+   column running the full height of the step list, ruled off from the
+   content it numbers. */
 .program-node__num {
   flex: none;
-  width: 15px;
+  align-self: stretch;
+  width: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-right: 6px;
   text-align: right;
   font-family: var(--mono);
   font-size: 10.5px;
   color: var(--text-faint);
+  background: color-mix(in srgb, var(--program) 9%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--program) 30%, var(--node-border));
 }
 .program-node__op {
   flex: none;
