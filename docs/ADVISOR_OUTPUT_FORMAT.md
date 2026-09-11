@@ -8,8 +8,8 @@ Two input channels exist. Pick one per recommendation; do not mix them in one fi
 
 | Channel | How the user loads it | Carries | Loses |
 | --- | --- | --- | --- |
-| **`.dbviz.json` diagram** | File menu → Open (`Ctrl+O`) | everything below: tables, columns, indexes, checks, comments, views, enum/composite types, **extensions**, foreign keys, **data-flow edges with derivations**, **dependency and serialized edges**, **external-source groups**, **tagged queries**, **sticky notes**, colours, positions — and, in the workspace form, **several diagrams in one file** | nothing |
-| **Plain DDL** | Bottom drawer → **Import SQL** → paste → *Add to the current diagram* / *Replace* | tables, columns, indexes, uniques, checks, `COMMENT ON`, foreign keys, `CREATE VIEW`, `CREATE TYPE` (enum and composite), `CREATE EXTENSION` | flows, dependencies, derivations, groups, tagged queries, notes, colours, positions |
+| **`.dbviz.json` diagram** | File menu → Open (`Ctrl+O`) | everything below: tables, columns, indexes, checks, comments, views, enum/composite types, **extensions**, foreign keys, **data-flow edges with derivations**, **dependency and serialized edges**, **external-source groups**, **tagged queries**, **programs that talk to the schema from outside it**, **sticky notes**, colours, positions — and, in the workspace form, **several diagrams in one file** | nothing |
+| **Plain DDL** | Bottom drawer → **Import SQL** → paste → *Add to the current diagram* / *Replace* | tables, columns, indexes, uniques, checks, `COMMENT ON`, foreign keys, `CREATE VIEW`, `CREATE TYPE` (enum and composite), `CREATE EXTENSION` | flows, dependencies, derivations, groups, tagged queries, programs, notes, colours, positions |
 
 The "Loses" column describes DDL *you* write. A `.sql` script the app itself exported
 is a third thing: it carries its connections in a `-- dbviz:connections` comment block
@@ -62,6 +62,7 @@ A single JSON document in one fenced ```json block. Shape:
   "groups": [ /* Group */ ],
   "tables": [ /* Table */ ],
   "relationships": [ /* Relationship */ ],
+  "programs": [ /* Program */ ],
   "notes": [ /* Note */ ]
 }
 ```
@@ -302,6 +303,52 @@ the generated skeleton and the **Simulate** mode (which runs the flows over samp
 shows the lineage of every value), the query covers what it cannot express (a join that is
 not a foreign key, the upsert, the trigger).
 
+**Program** — something outside the database that talks to it.
+
+```json
+{
+  "id": "prg_scorer",
+  "name": "scorer",
+  "language": "python",
+  "role": "job",
+  "entrypoint": "services/scorer/main.py",
+  "comment": "Claims a pending job, scores it, writes the score back and marks the job done.",
+  "color": "pink",
+  "position": { "x": -360, "y": 120 },
+  "steps": [
+    { "id": "stp_1", "op": "read", "tableId": "tbl_jobs", "columnIds": ["col_jobs_id", "col_jobs_payload"],
+      "sql": "SELECT id, payload FROM jobs WHERE status = 'pending' FOR UPDATE SKIP LOCKED",
+      "note": "claim a batch" },
+    { "id": "stp_2", "op": "compute", "columnIds": [], "note": "score the payload" },
+    { "id": "stp_3", "op": "write", "tableId": "tbl_results", "columnIds": ["col_results_job_id", "col_results_score"] },
+    { "id": "stp_4", "op": "write", "tableId": "tbl_jobs", "columnIds": ["col_jobs_status"],
+      "sql": "UPDATE jobs SET status = 'done' WHERE id = $1" }
+  ]
+}
+```
+
+This is the one place to put **computation you are recommending happen outside the
+database**. A rollup that could be a data flow should be a data flow; a program is for the
+work SQL cannot do — a fit, a render, a model call, a request to somebody else's API — and
+for the round trip around it.
+
+- `language` is one of `python`, `rust`, `go`, `cpp`, `c`, `java`, `javascript`,
+  `typescript`, `csharp`, `ruby`, `shell`, `other`. Anything unrecognised loads as
+  `other`, which still gets a node and highlighting, only no generated starter.
+- `role` is optional: `service` (long-lived), `job` (scheduled), `script` (run by hand)
+  or `etl` (bulk movement). It changes the badge and the wording, never the code.
+- `steps` are **ordered, and the order is the point**: it is what makes a round trip
+  legible on the canvas. `op` is `read`, `write` or `compute`.
+- A `compute` step must have **no** `tableId`, no `sql` and an empty `columnIds` — it is
+  defined by not touching the database. A `read` or `write` step should name a `tableId`;
+  `columnIds` narrows it to specific columns, and leaving it empty means the whole row.
+- `sql` is the statement the program issues, optional. Leave it out and the app writes one
+  from the table and columns for the generated starter. `code` (optional, per step) holds
+  host-language code; use it when the code is the recommendation.
+- Edges are **derived from the steps** — do not try to express a program with a
+  relationship, which only joins two tables. Position the program to the left of the
+  tables it touches so its arrows have room.
+
 **Note** — sticky note on the canvas, for prose the schema cannot hold.
 
 ```json
@@ -353,14 +400,17 @@ the app writes for a single diagram, and it is what every other tool that reads
 ### Rules that keep the file loadable
 
 1. **Every id is a unique string across the whole file** — tables, columns, indexes,
-   relationships, derivations, groups, custom types and notes share one namespace. Use
+   relationships, derivations, groups, custom types, programs, program steps and notes
+   share one namespace. Use
    readable, deterministic ids — `tbl_orders`, `col_orders_customer_id`,
    `idx_orders_customer`, `rel_orders_customer`, `note_partitioning` — not random ones.
    It makes the JSON reviewable and makes cross-references obvious.
 2. **Every id referenced must exist**: `sourceTableId`/`targetTableId` name tables in this
    file; `sourceColumnIds` are columns of the source table, `targetColumnIds` of the
    target table; `columnIds` in an index belong to its own table; a `groupId` names a
-   group in this file; a derivation's `targetColumnId` is a column of the flow's target.
+   group in this file; a derivation's `targetColumnId` is a column of the flow's target;
+   a program step's `tableId` names a table in this file and its `columnIds` are columns
+   of that table.
    Dangling ids load without an error but draw a broken diagram — and a dangling `groupId`
    is dropped, so the table silently leaves the group.
 3. **Lay out the tables.** Positions are pixels; tables are ~280 wide. Place them on a

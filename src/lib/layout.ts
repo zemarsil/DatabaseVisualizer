@@ -1,6 +1,7 @@
 import dagre from '@dagrejs/dagre';
 import type { Diagram, Relationship, RelationshipKind } from '@shared/types';
 import { estimateNodeSize } from './geometry';
+import { estimateProgramSize, programTableIds } from './programs';
 import { effectiveDisplay, visibleColumns } from './visibleColumns';
 
 /**
@@ -104,14 +105,91 @@ export function layoutDiagram(diagram: Diagram, opts: LayoutOptions = {}): Recor
     return positions;
   };
 
-  if (usedGroups.size === 0) return build(false);
-  try {
-    const clustered = build(true);
-    // dagre's cluster support can bail out on awkward graphs; a result that is
-    // missing tables is worse than an ungrouped layout.
-    if (Object.keys(clustered).length === diagram.tables.length) return clustered;
-  } catch {
-    /* fall through to the plain layout */
+  const tables = usedGroups.size === 0 ? build(false) : clusteredOrPlain();
+
+  function clusteredOrPlain(): Record<string, { x: number; y: number }> {
+    try {
+      const clustered = build(true);
+      // dagre's cluster support can bail out on awkward graphs; a result that is
+      // missing tables is worse than an ungrouped layout.
+      if (Object.keys(clustered).length === diagram.tables.length) return clustered;
+    } catch {
+      /* fall through to the plain layout */
+    }
+    return build(false);
   }
-  return build(false);
+
+  return { ...tables, ...placePrograms(diagram, tables, opts) };
+}
+
+/**
+ * Where the programs go once the tables are placed.
+ *
+ * They are deliberately kept out of the ranking. A program is not part of the
+ * schema's dependency order — it is the caller, and putting it in a rank would
+ * push apart tables that belong next to each other to make room for something
+ * the database does not contain. Instead each program is parked in a margin
+ * beside the tables it touches: to their left when the layout runs left to
+ * right, above them when it runs top to bottom, so its arrows come in from the
+ * outside rather than through the middle of the diagram.
+ *
+ * Programs sharing that margin are stacked rather than overlapped, and one that
+ * touches nothing goes at the end of the stack, since there is nothing to sit
+ * beside.
+ */
+function placePrograms(
+  diagram: Diagram,
+  tables: Record<string, { x: number; y: number }>,
+  opts: LayoutOptions,
+): Record<string, { x: number; y: number }> {
+  if (!diagram.programs.length) return {};
+  const horizontal = (opts.direction ?? 'LR') === 'LR';
+  const sizeOf = (id: string) => opts.sizes?.[id] ?? estimateNodeSize(diagram.tables.find((t) => t.id === id)?.columns ?? []);
+  const MARGIN = 120;
+  const GAP = 40;
+
+  let minX = Infinity;
+  let minY = Infinity;
+  for (const t of diagram.tables) {
+    const at = tables[t.id];
+    if (!at) continue;
+    minX = Math.min(minX, at.x);
+    minY = Math.min(minY, at.y);
+  }
+  if (!Number.isFinite(minX)) {
+    minX = 0;
+    minY = 0;
+  }
+
+  const widest = Math.max(...diagram.programs.map((p) => estimateProgramSize(p).width));
+  const out: Record<string, { x: number; y: number }> = {};
+  // Where the next program goes along the margin, so two never land on each other.
+  let cursor = Infinity;
+
+  const ordered = [...diagram.programs].sort((a, b) => {
+    const centre = (id: string) => {
+      const ids = programTableIds(diagram.programs.find((p) => p.id === id)!).filter((tid) => tables[tid]);
+      if (!ids.length) return Infinity;
+      const values = ids.map((tid) => (horizontal ? tables[tid].y + sizeOf(tid).height / 2 : tables[tid].x + sizeOf(tid).width / 2));
+      return values.reduce((s, v) => s + v, 0) / values.length;
+    };
+    return centre(a.id) - centre(b.id);
+  });
+
+  for (const prg of ordered) {
+    const size = estimateProgramSize(prg);
+    const touched = programTableIds(prg).filter((id) => tables[id]);
+    // Line the program up with the middle of what it touches, then push it clear
+    // of whatever was placed before it in the same margin.
+    const middle = touched.length
+      ? touched.reduce((sum, id) => sum + (horizontal ? tables[id].y + sizeOf(id).height / 2 : tables[id].x + sizeOf(id).width / 2), 0) / touched.length
+      : cursor;
+    const along = Number.isFinite(middle) ? middle - (horizontal ? size.height : size.width) / 2 : minY;
+    const placed = Number.isFinite(cursor) ? Math.max(along, cursor) : along;
+    out[prg.id] = horizontal
+      ? { x: Math.round(minX - widest - MARGIN), y: Math.round(placed) }
+      : { x: Math.round(placed), y: Math.round(minY - size.height - MARGIN) };
+    cursor = placed + (horizontal ? size.height : size.width) + GAP;
+  }
+  return out;
 }

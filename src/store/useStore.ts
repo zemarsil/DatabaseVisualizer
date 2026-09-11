@@ -1360,6 +1360,10 @@ export const useStore = create<Store>()(
             const p = positions[t.id];
             if (p) t.position = p;
           }
+          for (const prg of d.programs) {
+            const p = positions[prg.id];
+            if (p) prg.position = p;
+          }
         });
         set((s) => {
           s.layoutDirection = dir;
@@ -1430,13 +1434,9 @@ export const useStore = create<Store>()(
             const p = positions[t.id];
             if (p) t.position = p;
           }
-          // The layout only knows about tables, so an imported program would sit
-          // at the origin under them; stack them below instead.
-          let below = nextProgramPosition({ ...(d as Diagram), programs: [] });
           for (const prg of d.programs) {
-            if (!importedPrograms.some((x) => x.id === prg.id)) continue;
-            prg.position = below;
-            below = { x: below.x, y: below.y + 160 };
+            const p = positions[prg.id];
+            if (p) prg.position = p;
           }
         });
         set((s) => {

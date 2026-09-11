@@ -3,6 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { parseDiagramFile } from '@/lib/io';
 import { generateSchema } from '@/lib/sql/generator';
+import { programRoundTrips } from '@/lib/programs';
 
 const FILE = 'docs/examples/orders-rollup.dbviz.json';
 
@@ -17,7 +18,28 @@ describe(FILE, () => {
     expect(diagram.groups.map((g) => g.name)).toEqual(['CRM (read-only)']);
     expect(diagram.tables.find((t) => t.name === 'crm_contacts')!.groupId).toBe(diagram.groups[0].id);
     expect(diagram.tables.find((t) => t.name === 'v_customer_dashboard')!.kind).toBe('view');
-    expect(diagram.notes).toHaveLength(2);
+    expect(diagram.notes).toHaveLength(3);
+  });
+
+  it('carries the program that shows why some work cannot be a data flow', () => {
+    expect(diagram.programs).toHaveLength(1);
+    const p = diagram.programs[0];
+    expect(p.name).toBe('risk_scorer');
+    expect(p.language).toBe('python');
+    expect(p.steps.map((s) => s.op)).toEqual(['read', 'compute', 'write']);
+
+    const orders = diagram.tables.find((t) => t.name === 'orders')!;
+    // Every step points at a real table and real columns of it.
+    for (const s of p.steps) {
+      if (s.op === 'compute') {
+        expect(s.tableId).toBeUndefined();
+        continue;
+      }
+      expect(s.tableId).toBe(orders.id);
+      for (const cid of s.columnIds) expect(orders.columns.some((c) => c.id === cid)).toBe(true);
+    }
+    // It reads orders and writes orders, which is the round trip the node draws.
+    expect(programRoundTrips(p)).toEqual([orders.id]);
   });
 
   it('keeps every relationship kind the doc documents', () => {

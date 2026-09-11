@@ -1,16 +1,25 @@
 {
   "version": 1,
-  "name": "Orders rollup — advisor recommendation",
+  "name": "Orders rollup \u2014 advisor recommendation",
   "dialect": "postgresql",
   "extensions": [
-    { "id": "ext_citext", "name": "citext", "comment": "customers.email compares case-insensitively." }
+    {
+      "id": "ext_citext",
+      "name": "citext",
+      "comment": "customers.email compares case-insensitively."
+    }
   ],
   "customTypes": [
     {
       "id": "typ_order_status",
       "name": "order_status",
       "kind": "enum",
-      "values": ["pending", "paid", "shipped", "cancelled"],
+      "values": [
+        "pending",
+        "paid",
+        "shipped",
+        "cancelled"
+      ],
       "comment": "An enum rather than a CHECK: the set is closed and read in application code, so a named type documents it once."
     }
   ],
@@ -21,7 +30,10 @@
       "color": "purple",
       "external": true,
       "note": "Vendor CRM, reached over a foreign data wrapper. We only ever SELECT from it, so nothing here is created by the generated script.",
-      "position": { "x": -40, "y": -360 }
+      "position": {
+        "x": -40,
+        "y": -360
+      }
     }
   ],
   "tables": [
@@ -31,11 +43,30 @@
       "color": "purple",
       "groupId": "grp_crm",
       "comment": "Their table, shown so the join is visible. Not ours to change.",
-      "position": { "x": 0, "y": -300 },
+      "position": {
+        "x": 0,
+        "y": -300
+      },
       "checks": [],
       "columns": [
-        { "id": "col_crm_contact_id", "name": "contact_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
-        { "id": "col_crm_email", "name": "email", "type": "TEXT", "nullable": false, "primaryKey": false, "unique": true, "autoIncrement": false }
+        {
+          "id": "col_crm_contact_id",
+          "name": "contact_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_crm_email",
+          "name": "email",
+          "type": "TEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": true,
+          "autoIncrement": false
+        }
       ],
       "indexes": []
     },
@@ -45,10 +76,21 @@
       "schema": "public",
       "color": "blue",
       "comment": "Unchanged source table.",
-      "position": { "x": 0, "y": 0 },
+      "position": {
+        "x": 0,
+        "y": 0
+      },
       "checks": [],
       "columns": [
-        { "id": "col_customers_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
+        {
+          "id": "col_customers_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
         {
           "id": "col_customers_email",
           "name": "email",
@@ -59,8 +101,25 @@
           "autoIncrement": false,
           "comment": "CITEXT rather than lower(email) + expression index: the equality lookup is the only access pattern."
         },
-        { "id": "col_customers_crm_contact_id", "name": "crm_contact_id", "type": "BIGINT", "nullable": true, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_customers_created_at", "name": "created_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+        {
+          "id": "col_customers_crm_contact_id",
+          "name": "crm_contact_id",
+          "type": "BIGINT",
+          "nullable": true,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_customers_created_at",
+          "name": "created_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
       ],
       "indexes": []
     },
@@ -70,20 +129,71 @@
       "schema": "public",
       "color": "blue",
       "comment": "Store money as integer cents; NUMERIC(12,2) only if you need exact decimal arithmetic in the DB.",
-      "position": { "x": 320, "y": 0 },
-      "checks": ["total_cents >= 0"],
+      "position": {
+        "x": 320,
+        "y": 0
+      },
+      "checks": [
+        "total_cents >= 0"
+      ],
       "columns": [
-        { "id": "col_orders_id", "name": "id", "type": "BIGSERIAL", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": true },
-        { "id": "col_orders_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_orders_status", "name": "status", "type": "order_status", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "'pending'" },
-        { "id": "col_orders_total_cents", "name": "total_cents", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
-        { "id": "col_orders_placed_at", "name": "placed_at", "type": "TIMESTAMPTZ", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "now()" }
+        {
+          "id": "col_orders_id",
+          "name": "id",
+          "type": "BIGSERIAL",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": true
+        },
+        {
+          "id": "col_orders_customer_id",
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_orders_status",
+          "name": "status",
+          "type": "order_status",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "'pending'"
+        },
+        {
+          "id": "col_orders_total_cents",
+          "name": "total_cents",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        },
+        {
+          "id": "col_orders_placed_at",
+          "name": "placed_at",
+          "type": "TIMESTAMPTZ",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "now()"
+        }
       ],
       "indexes": [
         {
           "id": "idx_orders_customer_placed",
           "name": "orders_customer_id_placed_at_idx",
-          "columnIds": ["col_orders_customer_id", "col_orders_placed_at"],
+          "columnIds": [
+            "col_orders_customer_id",
+            "col_orders_placed_at"
+          ],
           "unique": false
         }
       ]
@@ -94,10 +204,21 @@
       "schema": "public",
       "color": "orange",
       "comment": "New: monthly rollup maintained on write. The dashboard query drops from a full scan of orders to a single-row lookup.",
-      "position": { "x": 320, "y": 260 },
+      "position": {
+        "x": 320,
+        "y": 260
+      },
       "checks": [],
       "columns": [
-        { "id": "col_cm_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": true, "unique": false, "autoIncrement": false },
+        {
+          "id": "col_cm_customer_id",
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": true,
+          "unique": false,
+          "autoIncrement": false
+        },
         {
           "id": "col_cm_month",
           "name": "month",
@@ -108,8 +229,26 @@
           "autoIncrement": false,
           "comment": "First day of the month; date_trunc('month', placed_at)::date."
         },
-        { "id": "col_cm_order_count", "name": "order_count", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" },
-        { "id": "col_cm_total_cents", "name": "total_cents", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false, "defaultValue": "0" }
+        {
+          "id": "col_cm_order_count",
+          "name": "order_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        },
+        {
+          "id": "col_cm_total_cents",
+          "name": "total_cents",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false,
+          "defaultValue": "0"
+        }
       ],
       "indexes": []
     },
@@ -121,14 +260,57 @@
       "color": "teal",
       "comment": "What the dashboard actually selects from. Reads the rollup, never orders.",
       "viewSql": "SELECT c.id AS customer_id,\n       c.email,\n       m.month,\n       m.order_count,\n       m.total_cents\nFROM customers c\nJOIN customer_month_totals m ON m.customer_id = c.id",
-      "position": { "x": 640, "y": 260 },
+      "position": {
+        "x": 640,
+        "y": 260
+      },
       "checks": [],
       "columns": [
-        { "id": "col_vd_customer_id", "name": "customer_id", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_vd_email", "name": "email", "type": "CITEXT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_vd_month", "name": "month", "type": "DATE", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_vd_order_count", "name": "order_count", "type": "INTEGER", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false },
-        { "id": "col_vd_total_cents", "name": "total_cents", "type": "BIGINT", "nullable": false, "primaryKey": false, "unique": false, "autoIncrement": false }
+        {
+          "id": "col_vd_customer_id",
+          "name": "customer_id",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_vd_email",
+          "name": "email",
+          "type": "CITEXT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_vd_month",
+          "name": "month",
+          "type": "DATE",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_vd_order_count",
+          "name": "order_count",
+          "type": "INTEGER",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        },
+        {
+          "id": "col_vd_total_cents",
+          "name": "total_cents",
+          "type": "BIGINT",
+          "nullable": false,
+          "primaryKey": false,
+          "unique": false,
+          "autoIncrement": false
+        }
       ],
       "indexes": []
     }
@@ -139,9 +321,13 @@
       "kind": "fk",
       "verb": "references",
       "sourceTableId": "tbl_customers",
-      "sourceColumnIds": ["col_customers_crm_contact_id"],
+      "sourceColumnIds": [
+        "col_customers_crm_contact_id"
+      ],
       "targetTableId": "tbl_crm_contacts",
-      "targetColumnIds": ["col_crm_contact_id"],
+      "targetColumnIds": [
+        "col_crm_contact_id"
+      ],
       "name": "customers_crm_contact_id_fkey",
       "note": "crm_contacts lives in the CRM group, so the script documents this link instead of emitting a constraint.",
       "onDelete": "SET NULL",
@@ -152,9 +338,13 @@
       "kind": "fk",
       "verb": "belongs-to",
       "sourceTableId": "tbl_orders",
-      "sourceColumnIds": ["col_orders_customer_id"],
+      "sourceColumnIds": [
+        "col_orders_customer_id"
+      ],
       "targetTableId": "tbl_customers",
-      "targetColumnIds": ["col_customers_id"],
+      "targetColumnIds": [
+        "col_customers_id"
+      ],
       "name": "orders_customer_id_fkey",
       "onDelete": "CASCADE",
       "onUpdate": "NO ACTION"
@@ -164,9 +354,13 @@
       "kind": "fk",
       "verb": "part-of",
       "sourceTableId": "tbl_customer_month",
-      "sourceColumnIds": ["col_cm_customer_id"],
+      "sourceColumnIds": [
+        "col_cm_customer_id"
+      ],
       "targetTableId": "tbl_customers",
-      "targetColumnIds": ["col_customers_id"],
+      "targetColumnIds": [
+        "col_customers_id"
+      ],
       "name": "customer_month_totals_customer_id_fkey",
       "onDelete": "CASCADE",
       "onUpdate": "NO ACTION"
@@ -183,8 +377,28 @@
       "inverseName": "rolled up from",
       "note": "Do this in the same transaction as the INSERT into orders, not in a nightly job: the dashboard reads it seconds after the write.",
       "derivations": [
-        { "id": "drv_cm_order_count", "targetColumnId": "col_cm_order_count", "expression": "*", "aggregate": "COUNT", "groupBy": ["customer_id", "month"], "filter": "status <> 'cancelled'" },
-        { "id": "drv_cm_total_cents", "targetColumnId": "col_cm_total_cents", "expression": "total_cents", "aggregate": "SUM", "groupBy": ["customer_id", "month"], "filter": "status <> 'cancelled'" }
+        {
+          "id": "drv_cm_order_count",
+          "targetColumnId": "col_cm_order_count",
+          "expression": "*",
+          "aggregate": "COUNT",
+          "groupBy": [
+            "customer_id",
+            "month"
+          ],
+          "filter": "status <> 'cancelled'"
+        },
+        {
+          "id": "drv_cm_total_cents",
+          "targetColumnId": "col_cm_total_cents",
+          "expression": "total_cents",
+          "aggregate": "SUM",
+          "groupBy": [
+            "customer_id",
+            "month"
+          ],
+          "filter": "status <> 'cancelled'"
+        }
       ],
       "query": "INSERT INTO customer_month_totals (customer_id, month, order_count, total_cents)\nVALUES (NEW.customer_id, date_trunc('month', NEW.placed_at)::date, 1, NEW.total_cents)\nON CONFLICT (customer_id, month) DO UPDATE\n  SET order_count = customer_month_totals.order_count + 1,\n      total_cents = customer_month_totals.total_cents + EXCLUDED.total_cents;"
     },
@@ -204,7 +418,10 @@
     {
       "id": "note_summary",
       "text": "Recommendation: keep the aggregate where it is read, not where it is written from.\n\n1. Add customer_month_totals, maintained by the upsert on the dashed edge.\n2. Composite index (customer_id, placed_at) on orders serves the drill-down; the leading column must be customer_id because every query filters on it.\n3. Money stays in integer cents.\n4. The dashboard reads the view, never orders.",
-      "position": { "x": 980, "y": 250 },
+      "position": {
+        "x": 980,
+        "y": 250
+      },
       "width": 320,
       "height": 210,
       "color": "yellow"
@@ -212,10 +429,70 @@
     {
       "id": "note_not_modelled",
       "text": "Not representable in the diagram: consider partitioning orders BY RANGE (placed_at) once it passes ~50M rows. The DDL generated here is the unpartitioned table.",
-      "position": { "x": 980, "y": 480 },
+      "position": {
+        "x": 980,
+        "y": 480
+      },
       "width": 320,
       "height": 130,
       "color": "slate"
+    },
+    {
+      "id": "note_placement",
+      "text": "Why one is a flow and the other a program:\n\nThe monthly rollup is a data flow, because SUM and COUNT over a GROUP BY are things the database is better at than any client.\n\nThe risk score is a program, because it ends in a model call. Nothing about that can be SQL, so the row makes a round trip: read pending, score outside, write the verdict back.",
+      "position": {
+        "x": -380,
+        "y": 300
+      },
+      "width": 320,
+      "height": 210,
+      "color": "pink"
+    }
+  ],
+  "programs": [
+    {
+      "id": "prg_risk_scorer",
+      "name": "risk_scorer",
+      "language": "python",
+      "role": "job",
+      "entrypoint": "services/risk/score.py",
+      "comment": "Scores each new order against the fraud model, then records the verdict on the order. The model call is why this is a program and not a data flow: no SQL can make it.",
+      "color": "pink",
+      "position": {
+        "x": -380,
+        "y": 60
+      },
+      "steps": [
+        {
+          "id": "stp_risk_read",
+          "op": "read",
+          "tableId": "tbl_orders",
+          "columnIds": [
+            "col_orders_id",
+            "col_orders_customer_id",
+            "col_orders_total_cents",
+            "col_orders_placed_at"
+          ],
+          "sql": "SELECT id, customer_id, total_cents, placed_at\nFROM orders\nWHERE status = 'pending'\nORDER BY placed_at\nFOR UPDATE SKIP LOCKED",
+          "note": "claim the pending orders, one worker at a time"
+        },
+        {
+          "id": "stp_risk_score",
+          "op": "compute",
+          "columnIds": [],
+          "note": "call the fraud model and get a verdict"
+        },
+        {
+          "id": "stp_risk_write",
+          "op": "write",
+          "tableId": "tbl_orders",
+          "columnIds": [
+            "col_orders_status"
+          ],
+          "sql": "UPDATE orders\nSET status = $1\nWHERE id = $2",
+          "note": "paid, or cancelled when the model rejects it"
+        }
+      ]
     }
   ]
 }

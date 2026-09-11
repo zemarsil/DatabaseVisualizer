@@ -33,6 +33,7 @@ import {
   Shuffle,
   Sigma,
   Sparkles,
+  Cpu,
   StickyNote,
   Sun,
   Table2,
@@ -190,6 +191,16 @@ function buildItems(): PaletteItem[] {
   act('add-table', 'Edit', 'Add table', () => s.addTable(), { icon: Plus, hint: 'T' });
   act('add-view', 'Edit', 'Add view', () => s.addTable(undefined, { kind: 'view' }), { icon: Eye });
   act('add-note', 'Edit', 'Add note', () => s.addNote(), { icon: StickyNote, hint: 'N' });
+  act(
+    'add-program',
+    'Edit',
+    'Add program (something outside the database)',
+    () => {
+      s.addProgram();
+      s.setInspectorOpen(true);
+    },
+    { icon: Cpu },
+  );
   act('add-group', 'Edit', selected.length > 1 ? `Group the ${selected.length} selected tables` : 'Add a group region', () => s.addGroup({ tableIds: selected }), { icon: Boxes, hint: 'G' });
   act('add-enum', 'Edit', 'Add enum type', () => {
     s.addCustomType('enum');
