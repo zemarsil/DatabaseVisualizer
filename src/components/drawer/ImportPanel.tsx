@@ -60,11 +60,13 @@ export function ImportPanel() {
     importTables(res.tables, res.relationships, mode, {
       customTypes: res.customTypes,
       extensions: res.extensions,
+      programs: res.programs,
       group: group ? { name: groupName.trim() || 'Imported', external: groupExternal } : undefined,
     });
     const extras = [
       res.customTypes.length ? `${res.customTypes.length} type(s)` : '',
       res.extensions.length ? `${res.extensions.length} extension(s)` : '',
+      res.programs.length ? `${res.programs.length} program(s)` : '',
     ].filter(Boolean);
     const extraNote = extras.length ? ` and ${extras.join(' and ')}` : '';
     toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} connection(s)${extraNote}.`);

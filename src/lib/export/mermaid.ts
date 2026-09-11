@@ -2,9 +2,10 @@
  * Mermaid `erDiagram` export. GitHub, GitLab, Notion and mermaid.live render
  * it, so this is the quickest way to put a schema into a README.
  */
-import { describeRelationship, type Diagram, type Table } from '@shared/types';
+import { describeRelationship, programLanguageMeta, type Diagram, type Program, type Table } from '@shared/types';
 import { externalTableIds } from '../groups';
 import { foreignKeyColumnIds } from '../model';
+import { programLinks } from '../programs';
 import { pkColumnIds, relationshipCardinality } from '../schemaInfo';
 
 export interface MermaidOptions {
@@ -12,6 +13,13 @@ export interface MermaidOptions {
   includeComments?: boolean;
   /** Data flows, serialized copies and dependencies as dotted links (default true). */
   includeDocumentation?: boolean;
+  /**
+   * Programs as entities of their own, with one link per step (default true,
+   * and ignored when includeDocumentation is off). Mermaid has no node type for
+   * "not a table", so they are entities carrying a `%% program:` marker, the
+   * same way a view and an external table are already marked.
+   */
+  includePrograms?: boolean;
 }
 
 /** Mermaid entity names allow letters, digits and underscores only. */
@@ -68,8 +76,42 @@ function entityBlock(d: Diagram, t: Table, name: string, external: Set<string>, 
   return lines;
 }
 
+/**
+ * Program entity names live in the same namespace as the tables', because
+ * Mermaid has one namespace; a program called "orders" therefore gets a suffix
+ * rather than silently merging with the table.
+ */
+function programNames(d: Diagram, taken: Set<string>): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const p of d.programs) {
+    const base = mermaidName(p.name);
+    let name = base;
+    let i = 2;
+    while (taken.has(name)) name = `${base}_${i++}`;
+    taken.add(name);
+    out.set(p.id, name);
+  }
+  return out;
+}
+
+function programBlock(d: Diagram, p: Program, name: string): string[] {
+  const byId = new Map(d.tables.map((t) => [t.id, t]));
+  const lines = [`    %% program: ${p.name} (${programLanguageMeta(p.language).label})`, `    ${name} {`];
+  for (const s of p.steps) {
+    const what = s.op === 'compute' ? mermaidName(s.note || 'outside_the_database') : mermaidName(byId.get(s.tableId ?? '')?.name ?? 'missing_table');
+    lines.push(`        ${s.op} ${what}`);
+  }
+  if (p.steps.length === 0) lines.push('        step none');
+  lines.push('    }');
+  return lines;
+}
+
 export function exportMermaid(d: Diagram, options: MermaidOptions = {}): string {
-  const opts: Required<MermaidOptions> = { includeComments: options.includeComments ?? true, includeDocumentation: options.includeDocumentation ?? true };
+  const opts: Required<MermaidOptions> = {
+    includeComments: options.includeComments ?? true,
+    includeDocumentation: options.includeDocumentation ?? true,
+    includePrograms: options.includePrograms ?? true,
+  };
   const names = entityNames(d);
   const external = externalTableIds(d);
   const byId = new Map(d.tables.map((t) => [t.id, t]));
@@ -103,6 +145,19 @@ export function exportMermaid(d: Diagram, options: MermaidOptions = {}): string 
     } else if (opts.includeDocumentation) {
       const verb = describeRelationship(r, src.name, tgt.name).slice(src.name.length + 1, -(tgt.name.length + 1));
       lines.push(`    ${child} }o..o{ ${parent} : ${quoted(r.name?.trim() || verb || r.kind)}`);
+    }
+  }
+  if (opts.includeDocumentation && opts.includePrograms && d.programs.length) {
+    const taken = new Set(names.values());
+    const pNames = programNames(d, taken);
+    for (const p of d.programs) lines.push(...programBlock(d, p, pNames.get(p.id)!));
+    for (const link of programLinks(d)) {
+      const from = pNames.get(link.programId);
+      const to = names.get(link.tableId);
+      if (!from || !to) continue;
+      // Drawn as the program touching many rows of the table, which is the only
+      // cardinality Mermaid has that is not a lie about a program.
+      lines.push(`    ${from} ||..o{ ${to} : ${quoted(`${link.step} ${link.op}`)}`);
     }
   }
   return lines.join('\n') + '\n';

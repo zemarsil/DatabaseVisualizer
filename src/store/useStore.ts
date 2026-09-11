@@ -337,6 +337,8 @@ interface Actions {
     opts?: {
       customTypes?: CustomType[];
       extensions?: DiagramExtension[];
+      /** Programs an annotated script brought with it. */
+      programs?: Program[];
       /** Wrap everything imported in a new group, e.g. the database it came from. */
       group?: { name: string; external: boolean; note?: string };
     },
@@ -1380,6 +1382,10 @@ export const useStore = create<Store>()(
         // Extensions are a property of the server, not of the tables, so they
         // still apply when the import is filed away as another database.
         const extensions = opts?.extensions ?? [];
+        // Programs describe the caller, not the schema, so an import filed away
+        // as "another database" still brings them: they are how that database is
+        // reached, which is the point of recording it.
+        const importedPrograms = opts?.programs ?? [];
         const newGroup = group
           ? createGroup({
               name: uniqueGroupName(mode === 'replace' ? { ...diagram, groups: [] } : diagram, group.name.trim() || 'Imported'),
@@ -1397,6 +1403,7 @@ export const useStore = create<Store>()(
             d.groups = newGroup ? [newGroup] : [];
             d.customTypes = customTypes ?? [];
             d.extensions = extensions;
+            d.programs = importedPrograms;
           } else {
             d.tables.push(...tables);
             d.relationships.push(...relationships);
@@ -1408,6 +1415,10 @@ export const useStore = create<Store>()(
               already.add(e.name.trim().toLowerCase());
               d.extensions.push(e);
             }
+            for (const prg of importedPrograms) {
+              prg.name = uniqueProgramName(d as Diagram, prg.name);
+              d.programs.push(prg);
+            }
           }
           // Lay everything out in the same history step so one undo removes the import.
           // Nothing imported has been drawn yet, so most of these are estimates; the
@@ -1418,6 +1429,14 @@ export const useStore = create<Store>()(
           for (const t of d.tables) {
             const p = positions[t.id];
             if (p) t.position = p;
+          }
+          // The layout only knows about tables, so an imported program would sit
+          // at the origin under them; stack them below instead.
+          let below = nextProgramPosition({ ...(d as Diagram), programs: [] });
+          for (const prg of d.programs) {
+            if (!importedPrograms.some((x) => x.id === prg.id)) continue;
+            prg.position = below;
+            below = { x: below.x, y: below.y + 160 };
           }
         });
         set((s) => {
