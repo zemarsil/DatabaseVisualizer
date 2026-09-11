@@ -1,7 +1,7 @@
-import { describeRelationship, type CustomType, type Derivation, type Diagram, type DiagramExtension, type Dialect, type Relationship, type Table } from '@shared/types';
-import { createColumn, createCustomTypeField, createDerivation, createExtension, createIndex, createRelationship, createTable } from '../model';
+import { describeRelationship, type CustomType, type Derivation, type Diagram, type DiagramExtension, type Dialect, type Program, type Relationship, type Table } from '@shared/types';
+import { createColumn, createCustomTypeField, createDerivation, createExtension, createIndex, createProgram, createProgramStep, createRelationship, createTable } from '../model';
 import { newId } from '../ids';
-import { readAnnotations, type AnnotatedConnection, type SqlAnnotations } from './annotations';
+import { readAnnotations, type AnnotatedConnection, type AnnotatedProgram, type SqlAnnotations } from './annotations';
 import { parseSql, type ParseResult, type ParsedTable } from './parser';
 
 export interface ImportResult {
@@ -9,6 +9,8 @@ export interface ImportResult {
   relationships: Relationship[];
   customTypes: CustomType[];
   extensions: DiagramExtension[];
+  /** Programs the annotation block carried; empty for a script without one. */
+  programs: Program[];
   errors: string[];
   warnings: string[];
   statementCount: number;
@@ -115,6 +117,7 @@ export function parseResultToDiagram(res: ParseResult, existing: Diagram | null 
 
   // Connections the DDL could not carry: the annotation block at the end of a
   // script this app wrote is the only place they exist.
+  const programs: Program[] = [];
   if (annotations) {
     applyAnnotations(
       annotations.connections,
@@ -122,6 +125,13 @@ export function parseResultToDiagram(res: ParseResult, existing: Diagram | null 
       relationships,
       existing,
       warnings,
+    );
+    programs.push(
+      ...restorePrograms(
+        annotations.programs ?? [],
+        (name) => byName.get(keyOf(name)) ?? existing?.tables.find((t) => keyOf(t.name) === keyOf(name)),
+        warnings,
+      ),
     );
   }
 
@@ -163,7 +173,7 @@ export function parseResultToDiagram(res: ParseResult, existing: Diagram | null 
     extensions.push(createExtension({ name: e.name, schema: e.schema, version: e.version }));
   }
 
-  return { tables, relationships, customTypes, extensions, errors, warnings, statementCount: res.statementCount };
+  return { tables, relationships, customTypes, extensions, programs, errors, warnings, statementCount: res.statementCount };
 }
 
 /** Same columns, in any order: two ends of a foreign key are a set, not a sequence. */
@@ -280,6 +290,48 @@ function applyAnnotations(
     claimed.add(made);
     relationships.push(made);
   }
+}
+
+/**
+ * Put back the programs a generated script carries in its annotation block.
+ *
+ * A step naming a table the script does not define and the diagram does not
+ * have keeps everything except the pointer: its op, its SQL, its code and its
+ * note all survive, and the linter reports the missing table afterwards. That
+ * is the opposite of how a connection is handled, on purpose — a connection
+ * with a missing end describes nothing, while a step with a missing table is
+ * still the code somebody wrote.
+ */
+function restorePrograms(annotated: AnnotatedProgram[], lookup: (name: string) => Table | undefined, warnings: string[]): Program[] {
+  const out: Program[] = [];
+  for (const a of annotated) {
+    const steps = a.steps.map((s) => {
+      const table = s.op === 'compute' || !s.table ? undefined : lookup(s.table);
+      if (s.table && !table && s.op !== 'compute') {
+        warnings.push(`Step "${s.op} ${s.table}" of the program ${a.name} kept its SQL and code, but ${s.table} is neither in this script nor in the diagram.`);
+      }
+      const columnIds = table ? (s.columns ?? []).map((n) => table.columns.find((c) => c.name.toLowerCase() === n.toLowerCase())?.id).filter((x): x is string => Boolean(x)) : [];
+      return createProgramStep({
+        op: s.op,
+        ...(table ? { tableId: table.id } : {}),
+        columnIds,
+        ...(s.sql ? { sql: s.sql } : {}),
+        ...(s.code ? { code: s.code } : {}),
+        ...(s.note ? { note: s.note } : {}),
+      });
+    });
+    out.push(
+      createProgram({
+        name: a.name,
+        language: a.language,
+        ...(a.role ? { role: a.role } : {}),
+        ...(a.entrypoint ? { entrypoint: a.entrypoint } : {}),
+        ...(a.comment ? { comment: a.comment } : {}),
+        steps,
+      }),
+    );
+  }
+  return out;
 }
 
 function parsedTableToTable(pt: ParsedTable): Table {

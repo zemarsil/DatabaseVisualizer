@@ -27,11 +27,17 @@ import {
   AGGREGATE_FUNCTIONS,
   DEFAULT_VERBS,
   REFERENTIAL_ACTIONS,
+  isProgramLanguage,
+  isProgramRole,
+  isProgramStepOp,
   isRelationshipKind,
   isWindowFunction,
   normalizeVerb,
   type AggregateFunction,
   type Diagram,
+  type ProgramLanguage,
+  type ProgramRole,
+  type ProgramStepOp,
   type ReferentialAction,
   type Relationship,
   type RelationshipKind,
@@ -75,8 +81,31 @@ export interface AnnotatedConnection {
   derivations?: AnnotatedDerivation[];
 }
 
+/** One step of a program, with its table and columns named rather than identified. */
+export interface AnnotatedProgramStep {
+  op: ProgramStepOp;
+  /** Table name; absent on a compute step, and on a step whose table is gone. */
+  table?: string;
+  columns?: string[];
+  sql?: string;
+  code?: string;
+  note?: string;
+}
+
+/** One program as the script carries it. */
+export interface AnnotatedProgram {
+  name: string;
+  language: ProgramLanguage;
+  role?: ProgramRole;
+  entrypoint?: string;
+  comment?: string;
+  steps: AnnotatedProgramStep[];
+}
+
 export interface SqlAnnotations {
   connections: AnnotatedConnection[];
+  /** Absent in every block written before programs existed. */
+  programs?: AnnotatedProgram[];
 }
 
 /**
@@ -185,7 +214,31 @@ export function collectAnnotations(d: Diagram, emittedAsDdl: ReadonlySet<string>
       ...(derivations.length ? { derivations } : {}),
     });
   }
-  return { connections };
+  // A program is documentation with no DDL of its own, so it is always carried.
+  // Its steps name tables, and a step pointing at a table the script does not
+  // define keeps its prose and its code while losing only the pointer: the code
+  // is the part nobody can reconstruct.
+  const programs: AnnotatedProgram[] = d.programs.map((prg) => ({
+    name: prg.name,
+    language: prg.language,
+    ...(prg.role ? { role: prg.role } : {}),
+    ...(trimmed(prg.entrypoint) ? { entrypoint: trimmed(prg.entrypoint) } : {}),
+    ...(trimmed(prg.comment) ? { comment: trimmed(prg.comment) } : {}),
+    steps: prg.steps.map((s) => {
+      const table = s.op === 'compute' ? undefined : tableName.get(s.tableId ?? '');
+      const columns = table ? names(s.tableId!, s.columnIds) : [];
+      return {
+        op: s.op,
+        ...(table ? { table } : {}),
+        ...(columns.length ? { columns } : {}),
+        ...(trimmed(s.sql) ? { sql: trimmed(s.sql) } : {}),
+        ...(trimmed(s.code) ? { code: trimmed(s.code) } : {}),
+        ...(trimmed(s.note) ? { note: trimmed(s.note) } : {}),
+      };
+    }),
+  }));
+
+  return { connections, ...(programs.length ? { programs } : {}) };
 }
 
 /**
@@ -194,7 +247,7 @@ export function collectAnnotations(d: Diagram, emittedAsDdl: ReadonlySet<string>
  * file in an editor and wonders what they are allowed to delete.
  */
 export function annotationComment(a: SqlAnnotations): string {
-  if (!a.connections.length) return '';
+  if (!a.connections.length && !a.programs?.length) return '';
   const payload = JSON.stringify(a, null, 2)
     .split('\n')
     .map((l) => `-- ${l}`.trimEnd())
@@ -203,10 +256,10 @@ export function annotationComment(a: SqlAnnotations): string {
     '-- ----------------------------------------------------------------',
     '-- Connection metadata: the same connections once more, in the form Import SQL',
     '-- reads. It is how this script comes home with its data flows, its verbs, its',
-    '-- notes and its tagged queries still on it. Tables and columns are named here',
-    '-- rather than numbered, so renaming one above renames it here too. No engine',
-    '-- reads any of this: delete the block and the schema still runs, only the',
-    '-- annotations are gone.',
+    '-- notes, its tagged queries and the programs that talk to it still on it.',
+    '-- Tables and columns are named here rather than numbered, so renaming one',
+    '-- above renames it here too. No engine reads any of this: delete the block and',
+    '-- the schema still runs, only the annotations are gone.',
     BEGIN,
     payload,
     END,
@@ -274,6 +327,37 @@ function connection(v: unknown): AnnotatedConnection | null {
   };
 }
 
+function programStep(v: unknown): AnnotatedProgramStep | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const op = isProgramStepOp(o.op) ? o.op : 'read';
+  const compute = op === 'compute';
+  const columns = strList(o.columns);
+  return {
+    op,
+    ...(!compute && str(o.table) ? { table: str(o.table)!.trim() } : {}),
+    ...(!compute && columns.length ? { columns } : {}),
+    ...(!compute && str(o.sql) ? { sql: str(o.sql) } : {}),
+    ...(str(o.code) ? { code: str(o.code) } : {}),
+    ...(str(o.note) ? { note: str(o.note) } : {}),
+  };
+}
+
+function program(v: unknown): AnnotatedProgram | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Record<string, unknown>;
+  const name = str(o.name);
+  if (!name) return null;
+  return {
+    name: name.trim(),
+    language: isProgramLanguage(o.language) ? o.language : 'other',
+    ...(isProgramRole(o.role) ? { role: o.role } : {}),
+    ...(str(o.entrypoint) ? { entrypoint: str(o.entrypoint) } : {}),
+    ...(str(o.comment) ? { comment: str(o.comment) } : {}),
+    steps: (Array.isArray(o.steps) ? o.steps : []).map(programStep).filter((s): s is AnnotatedProgramStep => s !== null),
+  };
+}
+
 /**
  * Pull the annotation blocks out of a script.
  *
@@ -288,6 +372,7 @@ function connection(v: unknown): AnnotatedConnection | null {
 export function readAnnotations(sql: string): { annotations: SqlAnnotations | null; error?: string } {
   const lines = sql.split(/\r?\n/);
   const connections: AnnotatedConnection[] = [];
+  const programs: AnnotatedProgram[] = [];
   let found = 0;
   let error: string | undefined;
   const fail = (message: string) => {
@@ -325,9 +410,15 @@ export function readAnnotations(sql: string): { annotations: SqlAnnotations | nu
       const parsed = connection(c);
       if (parsed) connections.push(parsed);
     }
+    for (const pr of Array.isArray(o.programs) ? o.programs : []) {
+      const parsed = program(pr);
+      if (parsed) programs.push(parsed);
+    }
   }
 
   if (!found) return { annotations: null };
-  if (!connections.length && error) return { annotations: null, error };
-  return { annotations: { connections }, ...(error ? { error } : {}) };
+  // A block that yielded nothing at all and reported a problem is unreadable; a
+  // block that yielded only programs is perfectly good.
+  if (!connections.length && !programs.length && error) return { annotations: null, error };
+  return { annotations: { connections, ...(programs.length ? { programs } : {}) }, ...(error ? { error } : {}) };
 }

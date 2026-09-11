@@ -2,8 +2,9 @@
  * DBML export (dbdiagram.io / dbdocs). Tables, custom types, groups, refs and
  * documentation-only connections as notes.
  */
-import { describeRelationship, dialectLabel, type Diagram, type Table } from '@shared/types';
+import { describeRelationship, dialectLabel, programLanguageMeta, type Diagram, type Table } from '@shared/types';
 import { fileSlug } from '../io';
+import { describeProgram, describeStep } from '../programs';
 
 function ident(name: string): string {
   return /^[A-Za-z0-9_]+$/.test(name) ? name : `"${name.replace(/"/g, '')}"`;
@@ -115,5 +116,21 @@ export function exportDbml(d: Diagram): string {
       parts.push(`Note ${ident(`link_${n}_${r.kind}`)} {\n  ${note(body)}\n}`);
     }
   }
+  // DBML has tables and nothing else, so a program becomes a Note rather than
+  // being dropped: dbdiagram will not draw it, but the steps and the reasoning
+  // survive the trip instead of vanishing on export.
+  const tableById = new Map(d.tables.map((t) => [t.id, t]));
+  for (const prg of d.programs) {
+    const body = [
+      describeProgram(d, prg),
+      `Written in ${programLanguageMeta(prg.language).label}${prg.entrypoint?.trim() ? `, in ${prg.entrypoint.trim()}` : ''}.`,
+      prg.comment?.trim() ?? '',
+      prg.steps.map((s, i) => `${i + 1}. ${describeStep(s, s.tableId ? tableById.get(s.tableId) : undefined)}`).join('\n'),
+    ]
+      .filter(Boolean)
+      .join('\n\n');
+    parts.push(`Note ${ident(`program_${fileSlug(prg.name).replace(/-/g, '_')}`)} {\n  ${note(body)}\n}`);
+  }
+
   return parts.join('\n\n') + '\n';
 }

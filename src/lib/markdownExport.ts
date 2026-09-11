@@ -1,7 +1,8 @@
-import { describeRelationship, dialectLabel, type Diagram, type Relationship, type Table } from '@shared/types';
+import { describeRelationship, dialectLabel, programLanguageMeta, programRoleMeta, type Diagram, type Relationship, type Table } from '@shared/types';
 import { derivationSummaries } from './derivation';
 import { buildLineage, type Lineage } from './lineage';
 import { exportMermaid } from './export/mermaid';
+import { describeProgram, programsForTable } from './programs';
 
 /**
  * Cell text is data, not markup. A CHECK expression like `qty * 2 * 3` or a
@@ -75,6 +76,15 @@ function tableSection(d: Diagram, t: Table, rels: Relationship[], level: number,
     parts.push(`\n**Derived columns**\n\n${mdTable(['Column', 'Computed as', 'From'], derivedRows)}`);
   }
 
+  const touchedBy = programsForTable(d, t.id);
+  if (touchedBy.length) {
+    const rows = touchedBy.map((p) => {
+      const ops = [...new Set(p.steps.filter((s) => s.tableId === t.id).map((s) => s.op))];
+      return [p.name, programLanguageMeta(p.language).label, ops.join(' and ')];
+    });
+    parts.push(`\n**Touched from outside the database**\n\n${mdTable(['Program', 'Language', 'Does'], rows)}`);
+  }
+
   const referencedBy = rels.filter((r) => r.kind === 'fk' && r.targetTableId === t.id && r.sourceTableId !== t.id);
   if (referencedBy.length) {
     const names = [...new Set(referencedBy.map((r) => d.tables.find((x) => x.id === r.sourceTableId)?.name ?? r.sourceTableId))];
@@ -97,6 +107,7 @@ function summarySection(d: Diagram, includeMermaid: boolean): string {
     `${fks} foreign key${fks === 1 ? '' : 's'}`,
     d.customTypes.length ? `${d.customTypes.length} custom type${d.customTypes.length === 1 ? '' : 's'}` : '',
     d.groups.length ? `${d.groups.length} group${d.groups.length === 1 ? '' : 's'}` : '',
+    d.programs.length ? `${d.programs.length} program${d.programs.length === 1 ? '' : 's'}` : '',
   ].filter(Boolean);
   const parts = [facts.join(' · ')];
   if (includeMermaid) parts.push(`\`\`\`mermaid\n${exportMermaid(d, { includeComments: false }).trimEnd()}\n\`\`\``);
@@ -117,6 +128,46 @@ function groupsSection(d: Diagram): string {
   if (d.groups.length === 0) return '';
   const rows = d.groups.map((g) => [g.name, d.tables.filter((t) => t.groupId === g.id).map((t) => t.name).join(', '), g.external ? 'another database' : 'this schema', g.note ?? '']);
   return `## Groups\n\n${mdTable(['Group', 'Tables', 'Where', 'Note'], rows)}`;
+}
+
+/**
+ * The programs, one subsection each: what it is, the ordered steps, and the
+ * code the steps carry. The generated starter is deliberately left out — it is
+ * derived, sometimes long, and a data dictionary should hold what somebody
+ * wrote rather than what the app can write again on demand.
+ */
+function programsSection(d: Diagram): string {
+  if (d.programs.length === 0) return '';
+  const byId = new Map(d.tables.map((t) => [t.id, t]));
+  const parts: string[] = ['## Programs', '', 'Work that happens outside the database, and what it reads and writes.'];
+
+  for (const p of d.programs) {
+    const lang = programLanguageMeta(p.language);
+    const facts = [lang.label, p.role ? programRoleMeta(p.role).label : '', p.entrypoint ? `\`${esc(p.entrypoint)}\`` : ''].filter(Boolean);
+    parts.push(`\n### ${esc(p.name)}\n`);
+    parts.push(facts.join(' · '));
+    if (p.comment?.trim()) parts.push(`\n${esc(p.comment.trim())}`);
+    parts.push(`\n${esc(describeProgram(d, p))}`);
+
+    const rows = p.steps.map((s, i) => {
+      const table = s.tableId ? byId.get(s.tableId) : undefined;
+      const cols = s.columnIds.map((id) => table?.columns.find((c) => c.name && c.id === id)?.name ?? '').filter(Boolean);
+      return [
+        String(i + 1),
+        s.op,
+        s.op === 'compute' ? '' : (table?.name ?? '(missing)'),
+        cols.join(', '),
+        s.note ?? '',
+      ];
+    });
+    if (rows.length) parts.push(`\n${mdTable(['#', 'Does', 'Table', 'Columns', 'Note'], rows)}`);
+
+    for (const [i, s] of p.steps.entries()) {
+      if (s.sql?.trim()) parts.push(`\n**Step ${i + 1} statement**\n\n\`\`\`sql\n${s.sql.trim()}\n\`\`\``);
+      if (s.code?.trim()) parts.push(`\n**Step ${i + 1} code**\n\n\`\`\`${lang.extension}\n${s.code.trim()}\n\`\`\``);
+    }
+  }
+  return parts.join('\n');
 }
 
 function relationshipsSection(d: Diagram): string {
@@ -197,6 +248,9 @@ export function generateMarkdown(d: Diagram, opts: MarkdownOptions = {}): string
 
   const rels = relationshipsSection(d);
   if (rels) parts.push(rels);
+
+  const progs = programsSection(d);
+  if (progs) parts.push(progs);
 
   return parts.join('\n\n') + '\n';
 }

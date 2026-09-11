@@ -25,6 +25,7 @@ export function ProblemsPanel() {
   const openDrawer = useStore((s) => s.openDrawer);
   const focusRelationship = useStore((s) => s.focusRelationship);
   const setSelection = useStore((s) => s.setSelection);
+  const setInspectorOpen = useStore((s) => s.setInspectorOpen);
   const addRelationship = useStore((s) => s.addRelationship);
 
   const [severity, setSeverity] = useState<LintSeverity | 'all'>('all');
@@ -35,6 +36,7 @@ export function ProblemsPanel() {
   const counts = useMemo(() => summarizeFindings(findings), [findings]);
   const tableName = (id: string | undefined) => diagram.tables.find((t) => t.id === id)?.name;
   const columnName = (tableId: string | undefined, columnId: string | undefined) => diagram.tables.find((t) => t.id === tableId)?.columns.find((c) => c.id === columnId)?.name;
+  const programName = (programId: string | undefined) => diagram.programs.find((p) => p.id === programId)?.name;
   const extensionName = (id: string) => diagram.extensions.find((e) => e.id === id)?.name;
 
   // Recognize any table name mentioned inside a finding's message text so it can be turned into a "go to table" link.
@@ -107,6 +109,12 @@ export function ProblemsPanel() {
     if (f.tableId) goToTable(f.tableId);
   };
 
+  /** A program finding is fixed in the inspector, so the chip selects the node. */
+  const goToProgram = (programId: string) => {
+    setSelection({ ...emptySelection(), programIds: [programId] });
+    setInspectorOpen(true);
+  };
+
   const addSuggestion = (s: FkSuggestion) => {
     addRelationship({ kind: 'fk', sourceTableId: s.sourceTableId, sourceColumnIds: [s.sourceColumnId], targetTableId: s.targetTableId, targetColumnIds: [s.targetColumnId] });
   };
@@ -161,6 +169,11 @@ export function ProblemsPanel() {
                         {(f.tableId || f.relationshipId) && (
                           <button className="chip" onClick={() => goTo(f)} title="Show on the canvas">
                             {f.tableId ? `${tableName(f.tableId) ?? '?'}${columnName(f.tableId, f.columnId) ? `.${columnName(f.tableId, f.columnId)}` : ''}` : 'connection'}
+                          </button>
+                        )}
+                        {f.programId && (
+                          <button className="chip" onClick={() => goToProgram(f.programId!)} title="Open the program in the inspector">
+                            {programName(f.programId) ?? 'program'}
                           </button>
                         )}
                         {/* An extension is not on the canvas, so its chip opens where it is edited. */}

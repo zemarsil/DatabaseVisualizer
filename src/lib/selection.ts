@@ -9,6 +9,8 @@
 export interface Selection {
   tableIds: string[];
   noteIds: string[];
+  /** Programs picked up on the canvas. Multi-selectable, like tables and notes. */
+  programIds: string[];
   relationshipId: string | null;
   /**
    * Selected table group. Regions are not React Flow nodes, so no delta ever
@@ -18,7 +20,7 @@ export interface Selection {
   groupId: string | null;
 }
 
-export const emptySelection = (): Selection => ({ tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+export const emptySelection = (): Selection => ({ tableIds: [], noteIds: [], programIds: [], relationshipId: null, groupId: null });
 
 export interface SelectionChange {
   id: string;
@@ -26,7 +28,7 @@ export interface SelectionChange {
 }
 
 export function selectionSize(sel: Selection): number {
-  return sel.tableIds.length + sel.noteIds.length + (sel.relationshipId ? 1 : 0) + (sel.groupId ? 1 : 0);
+  return sel.tableIds.length + sel.noteIds.length + sel.programIds.length + (sel.relationshipId ? 1 : 0) + (sel.groupId ? 1 : 0);
 }
 
 function toggle(list: string[], id: string, selected: boolean): string[] {
@@ -40,19 +42,26 @@ function toggle(list: string[], id: string, selected: boolean): string[] {
  *
  * Returns `null` when nothing actually changed so callers can skip the store write.
  */
-export function applyNodeSelectionChanges(current: Selection, changes: SelectionChange[], isNote: (id: string) => boolean): Selection | null {
-  let { tableIds, noteIds } = current;
+export function applyNodeSelectionChanges(
+  current: Selection,
+  changes: SelectionChange[],
+  isNote: (id: string) => boolean,
+  isProgram: (id: string) => boolean = () => false,
+): Selection | null {
+  let { tableIds, noteIds, programIds } = current;
   for (const ch of changes) {
     if (isNote(ch.id)) noteIds = toggle(noteIds, ch.id, ch.selected);
+    else if (isProgram(ch.id)) programIds = toggle(programIds, ch.id, ch.selected);
     else tableIds = toggle(tableIds, ch.id, ch.selected);
   }
-  if (tableIds === current.tableIds && noteIds === current.noteIds) return null;
+  if (tableIds === current.tableIds && noteIds === current.noteIds && programIds === current.programIds) return null;
   // Picking anything up on the canvas takes over from a selected relationship or
   // region; a box that ends up empty leaves both alone.
-  const picked = tableIds.length > 0 || noteIds.length > 0;
+  const picked = tableIds.length > 0 || noteIds.length > 0 || programIds.length > 0;
   return {
     tableIds,
     noteIds,
+    programIds,
     relationshipId: picked ? null : current.relationshipId,
     groupId: picked ? null : current.groupId,
   };
@@ -70,8 +79,8 @@ export function applyEdgeSelectionChanges(current: Selection, changes: Selection
   for (const ch of changes) {
     const base: Selection = next ?? current;
     if (ch.selected) {
-      if (base.relationshipId === ch.id && !base.tableIds.length && !base.noteIds.length && !base.groupId) continue;
-      next = { tableIds: [], noteIds: [], relationshipId: ch.id, groupId: null };
+      if (base.relationshipId === ch.id && !base.tableIds.length && !base.noteIds.length && !base.programIds.length && !base.groupId) continue;
+      next = { tableIds: [], noteIds: [], programIds: [], relationshipId: ch.id, groupId: null };
     } else if (base.relationshipId === ch.id) {
       next = { ...base, relationshipId: null };
     }

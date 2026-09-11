@@ -171,7 +171,7 @@ describe('context menu additions', () => {
       future: [],
       nodeSizes: {},
       placementSizes: () => placementSizes(diagram, {}, false),
-      selection: { tableIds: [], noteIds: [], relationshipId: null, groupId: null },
+      selection: { tableIds: [], noteIds: [], programIds: [], relationshipId: null, groupId: null },
       trace: { fromId: null, toId: null, result: null, searched: false, picking: false },
       addTable: vi.fn(),
       addNote: vi.fn(),
@@ -240,7 +240,7 @@ describe('context menu additions', () => {
   it('arranges a multi-selection in one undo step', () => {
     const d = shop();
     const three = d.tables.slice(0, 3).map((t) => t.id);
-    const { store, env: e } = env(d, { selection: { tableIds: three, noteIds: [], relationshipId: null, groupId: null } } as Partial<Store>);
+    const { store, env: e } = env(d, { selection: { tableIds: three, noteIds: [], programIds: [], relationshipId: null, groupId: null } } as Partial<Store>);
     const items = buildContextMenu({ type: 'selection' }, e);
     expect(ids(items)).toEqual(expect.arrayContaining(['align-left', 'distribute-x', 'show-keys', 'copy', 'cut']));
     action(items, 'align-left').run();

@@ -641,6 +641,187 @@ export interface Note {
   color: string;
 }
 
+/* ------------------------------------------------------------------ */
+/* Programs: the work that happens outside the database                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The language a program is written in.
+ *
+ * The list is short on purpose: it exists so the app can pick a driver, a
+ * comment marker and a placeholder style when it writes starter code, not to
+ * catalogue every language there is. Anything not here is 'other', which still
+ * gets a node, steps, prose and highlighting — only the generated skeleton
+ * falls back to plain comments around the SQL.
+ */
+export type ProgramLanguage =
+  | 'python'
+  | 'rust'
+  | 'go'
+  | 'cpp'
+  | 'c'
+  | 'java'
+  | 'javascript'
+  | 'typescript'
+  | 'csharp'
+  | 'ruby'
+  | 'shell'
+  | 'other';
+
+export interface ProgramLanguageMeta {
+  id: ProgramLanguage;
+  label: string;
+  /** Extension a saved snippet gets, and the fence tag in exported Markdown. */
+  extension: string;
+  /** Line-comment marker, used by the generated skeleton and the code scanner. */
+  comment: string;
+}
+
+export const PROGRAM_LANGUAGES: ProgramLanguageMeta[] = [
+  { id: 'python', label: 'Python', extension: 'py', comment: '#' },
+  { id: 'rust', label: 'Rust', extension: 'rs', comment: '//' },
+  { id: 'go', label: 'Go', extension: 'go', comment: '//' },
+  { id: 'cpp', label: 'C++', extension: 'cpp', comment: '//' },
+  { id: 'c', label: 'C', extension: 'c', comment: '//' },
+  { id: 'java', label: 'Java', extension: 'java', comment: '//' },
+  { id: 'javascript', label: 'JavaScript', extension: 'js', comment: '//' },
+  { id: 'typescript', label: 'TypeScript', extension: 'ts', comment: '//' },
+  { id: 'csharp', label: 'C#', extension: 'cs', comment: '//' },
+  { id: 'ruby', label: 'Ruby', extension: 'rb', comment: '#' },
+  { id: 'shell', label: 'Shell', extension: 'sh', comment: '#' },
+  { id: 'other', label: 'Other', extension: 'txt', comment: '#' },
+];
+
+export function isProgramLanguage(v: unknown): v is ProgramLanguage {
+  return typeof v === 'string' && PROGRAM_LANGUAGES.some((l) => l.id === v);
+}
+
+const LANGUAGE_FALLBACK = PROGRAM_LANGUAGES[PROGRAM_LANGUAGES.length - 1];
+
+export function programLanguageMeta(id: ProgramLanguage): ProgramLanguageMeta {
+  return PROGRAM_LANGUAGES.find((l) => l.id === id) ?? LANGUAGE_FALLBACK;
+}
+
+/**
+ * How the program runs. Documentation only: it changes the badge on the node
+ * and the word the summaries use, never the generated code.
+ */
+export type ProgramRole = 'service' | 'job' | 'script' | 'etl';
+
+export interface ProgramRoleMeta {
+  id: ProgramRole;
+  label: string;
+  hint: string;
+}
+
+export const PROGRAM_ROLES: ProgramRoleMeta[] = [
+  { id: 'service', label: 'Service', hint: 'Long-lived: it is up, holding connections, answering requests.' },
+  { id: 'job', label: 'Scheduled job', hint: 'Woken on a timer or a queue, does its pass, exits.' },
+  { id: 'script', label: 'Script', hint: 'Run by hand when someone needs it.' },
+  { id: 'etl', label: 'ETL / pipeline', hint: 'Moves data in bulk from somewhere to somewhere else.' },
+];
+
+export function isProgramRole(v: unknown): v is ProgramRole {
+  return typeof v === 'string' && PROGRAM_ROLES.some((r) => r.id === v);
+}
+
+export function programRoleMeta(id: ProgramRole): ProgramRoleMeta {
+  return PROGRAM_ROLES.find((r) => r.id === id) ?? PROGRAM_ROLES[0];
+}
+
+/**
+ * What one step of a program does.
+ *
+ * read    -> it runs a SELECT: rows travel from the table into the program.
+ * write   -> it runs an INSERT, UPDATE or DELETE: rows travel the other way.
+ * compute -> it does something the database never sees. This is the step that
+ *            justifies the whole node: a rollup that could have been SQL does
+ *            not need a program, and a fit, a render, a model call or a request
+ *            to somebody else's API cannot be SQL at all.
+ */
+export type ProgramStepOp = 'read' | 'write' | 'compute';
+
+export interface ProgramStepOpMeta {
+  id: ProgramStepOp;
+  label: string;
+  /** Compact tag for the canvas and chip lists. */
+  short: string;
+  hint: string;
+  /** The step names a table; false only for 'compute'. */
+  touchesDatabase: boolean;
+}
+
+export const PROGRAM_STEP_OPS: ProgramStepOpMeta[] = [
+  { id: 'read', label: 'Read', short: 'read', hint: 'A SELECT: rows leave the table and arrive in the program.', touchesDatabase: true },
+  { id: 'write', label: 'Write', short: 'write', hint: 'An INSERT, UPDATE or DELETE: the program puts rows back.', touchesDatabase: true },
+  { id: 'compute', label: 'Compute', short: 'compute', hint: 'Work the database never sees, and the reason the program exists.', touchesDatabase: false },
+];
+
+export function isProgramStepOp(v: unknown): v is ProgramStepOp {
+  return typeof v === 'string' && PROGRAM_STEP_OPS.some((o) => o.id === v);
+}
+
+export function programStepOpMeta(id: ProgramStepOp): ProgramStepOpMeta {
+  return PROGRAM_STEP_OPS.find((o) => o.id === id) ?? PROGRAM_STEP_OPS[0];
+}
+
+/**
+ * One thing the program does, in the order it does it.
+ *
+ * The order is the point. A diagram can already say "this table feeds that
+ * one"; what it could not say is that something outside reads a row, thinks
+ * about it somewhere the database cannot see, and comes back to write the
+ * answer down. Written as steps, that round trip reads off the canvas in
+ * order: read jobs, compute, write results, update jobs.
+ */
+export interface ProgramStep {
+  id: string;
+  op: ProgramStepOp;
+  /**
+   * Table this step reads or writes. Always absent for a compute step, which
+   * by definition does not touch the database; a step whose table was deleted
+   * keeps its prose and its code and is reported by the linter.
+   */
+  tableId?: string;
+  /**
+   * Columns of that table the step touches. Empty means the whole row, which
+   * is both the honest default and what `SELECT *` deserves to be called.
+   */
+  columnIds: string[];
+  /** The statement the program issues, as SQL. Meaningless on a compute step. */
+  sql?: string;
+  /** Host-language code for this step, in the program's language. */
+  code?: string;
+  /** What this step is for, in prose. */
+  note?: string;
+}
+
+/**
+ * A program that talks to the database from outside it.
+ *
+ * Everything else on the canvas is something the database contains. A program
+ * is the opposite: it is the caller, and the diagram holds it because where a
+ * computation happens is a design decision worth drawing. The edges to its
+ * tables are not stored — they are derived from `steps`, the same way a group's
+ * rectangle is derived from its member tables — so a program can never carry an
+ * edge that means nothing, and reordering a step moves its arrow with it.
+ */
+export interface Program {
+  id: string;
+  name: string;
+  language: ProgramLanguage;
+  /** Absent means unspecified; the node then shows the language alone. */
+  role?: ProgramRole;
+  /** Where the code lives: a path, a module, a binary, a container. */
+  entrypoint?: string;
+  position: { x: number; y: number };
+  /** Key into the palette in src/lib/palette.ts. */
+  color: string;
+  /** What the program is for. */
+  comment?: string;
+  steps: ProgramStep[];
+}
+
 export interface Diagram {
   version: 1;
   name: string;
@@ -652,6 +833,12 @@ export interface Diagram {
   customTypes: CustomType[];
   /** Engine extensions this schema depends on. Empty for files written before extensions existed. */
   extensions: DiagramExtension[];
+  /**
+   * Programs that talk to this schema from outside it. Empty for files written
+   * before programs existed, which is why nothing may assume the array is there
+   * without going through the loader in src/lib/io.ts.
+   */
+  programs: Program[];
   /** Saved viewport, purely cosmetic. */
   viewport?: { x: number; y: number; zoom: number };
 }

@@ -12,6 +12,7 @@ A locally hosted web app for designing relational schemas visually.
 - **Trace**: pick two tables and get the shortest chain of connections between them, highlighted on the canvas, plus the `JOIN` query for that path.
 - **Simulate**: pick a table and watch sample rows flow into it. Every data flow upstream runs once, stage by stage: dots travel the connections on the canvas, the columns being read and written light up, and a grid shows each produced row with the rows it came from and how every value was computed. Edit a raw input cell and the change propagates.
 - **Describe how data moves**: a data-flow connection carries one derivation per target column: an expression, an aggregate over a grouping, a filter, and, for sequences, an operation over rows in order (change since the previous row, running total, rank…). Expressions may read columns of other tables as `table.column`; the diagram's own foreign keys say how they join. The same description drives the edge summary, the generated `INSERT … SELECT` (window functions and joins included, per dialect) and the simulation.
+- **Programs**: the work that happens *outside* the database gets a node of its own. A program is an ordered list of steps — read a table, compute something the database never sees, write the answer back — and each step that names a table draws a numbered arrow, so a round trip reads straight off the canvas. Steps carry the statement they run and the host-language code around it, and the app writes a starter for you: the real driver for your language and engine, your table and column names, parameters spelled the way that driver expects.
 - **Read a big diagram**: collapse tables to keys or headers (automatically when zoomed out), focus on one table and its neighbours, cardinality labels on every connection, and one-click grouping by schema.
 - **Command palette** (`Ctrl+K`): jump to any table or run any action by typing a few letters.
 - **Migrate and seed**: diff the diagram against a live database and get the `ALTER` statements that bring it up to date; generate deterministic seed rows that respect foreign keys, uniqueness and enums.
@@ -77,6 +78,7 @@ docker compose up --build
 | Derived columns | On a data-flow edge, add one entry per target column: target column, aggregate, source expression, group-by keys, filter, and optionally a **sequence** operation (previous / next value, change since the previous row, running total or average, row number, rank) with its order-by and partition-by keys. Expressions are SQL and may name a column of any table the source points at through foreign keys as `table.column` (`orders.status` from `order_items`). The edge shows a `Σ` count and a per-column summary, and the script gets an `INSERT ... SELECT` skeleton with the `JOIN`s and window functions written for the current dialect |
 | See what is computed | Any column a data flow fills carries a **Σ** mark, and its table a **Σ n** badge that survives collapsing. `D` (or **View → Derived-column lens**) turns that into a way of reading the whole canvas: computed columns take the green rail, the columns feeding them the flow colour, foreign keys step back. The **Derived** drawer tab lists every one with its formula; pick a column — there, or by right-clicking it → *Show where this comes from* — and the canvas narrows to that column's chain: every column read to produce it, and everything computed from it in turn. `Esc` widens the chain back, then puts the lens away |
 | One source, several look-alike targets | On a data-flow edge, **Match by name** adds a plain passthrough derivation for every target column a source column of the same name can fill (case and underscores ignored; columns already derived are left alone). *Feed other tables the same way* then ticks off the other tables that share those column names and draws the same flow into each, its derivations re-pointed at the columns each table spells the same way. Five tables fed from one is five edges either way — a connection joins two tables — but not five sets of derivations typed by hand |
+| Say what talks to the database from outside | Right-click the canvas → **Add program here** (or `Ctrl+K` → *Add program*). Name it, pick its language, then add steps in the order they happen: read a table, compute something the database never sees, write the answer back. Each step naming a table draws a numbered arrow, and the node says *round trip: jobs* when it both reads and writes one. Every step holds the statement it runs and the code around it; **Show the … starter** writes a runnable skeleton from the steps with the right driver for your language and engine |
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express. The menu above the box offers queries written for this connection from what the diagram knows — the `JOIN` of a foreign key, its orphan check, an `INSERT … SELECT` with columns paired by name or a dialect-correct upsert for a data flow, the statement built from the derivations, JSON unpacking for a serialized one — as a starting point; `Ctrl+Enter` runs the query in the Query tab, and the expand button opens it in a bigger window |
 | Write SQL anywhere | Every SQL box is the same editor: the diagram's table and column names are coloured (so a typo shows up as plain text), `Ctrl+Space` completes tables, columns, keywords and functions — `orders.` or an alias's `o.` narrows to that table's columns — and problems show under the box as you type: an expression the simulator cannot parse, a column the source table does not have (with the `table.column` spelling that would reach it), a table the diagram does not have, an unclosed string or parenthesis. `Enter` keeps the indentation, `(` and `'` close themselves, `Tab` / `Shift+Tab` indent, `Ctrl+/` comments lines out, `Ctrl+Shift+F` formats |
@@ -237,6 +239,8 @@ src/shared/types.ts      data model + API contracts shared by client and server
 src/lib/sql/             tokenizer, parser (DDL -> model), generator (model -> DDL), dialect helpers
 src/lib/sql/annotations.ts  the connections a script carries in its comments, so exported SQL imports back whole
 src/lib/groups.ts        table groups: region geometry, membership, external tables
+src/lib/programs.ts      programs: the arrows derived from their steps, round-trip detection, prose summaries
+src/lib/code/           drivers.ts: which package each language reaches each engine with; generate.ts: the starter; highlight.ts: a lexer per host language
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
 src/lib/lineage.ts       which columns are computed rather than stored, what each one reads, and the chain in both directions
@@ -288,6 +292,78 @@ It flags duplicate ids, dangling table/column/group references, mismatched forei
 column lists, verbs that do not fit their connection kind, dialect/type mix-ups, unknown
 colour keys and stacked table positions — all things the app loads without complaint but
 that produce a wrong diagram.
+
+## Programs: the work that happens outside the database
+
+Everything else on the canvas is something the database contains. A program is
+the opposite: it is the caller. It exists because *where a computation happens*
+is a design decision worth drawing, and because the one placement the diagram
+could not previously show is the interesting one — a fit, a render, a model
+call, a request to somebody else's API. None of those can be SQL, and a rollup
+that could have been SQL does not need a program at all.
+
+A program is an **ordered list of steps**, and the order is the whole point:
+
+| Step | Means |
+| --- | --- |
+| Read | A `SELECT`: rows leave the table and arrive in the program |
+| Write | An `INSERT`, `UPDATE` or `DELETE`: the program puts rows back |
+| Compute | Work the database never sees, and the reason the program exists |
+
+Written that way, a round trip reads straight off the canvas without opening
+anything — `1 read jobs`, `2 compute`, `3 write results`, `4 write jobs` — with
+a numbered arrow per step, pointing at the program for a read and at the table
+for a write. A program that both reads and writes the same table says so
+underneath: *round trip: jobs*.
+
+The arrows are never stored. They are derived from the steps, the same way a
+group's rectangle is derived from its member tables, so reordering a step moves
+its arrow with it and an arrow that means nothing cannot exist. Deleting a
+table does **not** delete the steps that named it: their SQL and their code are
+the part nobody can reconstruct, so they stay, and **Problems** reports the
+dangling reference with a one-click fix that removes the step once you agree.
+
+### Code, and a starter written from the steps
+
+Each step holds the statement it runs and the host-language code around it,
+coloured by a lexer written alongside the SQL one. Leave a step's SQL empty and
+the generated starter writes one from the table and columns you picked.
+
+The **starter** is the same move the app already makes for `CREATE TABLE`,
+`JOIN`s, `INSERT … SELECT`, seed rows and `ALTER` scripts, pointed outward at
+the client instead of inward at the schema. It names the driver a reader would
+actually reach for, binds parameters the way that driver expects, and puts
+everything after the first read inside a row loop, which is what a worker
+usually wants:
+
+| Language | PostgreSQL | MariaDB | SQLite | DuckDB |
+| --- | --- | --- | --- | --- |
+| Python | psycopg 3 | MariaDB Connector/Python | `sqlite3` | duckdb |
+| Rust | sqlx (postgres) | sqlx (mysql) | sqlx (sqlite) | duckdb |
+| Go | pgx | go-sql-driver/mysql | modernc.org/sqlite | go-duckdb |
+| C / C++ | libpq | MariaDB Connector/C | SQLite | DuckDB C API |
+| Java | PostgreSQL JDBC | MariaDB JDBC | SQLite JDBC | DuckDB JDBC |
+| JavaScript / TypeScript | node-postgres | mariadb | `node:sqlite` | @duckdb/node-api |
+
+It is a starting point and says so: compute steps come out as stubs that raise,
+because the work outside the database is exactly what the diagram cannot know.
+C#, Ruby, Shell and *Other* have no driver template, so they get the plan in
+comments rather than code pretending to compile.
+
+### Where they show up
+
+Programs are documentation, so they never reach the `CREATE TABLE` script — but
+they are not lost by it either. They ride in the same `-- dbviz:connections`
+comment block the data flows use, and **Import SQL** reads them back, so
+exporting a diagram and importing it again returns what you exported. Markdown
+gets a section per program plus a *touched from outside the database* list on
+every table one reaches; Mermaid draws them as entities marked with a comment;
+DBML, which has only tables, keeps them as notes.
+
+**Problems** knows a few things worth being told: a step writing a column a
+data flow already computes (one of the two is wrong about where the value comes
+from), a write to a view, a write to a table you marked as living in another
+database, and a program that never touches the schema at all.
 
 ## Several diagrams in one workspace
 
@@ -403,10 +479,10 @@ just gets no autocomplete and no checks.
 ## Exporting a script and importing it back
 
 A `.sql` file can only say what an engine understands, and most of what the
-diagram knows about a connection has no SQL to be written in: a data flow, a
-serialized copy, a dependency, the verb a connection reads with, the note and
-the query tagged onto it, the derived columns behind a rollup. So the generated
-script says all of it twice at the end — once as prose, for whoever opens the
+diagram knows has no SQL to be written in: a data flow, a serialized copy, a
+dependency, the verb a connection reads with, the note and the query tagged
+onto it, the derived columns behind a rollup, and the programs that talk to the
+schema from outside it. So the generated script says all of it twice at the end — once as prose, for whoever opens the
 file, and once as JSON inside `--` comments, for **Import SQL**:
 
 ```sql
@@ -429,6 +505,18 @@ file, and once as JSON inside `--` comments, for **Import SQL**:
 --       "name": "nightly rollup",
 --       "derivations": [ … ]
 --     }
+--   ],
+--   "programs": [
+--     {
+--       "name": "scorer",
+--       "language": "python",
+--       "role": "job",
+--       "steps": [
+--         { "op": "read", "table": "jobs", "columns": ["id", "payload"] },
+--         { "op": "compute", "note": "score the payload" },
+--         { "op": "write", "table": "results", "columns": ["job_id", "score"] }
+--       ]
+--     }
 --   ]
 -- }
 -- dbviz:end
@@ -449,6 +537,11 @@ come home with it. Three things follow from how it is written:
   does not create those tables and there would be nothing to attach it to.
   Positions, colours, groups and sticky notes are not connections and are not
   in it either — `.dbviz.json` is still the format that keeps the whole diagram.
+- **A program step keeps its work even when its table does not come back.** A
+  connection with a missing end describes nothing and is reported as skipped; a
+  step whose table the script does not define is still the SQL and the code
+  somebody wrote, so it comes back without the pointer and **Problems** takes it
+  from there.
 
 An unreadable block (a hand edit that broke the JSON, or a version a later
 build wrote) is reported as a warning and the DDL imports regardless, and a

@@ -27,6 +27,7 @@ import {
   ClipboardPaste,
   Code2,
   Copy,
+  Cpu,
   Crosshair,
   Database,
   Eye,
@@ -57,7 +58,8 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { RELATIONSHIP_KINDS, kindMeta, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
+import { RELATIONSHIP_KINDS, kindMeta, programLanguageMeta, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
+import { generateProgramCode } from '@/lib/code/generate';
 import { flowDerivations, matchColumnsByName } from '@/lib/derivation';
 import { buildLineage, columnOrigin, derivedColumnIds, type Lineage } from '@/lib/lineage';
 import { createGroup, customTypeByName, relationshipKindPatch, uniqueGroupName } from '@/lib/model';
@@ -76,6 +78,7 @@ export type ContextTarget =
   | { type: 'pane'; flowPosition: { x: number; y: number } }
   | { type: 'table'; tableId: string; columnId?: string }
   | { type: 'note'; noteId: string }
+  | { type: 'program'; programId: string }
   | { type: 'relationship'; relationshipId: string }
   | { type: 'group'; groupId: string }
   /** Several tables are selected; act on all of them. */
@@ -348,6 +351,13 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
       icon: StickyNote,
       hint: 'N',
       run: () => s.addNote({ x: Math.round(at.x - 110), y: Math.round(at.y - 60) }),
+    },
+    {
+      kind: 'action',
+      id: 'add-program',
+      label: 'Add program here',
+      icon: Cpu,
+      run: () => s.addProgram({ position: { x: Math.round(at.x - 130), y: Math.round(at.y - 30) } }),
     },
     {
       kind: 'action',
@@ -725,6 +735,45 @@ function noteMenu(noteId: string, env: MenuEnv): MenuNode[] {
 }
 
 /* ------------------------------------------------------------------ */
+/* Program                                                             */
+/* ------------------------------------------------------------------ */
+
+function programMenu(programId: string, env: MenuEnv): MenuNode[] {
+  const s = env.store;
+  const prg = s.diagram.programs.find((p) => p.id === programId);
+  if (!prg) return [];
+  const lang = programLanguageMeta(prg.language);
+  const starter = generateProgramCode(s.diagram, prg);
+  return [
+    { kind: 'heading', id: 'head', label: prg.name, detail: `${lang.label} program` },
+    {
+      kind: 'action',
+      id: 'edit',
+      label: 'Edit steps',
+      icon: Pencil,
+      run: () => {
+        selectOnly(s, { programIds: [prg.id] });
+        s.setInspectorOpen(true);
+      },
+    },
+    { kind: 'action', id: 'add-step', label: 'Add a step', icon: Plus, run: () => s.addProgramStep(prg.id) },
+    { kind: 'swatches', id: 'color', label: 'Color', value: prg.color, pick: (key) => s.updateProgram(prg.id, { color: key }) },
+    sep('s1'),
+    {
+      kind: 'action',
+      id: 'copy-code',
+      label: `Copy the ${lang.label} starter`,
+      icon: Code2,
+      disabled: prg.steps.length === 0,
+      run: () => env.copy(starter, `Copied the ${lang.label} starter for ${prg.name}.`),
+    },
+    { kind: 'action', id: 'duplicate', label: 'Duplicate program', icon: Copy, run: () => s.duplicateProgram(prg.id) },
+    sep('s2'),
+    { kind: 'action', id: 'delete', label: 'Delete program', icon: Trash2, danger: true, hint: 'Del', run: () => s.deleteProgram(prg.id) },
+  ];
+}
+
+/* ------------------------------------------------------------------ */
 /* Relationship (edge)                                                 */
 /* ------------------------------------------------------------------ */
 
@@ -938,6 +987,8 @@ export function buildContextMenu(target: ContextTarget, env: MenuEnv): MenuNode[
     }
     case 'note':
       return inGroup(s, 'note', target.noteId) ? selectionMenu(env) : noteMenu(target.noteId, env);
+    case 'program':
+      return programMenu(target.programId, env);
     case 'relationship':
       return relationshipMenu(target.relationshipId, env);
     case 'group':

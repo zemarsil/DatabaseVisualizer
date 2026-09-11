@@ -7,7 +7,7 @@
  * A fix mutates an immer draft of the diagram; callers hand it to the store's
  * `mutate` so it lands as one undo step.
  */
-import { engineName, kindMeta, type Column, type Diagram, type Relationship, type Table } from '@shared/types';
+import { engineName, kindMeta, programLanguageMeta, type Column, type Diagram, type Relationship, type Table } from '@shared/types';
 import { flowDerivations, isDerivationComplete } from './derivation';
 import { externalTableIds } from './groups';
 import { createColumn, createExtension, createIndex, customTypeByName } from './model';
@@ -33,6 +33,7 @@ export interface LintFinding {
   columnId?: string;
   relationshipId?: string;
   extensionId?: string;
+  programId?: string;
   fix?: LintFix;
 }
 
@@ -127,7 +128,7 @@ export function lintDiagram(d: Diagram): LintFinding[] {
   const tableById = new Map(d.tables.map((t) => [t.id, t]));
   const limit = IDENTIFIER_LIMIT[d.dialect] ?? 63;
   const push = (f: Omit<LintFinding, 'id'>) =>
-    out.push({ ...f, id: `${f.rule}:${f.tableId ?? ''}:${f.columnId ?? ''}:${f.relationshipId ?? ''}:${f.extensionId ?? ''}` });
+    out.push({ ...f, id: `${f.rule}:${f.tableId ?? ''}:${f.columnId ?? ''}:${f.relationshipId ?? ''}:${f.extensionId ?? ''}:${f.programId ?? ''}` });
 
   /* ---------- tables and columns ---------- */
   // Group by name first: a snapshot has no notion of which table was renamed
@@ -591,6 +592,128 @@ export function lintDiagram(d: Diagram): LintFinding[] {
             }
           },
         },
+      });
+    }
+  }
+
+  /* ---------- programs ---------- */
+  // Nothing here can stop the schema from being created: a program is not DDL.
+  // The findings are about the diagram lying — a step pointing at a table that
+  // is gone, a write onto a column a data flow already computes — because a
+  // diagram that says two different things about who fills a column is worse
+  // than one that says nothing.
+  const derivedColumns = new Set<string>();
+  for (const r of d.relationships) {
+    if (r.kind !== 'flow') continue;
+    for (const dv of flowDerivations(r)) derivedColumns.add(dv.targetColumnId);
+  }
+  const programNames = new Map<string, number>();
+  for (const prg of d.programs) {
+    const key = prg.name.trim().toLowerCase();
+    programNames.set(key, (programNames.get(key) ?? 0) + 1);
+  }
+
+  for (const prg of d.programs) {
+    if (!prg.name.trim()) {
+      push({ rule: 'program-unnamed', severity: 'warning', message: 'A program has no name, so nothing can refer to it.', programId: prg.id });
+    } else if ((programNames.get(prg.name.trim().toLowerCase()) ?? 0) > 1) {
+      push({
+        rule: 'duplicate-program-name',
+        severity: 'warning',
+        message: `More than one program is called "${prg.name}"; the diagram cannot say which one a reader means.`,
+        programId: prg.id,
+      });
+    }
+
+    if (prg.steps.length === 0) {
+      push({
+        rule: 'program-without-steps',
+        severity: 'info',
+        message: `${prg.name || 'A program'} has no steps yet, so the diagram does not say what it touches.`,
+        programId: prg.id,
+      });
+      continue;
+    }
+
+    prg.steps.forEach((s, i) => {
+      const table = s.tableId ? tableById.get(s.tableId) : undefined;
+
+      if (s.op !== 'compute' && !s.tableId) {
+        push({
+          rule: 'program-step-without-table',
+          severity: 'warning',
+          message: `Step ${i + 1} of ${prg.name} is a ${s.op} but names no table, so it draws nothing.`,
+          programId: prg.id,
+        });
+        return;
+      }
+
+      if (s.op !== 'compute' && s.tableId && !table) {
+        push({
+          rule: 'program-step-missing-table',
+          severity: 'error',
+          message: `Step ${i + 1} of ${prg.name} reads or writes a table that is no longer in the diagram. Its SQL and code are still here; point it at another table or remove the step.`,
+          programId: prg.id,
+          fix: {
+            label: 'Remove the step',
+            // Deleting the step throws away whatever code it carried, which is
+            // exactly why this is not a "safe" fix and not applied in bulk.
+            safe: false,
+            apply: (dd) => {
+              const target = dd.programs.find((x) => x.id === prg.id);
+              if (target) target.steps = target.steps.filter((x) => x.id !== s.id);
+            },
+          },
+        });
+        return;
+      }
+
+      if (s.op === 'write' && table) {
+        const clashing = s.columnIds.filter((id) => derivedColumns.has(id));
+        for (const id of clashing) {
+          const column = table.columns.find((c) => c.id === id);
+          if (!column) continue;
+          push({
+            rule: 'program-writes-derived-column',
+            severity: 'warning',
+            message: `${prg.name} writes ${table.name}.${column.name} at step ${i + 1}, but a data flow already computes that column. One of the two is wrong about where the value comes from.`,
+            programId: prg.id,
+            tableId: table.id,
+            columnId: column.id,
+          });
+        }
+      }
+
+      if (s.op === 'write' && table && external.has(table.id)) {
+        push({
+          rule: 'program-writes-external-table',
+          severity: 'info',
+          message: `${prg.name} writes ${table.name}, which the diagram says lives in another database. Worth being sure that is intended.`,
+          programId: prg.id,
+          tableId: table.id,
+        });
+      }
+
+      if (s.op === 'write' && table?.kind === 'view') {
+        push({
+          rule: 'program-writes-view',
+          severity: 'warning',
+          message: `${prg.name} writes ${table.name}, which is a view. Most engines refuse that unless the view is simple enough to be updatable or has a rule behind it.`,
+          programId: prg.id,
+          tableId: table.id,
+        });
+      }
+    });
+
+    // A program that only reads is a reader, and a program that only writes is a
+    // feed; both are fine. One that does neither has steps that say nothing.
+    const touches = prg.steps.some((s) => s.op !== 'compute' && s.tableId && tableById.has(s.tableId));
+    if (!touches && prg.steps.length > 0) {
+      push({
+        rule: 'program-touches-nothing',
+        severity: 'info',
+        message: `${prg.name} is ${programLanguageMeta(prg.language).label} that never reads or writes this schema, so it sits on the canvas without connecting to it.`,
+        programId: prg.id,
       });
     }
   }

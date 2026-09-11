@@ -19,6 +19,9 @@ const COLORS = ['blue', 'teal', 'green', 'yellow', 'orange', 'red', 'pink', 'pur
 const ACTIONS = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT'];
 const DIALECTS = ['postgresql', 'mariadb', 'sqlite', 'duckdb'];
 const KINDS = ['fk', 'flow', 'embed', 'dependency'];
+const LANGUAGES = ['python', 'rust', 'go', 'cpp', 'c', 'java', 'javascript', 'typescript', 'csharp', 'ruby', 'shell', 'other'];
+const PROGRAM_ROLES = ['service', 'job', 'script', 'etl'];
+const STEP_OPS = ['read', 'write', 'compute'];
 const AGGREGATES = ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX'];
 const WINDOW_FUNCTIONS = ['DIFF', 'LAG', 'LEAD', 'RUNNING_SUM', 'RUNNING_AVG', 'ROW_NUMBER', 'RANK'];
 const WINDOWS_WITHOUT_EXPRESSION = ['ROW_NUMBER', 'RANK'];
@@ -348,6 +351,51 @@ function validate(doc) {
             }
           }
         }
+      }
+    }
+  }
+
+  for (const [pi, prg] of (Array.isArray(doc.programs) ? doc.programs : []).entries()) {
+    const pw = `programs[${pi}]${prg && typeof prg.name === 'string' ? ` "${prg.name}"` : ''}`;
+    if (!prg || typeof prg !== 'object') {
+      err(`${pw} is not an object.`);
+      continue;
+    }
+    claim(prg.id, pw);
+    if (typeof prg.name !== 'string' || !prg.name.trim()) err(`${pw} has no name, so nothing can refer to it.`);
+    if (prg.language !== undefined && !LANGUAGES.includes(prg.language)) {
+      warn(`${pw}: language "${prg.language}" is not one of ${LANGUAGES.join(', ')}; it loads as "other" and gets no generated starter.`);
+    }
+    if (prg.role !== undefined && !PROGRAM_ROLES.includes(prg.role)) warn(`${pw}: role "${prg.role}" is not one of ${PROGRAM_ROLES.join(', ')}; it is dropped on load.`);
+    if (prg.color !== undefined && !COLORS.includes(prg.color)) warn(`${pw}: colour "${prg.color}" is not in the palette.`);
+    const steps = Array.isArray(prg.steps) ? prg.steps : [];
+    if (!steps.length) warn(`${pw} has no steps, so the diagram does not say what it touches.`);
+    for (const [si, s] of steps.entries()) {
+      const sw = `${pw} step ${si + 1}`;
+      if (!s || typeof s !== 'object') {
+        err(`${sw} is not an object.`);
+        continue;
+      }
+      claim(s.id, sw);
+      if (!STEP_OPS.includes(s.op)) {
+        err(`${sw}: op "${s.op}" is not one of ${STEP_OPS.join(', ')}; it loads as "read".`);
+        continue;
+      }
+      if (s.op === 'compute') {
+        // A compute step is defined by not touching the database, so anything
+        // pointing at one is stripped on load rather than honoured.
+        if (s.tableId) warn(`${sw} is a compute step with a tableId; it is dropped on load, because a compute step touches no table.`);
+        if (s.sql) warn(`${sw} is a compute step with sql; it is dropped on load. Put the statement on a read or write step.`);
+        continue;
+      }
+      if (typeof s.tableId !== 'string' || !s.tableId) {
+        err(`${sw} is a ${s.op} but names no table, so it draws nothing.`);
+        continue;
+      }
+      const cols = columnsOfTable.get(s.tableId);
+      if (!cols) err(`${sw}: tableId "${s.tableId}" is not a table in this file.`);
+      else for (const cid of Array.isArray(s.columnIds) ? s.columnIds : []) {
+        if (!cols.has(cid)) err(`${sw}: columnId "${cid}" is not a column of that table.`);
       }
     }
   }

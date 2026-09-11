@@ -14,11 +14,12 @@ import {
 } from 'lucide-react';
 import { alignTables, distributeTables, type AlignMode } from '@/lib/canvasOps';
 import { kindMeta } from '@shared/types';
-import { selectSelectedGroup, selectSelectedNote, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
+import { selectSelectedGroup, selectSelectedNote, selectSelectedProgram, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
 import { TableEditor } from './TableEditor';
 import { RelationshipEditor } from './RelationshipEditor';
 import { NoteEditor } from './NoteEditor';
 import { GroupEditor } from './GroupEditor';
+import { ProgramEditor } from './ProgramEditor';
 import { DiagramPanel } from './DiagramPanel';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
@@ -27,10 +28,13 @@ export function Inspector() {
   const relationship = useStore(selectSelectedRelationship);
   const note = useStore(selectSelectedNote);
   const group = useStore(selectSelectedGroup);
+  const program = useStore(selectSelectedProgram);
   const selectedTableIds = useStore((s) => s.selection.tableIds);
   const selectedNoteIds = useStore((s) => s.selection.noteIds);
+  const selectedProgramIds = useStore((s) => s.selection.programIds);
   const tables = useStore((s) => s.diagram.tables);
   const notes = useStore((s) => s.diagram.notes);
+  const programs = useStore((s) => s.diagram.programs);
   const setInspectorOpen = useStore((s) => s.setInspectorOpen);
   const resizePanel = useStore((s) => s.resizePanel);
   const removeElements = useStore((s) => s.removeElements);
@@ -41,7 +45,7 @@ export function Inspector() {
   const beginDrag = useStore((s) => s.beginDrag);
   const moveItems = useStore((s) => s.moveItems);
   const endDrag = useStore((s) => s.endDrag);
-  const count = selectedTableIds.length + selectedNoteIds.length;
+  const count = selectedTableIds.length + selectedNoteIds.length + selectedProgramIds.length;
   const selectedTables = tables.filter((t) => selectedTableIds.includes(t.id));
   const arrange = (moves: { id: string; position: { x: number; y: number } }[]) => {
     if (!moves.length) return;
@@ -69,20 +73,25 @@ export function Inspector() {
   } else if (note) {
     title = 'Note';
     body = <NoteEditor note={note} />;
+  } else if (program) {
+    title = 'Program';
+    body = <ProgramEditor program={program} />;
   } else if (group) {
     title = group.external ? 'External group' : 'Group';
     body = <GroupEditor group={group} />;
   } else if (count > 1) {
     const tableNames = selectedTableIds.map((id) => tables.find((t) => t.id === id)?.name ?? '?');
     const noteNames = selectedNoteIds.map((id) => notes.find((n) => n.id === id)?.text.split('\n')[0] || 'Empty note');
+    const programNames = selectedProgramIds.map((id) => programs.find((p) => p.id === id)?.name ?? '?');
     const parts: string[] = [];
     if (selectedTableIds.length) parts.push(`${selectedTableIds.length} table${selectedTableIds.length > 1 ? 's' : ''}`);
     if (selectedNoteIds.length) parts.push(`${selectedNoteIds.length} note${selectedNoteIds.length > 1 ? 's' : ''}`);
+    if (selectedProgramIds.length) parts.push(`${selectedProgramIds.length} program${selectedProgramIds.length > 1 ? 's' : ''}`);
     title = `${parts.join(' + ')} selected`;
     body = (
       <div className="stack">
         <div className="chip-list">
-          {[...tableNames, ...noteNames].map((n, i) => (
+          {[...tableNames, ...noteNames, ...programNames].map((n, i) => (
             <span key={i} className="chip chip--on">
               {n}
             </span>
@@ -123,7 +132,7 @@ export function Inspector() {
             <Route /> Trace {tableNames[0]} to {tableNames[1]}
           </button>
         )}
-        <button className="btn btn--danger" onClick={() => removeElements({ tableIds: selectedTableIds, noteIds: selectedNoteIds })}>
+        <button className="btn btn--danger" onClick={() => removeElements({ tableIds: selectedTableIds, noteIds: selectedNoteIds, programIds: selectedProgramIds })}>
           <Trash2 /> Delete {parts.join(' and ')}
         </button>
       </div>
