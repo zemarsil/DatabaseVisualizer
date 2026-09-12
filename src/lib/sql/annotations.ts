@@ -27,13 +27,16 @@ import {
   AGGREGATE_FUNCTIONS,
   DEFAULT_VERBS,
   REFERENTIAL_ACTIONS,
+  isCodeKind,
   isProgramLanguage,
   isProgramRole,
   isProgramStepOp,
   isRelationshipKind,
   isWindowFunction,
   normalizeVerb,
+  programStepOpMeta,
   type AggregateFunction,
+  type CodeKind,
   type Diagram,
   type ProgramLanguage,
   type ProgramRole,
@@ -45,6 +48,7 @@ import {
   type WindowFunction,
 } from '@shared/types';
 import { externalTableIds } from '../groups';
+import { codePath } from '../codemap';
 
 /** Opening marker; the version lets a later format change be recognised rather than misread. */
 const BEGIN = '-- dbviz:connections v1';
@@ -87,14 +91,26 @@ export interface AnnotatedProgramStep {
   /** Table name; absent on a compute step, and on a step whose table is gone. */
   table?: string;
   columns?: string[];
+  /** The code node a call, import or extends step names, as a path ("api/orders.py/place_order"); absent when it is gone. */
+  target?: string;
   sql?: string;
   code?: string;
   note?: string;
 }
 
-/** One program as the script carries it. */
+/**
+ * One code node as the script carries it. Containment is written as the
+ * parent's path rather than its id, for the reason everything else here is
+ * named: an id means nothing once the file has been re-imported, and a path
+ * is the one identity a node has that survives that.
+ */
 export interface AnnotatedProgram {
   name: string;
+  /** Absent means a program. */
+  kind?: CodeKind;
+  /** Path of the container this node sits in, e.g. "api/orders.py". */
+  parent?: string;
+  collapsed?: boolean;
   language: ProgramLanguage;
   role?: ProgramRole;
   entrypoint?: string;
@@ -217,20 +233,32 @@ export function collectAnnotations(d: Diagram, emittedAsDdl: ReadonlySet<string>
   // A program is documentation with no DDL of its own, so it is always carried.
   // Its steps name tables, and a step pointing at a table the script does not
   // define keeps its prose and its code while losing only the pointer: the code
-  // is the part nobody can reconstruct.
+  // is the part nobody can reconstruct. The same goes for the code inside it
+  // and for a call to a node that is gone.
+  const codeById = new Map(d.programs.map((p) => [p.id, p]));
+  const pathOf = (id: string | undefined) => {
+    const node = id ? codeById.get(id) : undefined;
+    return node ? codePath(d, node, codeById) : undefined;
+  };
   const programs: AnnotatedProgram[] = d.programs.map((prg) => ({
     name: prg.name,
+    ...(prg.kind && prg.kind !== 'program' ? { kind: prg.kind } : {}),
+    ...(pathOf(prg.parentId) ? { parent: pathOf(prg.parentId) } : {}),
+    ...(prg.collapsed ? { collapsed: true } : {}),
     language: prg.language,
     ...(prg.role ? { role: prg.role } : {}),
     ...(trimmed(prg.entrypoint) ? { entrypoint: trimmed(prg.entrypoint) } : {}),
     ...(trimmed(prg.comment) ? { comment: trimmed(prg.comment) } : {}),
     steps: prg.steps.map((s) => {
-      const table = s.op === 'compute' ? undefined : tableName.get(s.tableId ?? '');
+      const meta = programStepOpMeta(s.op);
+      const table = meta.touchesDatabase ? tableName.get(s.tableId ?? '') : undefined;
       const columns = table ? names(s.tableId!, s.columnIds) : [];
+      const target = meta.namesCode ? pathOf(s.codeId) : undefined;
       return {
         op: s.op,
         ...(table ? { table } : {}),
         ...(columns.length ? { columns } : {}),
+        ...(target ? { target } : {}),
         ...(trimmed(s.sql) ? { sql: trimmed(s.sql) } : {}),
         ...(trimmed(s.code) ? { code: trimmed(s.code) } : {}),
         ...(trimmed(s.note) ? { note: trimmed(s.note) } : {}),
@@ -331,13 +359,14 @@ function programStep(v: unknown): AnnotatedProgramStep | null {
   if (!v || typeof v !== 'object') return null;
   const o = v as Record<string, unknown>;
   const op = isProgramStepOp(o.op) ? o.op : 'read';
-  const compute = op === 'compute';
+  const meta = programStepOpMeta(op);
   const columns = strList(o.columns);
   return {
     op,
-    ...(!compute && str(o.table) ? { table: str(o.table)!.trim() } : {}),
-    ...(!compute && columns.length ? { columns } : {}),
-    ...(!compute && str(o.sql) ? { sql: str(o.sql) } : {}),
+    ...(meta.touchesDatabase && str(o.table) ? { table: str(o.table)!.trim() } : {}),
+    ...(meta.touchesDatabase && columns.length ? { columns } : {}),
+    ...(meta.namesCode && str(o.target) ? { target: str(o.target)!.trim() } : {}),
+    ...(meta.touchesDatabase && str(o.sql) ? { sql: str(o.sql) } : {}),
     ...(str(o.code) ? { code: str(o.code) } : {}),
     ...(str(o.note) ? { note: str(o.note) } : {}),
   };
@@ -350,6 +379,9 @@ function program(v: unknown): AnnotatedProgram | null {
   if (!name) return null;
   return {
     name: name.trim(),
+    ...(isCodeKind(o.kind) && o.kind !== 'program' ? { kind: o.kind } : {}),
+    ...(str(o.parent) ? { parent: str(o.parent)!.trim() } : {}),
+    ...(o.collapsed === true ? { collapsed: true } : {}),
     language: isProgramLanguage(o.language) ? o.language : 'other',
     ...(isProgramRole(o.role) ? { role: o.role } : {}),
     ...(str(o.entrypoint) ? { entrypoint: str(o.entrypoint) } : {}),

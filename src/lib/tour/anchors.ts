@@ -15,6 +15,7 @@
  * app no extra markup.
  */
 import type { Diagram } from '@shared/types';
+import { findCodeByPath } from '@/lib/codemap';
 
 /** Panels the host must open before the target can be found. */
 export interface Reveal {
@@ -23,6 +24,8 @@ export interface Reveal {
   sidebar?: boolean;
   /** Table to bring into view on the canvas, if it is not already there. */
   centerTable?: string;
+  /** Code node, by path, to bring into view on the canvas. */
+  centerCode?: string;
 }
 
 export interface Anchor {
@@ -100,6 +103,12 @@ export function resolveAnchor(target: string | null, d: Diagram): Anchor {
     case 'rel': {
       const id = relId(d, arg);
       return { selector: id ? `.react-flow__edge[data-id="${cssEscape(id)}"]` : null, reveal: {} };
+    }
+    case 'code': {
+      // A leaf and an expanded container are both React Flow nodes keyed on the
+      // program's id, so one selector serves whichever the node is drawn as.
+      const id = findCodeByPath(d, arg)?.id;
+      return { selector: id ? `.react-flow__node[data-id="${cssEscape(id)}"]` : null, reveal: { centerCode: arg } };
     }
     default:
       return CENTERED;

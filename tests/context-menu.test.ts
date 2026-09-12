@@ -180,10 +180,10 @@ describe('table menu', () => {
     expect(heading(items)).toMatchObject({ label: '2 tables selected' });
     expect(action(items, 'delete').label).toBe('Delete 2 tables');
     action(items, 'delete').run();
-    expect(env.remove).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [] });
+    expect(env.remove).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [], programIds: [] });
     const swatches = items.find((i) => i.kind === 'swatches')!;
     if (swatches.kind === 'swatches') swatches.pick('teal');
-    expect(actions.colorElements).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [] }, 'teal');
+    expect(actions.colorElements).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [], programIds: [] }, 'teal');
   });
 
   it('covers a mixed group of tables and notes, however it was right-clicked', () => {
@@ -203,10 +203,10 @@ describe('table menu', () => {
     }
     const items = buildContextMenu({ type: 'selection' }, env);
     action(items, 'delete').run();
-    expect(env.remove).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [note.id] });
+    expect(env.remove).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [note.id], programIds: [] });
     const swatches = items.find((i) => i.kind === 'swatches')!;
     if (swatches.kind === 'swatches') swatches.pick('pink');
-    expect(actions.colorElements).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [note.id] }, 'pink');
+    expect(actions.colorElements).toHaveBeenCalledWith({ tableIds: [a.id, b.id], noteIds: [note.id], programIds: [] }, 'pink');
   });
 
   it('drops the table-only actions from a group of notes', () => {

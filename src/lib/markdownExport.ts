@@ -1,4 +1,5 @@
-import { describeRelationship, dialectLabel, programLanguageMeta, programRoleMeta, type Diagram, type Relationship, type Table } from '@shared/types';
+import { codeKindMeta, codeKindOf, describeRelationship, dialectLabel, isCodeStepOp, programLanguageMeta, programRoleMeta, type Diagram, type Program, type Relationship, type Table } from '@shared/types';
+import { codeChildren, codePath } from './codemap';
 import { derivationSummaries } from './derivation';
 import { buildLineage, type Lineage } from './lineage';
 import { exportMermaid } from './export/mermaid';
@@ -107,7 +108,7 @@ function summarySection(d: Diagram, includeMermaid: boolean): string {
     `${fks} foreign key${fks === 1 ? '' : 's'}`,
     d.customTypes.length ? `${d.customTypes.length} custom type${d.customTypes.length === 1 ? '' : 's'}` : '',
     d.groups.length ? `${d.groups.length} group${d.groups.length === 1 ? '' : 's'}` : '',
-    d.programs.length ? `${d.programs.length} program${d.programs.length === 1 ? '' : 's'}` : '',
+    d.programs.length ? `${d.programs.length} code node${d.programs.length === 1 ? '' : 's'}` : '',
   ].filter(Boolean);
   const parts = [facts.join(' · ')];
   if (includeMermaid) parts.push(`\`\`\`mermaid\n${exportMermaid(d, { includeComments: false }).trimEnd()}\n\`\`\``);
@@ -131,19 +132,45 @@ function groupsSection(d: Diagram): string {
 }
 
 /**
- * The programs, one subsection each: what it is, the ordered steps, and the
- * code the steps carry. The generated starter is deliberately left out — it is
- * derived, sometimes long, and a data dictionary should hold what somebody
- * wrote rather than what the app can write again on demand.
+ * The code side, one subsection per node in tree order — a program, then the
+ * modules inside it, then their classes and functions — each with what it is,
+ * where it sits, the ordered steps, and the code the steps carry. The
+ * generated starter is deliberately left out: it is derived, sometimes long,
+ * and a data dictionary should hold what somebody wrote rather than what the
+ * app can write again on demand.
  */
 function programsSection(d: Diagram): string {
   if (d.programs.length === 0) return '';
   const byId = new Map(d.tables.map((t) => [t.id, t]));
-  const parts: string[] = ['## Programs', '', 'Work that happens outside the database, and what it reads and writes.'];
+  const codeById = new Map(d.programs.map((p) => [p.id, p]));
+  const children = codeChildren(d);
+  const onlyPrograms = d.programs.every((p) => codeKindOf(p) === 'program');
+  const parts: string[] = [
+    onlyPrograms ? '## Programs' : '## Code',
+    '',
+    onlyPrograms ? 'Work that happens outside the database, and what it reads and writes.' : 'The code that talks to this schema: programs, the modules inside them, their classes and functions, and what each one reads, writes and calls.',
+  ];
 
-  for (const p of d.programs) {
+  const ordered: Program[] = [];
+  const walk = (parent: string | null) => {
+    for (const p of children.get(parent) ?? []) {
+      ordered.push(p);
+      walk(p.id);
+    }
+  };
+  walk(null);
+
+  for (const p of ordered) {
     const lang = programLanguageMeta(p.language);
-    const facts = [lang.label, p.role ? programRoleMeta(p.role).label : '', p.entrypoint ? `\`${esc(p.entrypoint)}\`` : ''].filter(Boolean);
+    const kind = codeKindOf(p);
+    const members = children.get(p.id) ?? [];
+    const facts = [
+      kind === 'program' ? lang.label : `${codeKindMeta(kind).label}, ${lang.label}`,
+      p.role && kind === 'program' ? programRoleMeta(p.role).label : '',
+      p.parentId ? `in ${esc(codePath(d, codeById.get(p.parentId)!, codeById))}` : '',
+      p.entrypoint ? `\`${esc(p.entrypoint)}\`` : '',
+      members.length ? `holds ${members.map((m) => esc(m.name)).join(', ')}` : '',
+    ].filter(Boolean);
     parts.push(`\n### ${esc(p.name)}\n`);
     parts.push(facts.join(' · '));
     if (p.comment?.trim()) parts.push(`\n${esc(p.comment.trim())}`);
@@ -151,16 +178,17 @@ function programsSection(d: Diagram): string {
 
     const rows = p.steps.map((s, i) => {
       const table = s.tableId ? byId.get(s.tableId) : undefined;
+      const target = s.codeId ? codeById.get(s.codeId) : undefined;
       const cols = s.columnIds.map((id) => table?.columns.find((c) => c.name && c.id === id)?.name ?? '').filter(Boolean);
       return [
         String(i + 1),
         s.op,
-        s.op === 'compute' ? '' : (table?.name ?? '(missing)'),
+        s.op === 'compute' ? '' : isCodeStepOp(s.op) ? (target ? codePath(d, target, codeById) : '(missing)') : (table?.name ?? '(missing)'),
         cols.join(', '),
         s.note ?? '',
       ];
     });
-    if (rows.length) parts.push(`\n${mdTable(['#', 'Does', 'Table', 'Columns', 'Note'], rows)}`);
+    if (rows.length) parts.push(`\n${mdTable(['#', 'Does', 'Table or code', 'Columns', 'Note'], rows)}`);
 
     for (const [i, s] of p.steps.entries()) {
       if (s.sql?.trim()) parts.push(`\n**Step ${i + 1} statement**\n\n\`\`\`sql\n${s.sql.trim()}\n\`\`\``);

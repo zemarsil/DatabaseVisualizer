@@ -8,9 +8,9 @@ import { create } from 'zustand';
  * ui/ContextMenu.tsx.)
  */
 
-/** Neighborhood focus: dim everything further than `hops` from the table. */
+/** Neighborhood focus: dim everything further than `hops` from a table or a code node. */
 export interface FocusState {
-  tableId: string;
+  nodeId: string;
   hops: number;
 }
 
@@ -51,9 +51,9 @@ interface UiState {
   /** Turn the lens on (if it is off) and point it at one column; null widens it back to the diagram. */
   showLineage: (columnId: string | null) => void;
 
-  /** Table whose header is being renamed in place on the canvas. */
-  renamingTableId: string | null;
-  setRenamingTableId: (id: string | null) => void;
+  /** Table or code node whose header is being renamed in place on the canvas. */
+  renamingNodeId: string | null;
+  setRenamingNodeId: (id: string | null) => void;
 
   /**
    * Program step the canvas last pointed at. Clicking a step on a program node
@@ -131,8 +131,8 @@ export const useUi = create<UiState>()((set, get) => {
     toggleDerived: () => set({ derived: get().derived ? null : { columnId: null, downstream: true } }),
     showLineage: (columnId) => set({ derived: { ...(get().derived ?? { downstream: true }), columnId } }),
 
-    renamingTableId: null,
-    setRenamingTableId: (id) => set({ renamingTableId: id }),
+    renamingNodeId: null,
+    setRenamingNodeId: (id) => set({ renamingNodeId: id }),
 
     activeProgramStepId: null,
     setActiveProgramStepId: (id) => set({ activeProgramStepId: id }),

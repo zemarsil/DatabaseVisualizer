@@ -181,6 +181,16 @@ function HelpContent() {
         Detangle runs a layered layout that ranks referenced tables before the tables that reference them and minimises edge crossings. Trace finds the
         shortest chain of connections between two tables and writes the JOIN query for it; <em>Run</em> sends it to the Query tab.
       </p>
+      <h4>Mapping the code that talks to the schema</h4>
+      <p>
+        A program is a node whose ordered steps say what it does: read a table, compute something the database never sees, write the answer back. Code maps
+        take that one level further. Right-click the canvas (or open the <strong>+</strong> menu next to <em>Table</em>) to add a <em>module</em>, a{' '}
+        <em>class</em> or a <em>function</em>; drag a node into a container&apos;s region to put it inside; drag from one code node to another to draw a{' '}
+        <em>call</em>, an <em>import</em> or an <em>extends</em>, and from a table into a function (or back) to say that the function reads or writes it.
+        Every arrow is a step on the node it leaves, so reordering steps renumbers the arrows and nothing can drift. The chevron on a container&apos;s
+        title folds it to one node with every arrow of everything inside gathered onto it, which is how a big map stays readable. Focus (<K k="." />) and
+        Trace work across code and tables alike: trace a function to a table and the drawer prints the chain of calls that reaches it.
+      </p>
       <h4>Watching data move</h4>
       <p>
         A data-flow connection can describe, column by column, how its target is computed from its source: an expression, an aggregate over a

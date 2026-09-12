@@ -7,7 +7,22 @@
  * A fix mutates an immer draft of the diagram; callers hand it to the store's
  * `mutate` so it lands as one undo step.
  */
-import { engineName, kindMeta, programLanguageMeta, type Column, type Diagram, type Relationship, type Table } from '@shared/types';
+import {
+  canContain,
+  codeKindMeta,
+  codeKindOf,
+  engineName,
+  isCodeStepOp,
+  kindMeta,
+  programLanguageMeta,
+  programStepOpMeta,
+  type Column,
+  type Diagram,
+  type Program,
+  type Relationship,
+  type Table,
+} from '@shared/types';
+import { codeChildren, codeNoun, importCycles } from './codemap';
 import { flowDerivations, isDerivationComplete } from './derivation';
 import { externalTableIds } from './groups';
 import { createColumn, createExtension, createIndex, customTypeByName } from './model';
@@ -607,38 +622,123 @@ export function lintDiagram(d: Diagram): LintFinding[] {
     if (r.kind !== 'flow') continue;
     for (const dv of flowDerivations(r)) derivedColumns.add(dv.targetColumnId);
   }
+  // Names only have to be distinct among siblings: two classes may each have a
+  // `save`, and the map is read through its containers.
   const programNames = new Map<string, number>();
-  for (const prg of d.programs) {
-    const key = prg.name.trim().toLowerCase();
-    programNames.set(key, (programNames.get(key) ?? 0) + 1);
-  }
+  const siblingKey = (prg: Program) => `${prg.parentId ?? ''}|${prg.name.trim().toLowerCase()}`;
+  for (const prg of d.programs) programNames.set(siblingKey(prg), (programNames.get(siblingKey(prg)) ?? 0) + 1);
+  const codeById = new Map(d.programs.map((p) => [p.id, p]));
+  const children = codeChildren(d);
+  // "Nothing calls this" is only news once the map draws calls at all; a map
+  // of imports alone, or of plain programs, has no entry points to tell apart.
+  const anyCall = d.programs.some((p) => p.steps.some((s) => s.op === 'call'));
+  const called = new Set<string>();
+  for (const p of d.programs) for (const s of p.steps) if (isCodeStepOp(s.op) && s.codeId) called.add(s.codeId);
 
   for (const prg of d.programs) {
+    const kind = codeKindOf(prg);
+    const noun = codeNoun(prg);
+    const members = children.get(prg.id) ?? [];
     if (!prg.name.trim()) {
-      push({ rule: 'program-unnamed', severity: 'warning', message: 'A program has no name, so nothing can refer to it.', programId: prg.id });
-    } else if ((programNames.get(prg.name.trim().toLowerCase()) ?? 0) > 1) {
+      push({ rule: 'program-unnamed', severity: 'warning', message: `A ${noun} has no name, so nothing can refer to it.`, programId: prg.id });
+    } else if ((programNames.get(siblingKey(prg)) ?? 0) > 1) {
       push({
         rule: 'duplicate-program-name',
         severity: 'warning',
-        message: `More than one program is called "${prg.name}"; the diagram cannot say which one a reader means.`,
+        message: `More than one ${noun} is called "${prg.name}" in the same place; the diagram cannot say which one a reader means.`,
         programId: prg.id,
+      });
+    }
+
+    // A function inside a class inside a module: the map only reads if each
+    // level really can hold the next.
+    const parent = prg.parentId ? codeById.get(prg.parentId) : undefined;
+    if (parent && !canContain(codeKindOf(parent), kind)) {
+      push({
+        rule: 'code-cannot-contain',
+        severity: 'warning',
+        message: `${prg.name} is a ${noun} inside ${parent.name}, which is a ${codeNoun(parent)}; a ${codeNoun(parent)} cannot hold a ${noun}.`,
+        programId: prg.id,
+        fix: {
+          label: parent.parentId ? `Move it up into ${codeById.get(parent.parentId)?.name ?? 'the container above'}` : 'Move it to the top level',
+          safe: false,
+          apply: (dd) => {
+            const x = dd.programs.find((p) => p.id === prg.id);
+            if (!x) return;
+            if (parent.parentId) x.parentId = parent.parentId;
+            else delete x.parentId;
+          },
+        },
       });
     }
 
     if (prg.steps.length === 0) {
+      if (kind === 'program' && members.length === 0) {
+        push({
+          rule: 'program-without-steps',
+          severity: 'info',
+          message: `${prg.name || 'A program'} has no steps yet, so the diagram does not say what it touches.`,
+          programId: prg.id,
+        });
+      } else if (codeKindMeta(kind).container && kind !== 'program' && members.length === 0) {
+        push({
+          rule: 'code-empty-container',
+          severity: 'info',
+          message: `${prg.name} is a ${noun} with nothing in it and no steps of its own; it draws as an empty region.`,
+          programId: prg.id,
+        });
+      }
+    }
+
+    if (kind === 'function' && anyCall && !called.has(prg.id)) {
       push({
-        rule: 'program-without-steps',
+        rule: 'code-uncalled-function',
         severity: 'info',
-        message: `${prg.name || 'A program'} has no steps yet, so the diagram does not say what it touches.`,
+        message: `Nothing in the map calls ${prg.name}. Either it is an entry point, or the call that reaches it has not been drawn yet.`,
         programId: prg.id,
       });
-      continue;
     }
 
     prg.steps.forEach((s, i) => {
       const table = s.tableId ? tableById.get(s.tableId) : undefined;
+      const meta = programStepOpMeta(s.op);
 
-      if (s.op !== 'compute' && !s.tableId) {
+      if (meta.namesCode) {
+        if (!s.codeId) {
+          push({
+            rule: 'code-step-without-target',
+            severity: 'warning',
+            message: `Step ${i + 1} of ${prg.name} is a ${s.op} but names nothing, so it draws no arrow.`,
+            programId: prg.id,
+          });
+        } else if (!codeById.has(s.codeId)) {
+          push({
+            rule: 'code-step-missing-target',
+            severity: 'error',
+            message: `Step ${i + 1} of ${prg.name} ${s.op === 'call' ? 'calls' : s.op === 'import' ? 'imports' : 'extends'} something that is no longer in the diagram. Its code is still here; point it at another node or remove the step.`,
+            programId: prg.id,
+            fix: {
+              label: 'Remove the step',
+              // The step may carry the only copy of its code, so never in bulk.
+              safe: false,
+              apply: (dd) => {
+                const target = dd.programs.find((x) => x.id === prg.id);
+                if (target) target.steps = target.steps.filter((x) => x.id !== s.id);
+              },
+            },
+          });
+        } else if (s.codeId === prg.id && s.op !== 'call') {
+          push({
+            rule: 'code-step-names-itself',
+            severity: 'warning',
+            message: `Step ${i + 1} of ${prg.name} ${s.op}s ${prg.name} itself, which cannot be what was meant.`,
+            programId: prg.id,
+          });
+        }
+        return;
+      }
+
+      if (meta.touchesDatabase && !s.tableId) {
         push({
           rule: 'program-step-without-table',
           severity: 'warning',
@@ -648,7 +748,7 @@ export function lintDiagram(d: Diagram): LintFinding[] {
         return;
       }
 
-      if (s.op !== 'compute' && s.tableId && !table) {
+      if (meta.touchesDatabase && s.tableId && !table) {
         push({
           rule: 'program-step-missing-table',
           severity: 'error',
@@ -706,9 +806,11 @@ export function lintDiagram(d: Diagram): LintFinding[] {
     });
 
     // A program that only reads is a reader, and a program that only writes is a
-    // feed; both are fine. One that does neither has steps that say nothing.
-    const touches = prg.steps.some((s) => s.op !== 'compute' && s.tableId && tableById.has(s.tableId));
-    if (!touches && prg.steps.length > 0) {
+    // feed; both are fine. One that does neither, and holds no code that might,
+    // has steps that say nothing about this schema.
+    const touches = prg.steps.some((s) => programStepOpMeta(s.op).touchesDatabase && s.tableId && tableById.has(s.tableId));
+    const reaches = prg.steps.some((s) => isCodeStepOp(s.op) && s.codeId && codeById.has(s.codeId));
+    if (kind === 'program' && !touches && !reaches && prg.steps.length > 0 && members.length === 0) {
       push({
         rule: 'program-touches-nothing',
         severity: 'info',
@@ -716,6 +818,18 @@ export function lintDiagram(d: Diagram): LintFinding[] {
         programId: prg.id,
       });
     }
+  }
+
+  // A module that imports a module that imports it back: the circular import
+  // that fails at run time and hides well in a big map.
+  for (const cycle of importCycles(d)) {
+    const names = cycle.map((id) => codeById.get(id)?.name ?? '?');
+    push({
+      rule: 'code-import-cycle',
+      severity: 'warning',
+      message: `${names.join(' imports ')} imports ${names[0]} again: a circular import.`,
+      programId: cycle[0],
+    });
   }
 
   const order: Record<LintSeverity, number> = { error: 0, warning: 1, info: 2 };

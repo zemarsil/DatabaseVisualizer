@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { describeRelationship, normalizeVerb, relationshipVerb, verbsForKind } from '../src/shared/types';
-import { buildJoinQuery, describeHop, findPath, reachableTables } from '../src/lib/trace';
+import { buildJoinQuery, describeHop, findPath, reachableNodes } from '../src/lib/trace';
 import { layoutDiagram } from '../src/lib/layout';
 import { parseDiagramFile, serializeDiagram } from '../src/lib/io';
 import { sampleDiagram } from '../src/lib/sample';
@@ -13,7 +13,7 @@ describe('findPath', () => {
     const products = d.tables.find((t) => t.name === 'products')!;
     const res = findPath(d, customers.id, products.id);
     expect(res).not.toBeNull();
-    expect(res!.tableIds.map((id) => d.tables.find((t) => t.id === id)!.name)).toEqual(['customers', 'orders', 'order_items', 'products']);
+    expect(res!.nodeIds.map((id) => d.tables.find((t) => t.id === id)!.name)).toEqual(['customers', 'orders', 'order_items', 'products']);
     expect(res!.hops).toHaveLength(3);
     const q = buildJoinQuery(d, res!);
     expect(q).toContain('FROM customers AS t0');
@@ -27,7 +27,7 @@ describe('findPath', () => {
     d.relationships = [];
     const [a, b] = d.tables;
     expect(findPath(d, a.id, b.id)).toBeNull();
-    expect(findPath(d, a.id, a.id)?.tableIds).toEqual([a.id]);
+    expect(findPath(d, a.id, a.id)?.nodeIds).toEqual([a.id]);
   });
 
   it('annotates hops the database cannot join instead of inventing a condition', () => {
@@ -52,7 +52,7 @@ describe('findPath', () => {
     const daily = d.tables.find((t) => t.name === 'daily_sales')!;
     const res = findPath(d, addresses.id, daily.id)!;
     expect(res).not.toBeNull();
-    expect(reachableTables(d, addresses.id).size).toBe(d.tables.length);
+    expect(reachableNodes(d, addresses.id).size).toBe(d.tables.length);
   });
 });
 

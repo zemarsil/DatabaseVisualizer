@@ -1,11 +1,17 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ClipboardCopy, Code2, Copy, Plus, Trash2, TriangleAlert } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Code2, Copy, Crosshair, Plus, Trash2, TriangleAlert, Ungroup } from 'lucide-react';
 import {
+  CODE_KINDS,
   PROGRAM_LANGUAGES,
   PROGRAM_ROLES,
   PROGRAM_STEP_OPS,
+  canContain,
+  codeKindMeta,
+  codeKindOf,
+  isCodeStepOp,
   programLanguageMeta,
   programStepOpMeta,
+  type CodeKind,
   type Program,
   type ProgramStep,
   type ProgramStepOp,
@@ -14,34 +20,52 @@ import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { diagramScope } from '@/lib/sqlScope';
 import { describeProgram } from '@/lib/programs';
+import { callersOf, codeChildren, codeDescendantIds, codePath, wouldNestInItself } from '@/lib/codemap';
 import { generateProgramCode, programCodeFilename } from '@/lib/code/generate';
 import { hasDriver } from '@/lib/code/drivers';
 import { SqlEditor } from '@/components/ui/SqlEditor';
 import { CodeBlock, CodeEditor } from '@/components/ui/CodeEditor';
+import { confirmDialog } from '@/components/ui/Modal';
 import { Swatches } from '../ui/Swatches';
 import '@/styles/programs.css';
 
 /**
- * The program editor: what the program is, and the ordered list of what it does.
+ * The editor for a code node of any kind: what it is, where it sits, what it
+ * holds, and the ordered list of what it does.
  *
  * The step list is the substance. Everything else on this panel is a label, so
  * it stays compact at the top and the steps get the room — each one a row you
- * can reorder, pointed at a table and its columns, carrying the SQL it issues
- * and the code around it.
+ * can reorder, pointed at a table and its columns or at another code node,
+ * carrying the SQL it issues and the code around it.
  */
 export function ProgramEditor({ program }: { program: Program }) {
   const diagram = useStore((s) => s.diagram);
   const updateProgram = useStore((s) => s.updateProgram);
   const deleteProgram = useStore((s) => s.deleteProgram);
   const duplicateProgram = useStore((s) => s.duplicateProgram);
+  const dissolveCodeNode = useStore((s) => s.dissolveCodeNode);
+  const setCodeCollapsed = useStore((s) => s.setCodeCollapsed);
+  const addProgram = useStore((s) => s.addProgram);
   const addProgramStep = useStore((s) => s.addProgramStep);
+  const setSelection = useStore((s) => s.setSelection);
+  const focusTable = useStore((s) => s.focusTable);
   const toast = useStore((s) => s.toast);
   const activeStepId = useUi((s) => s.activeProgramStepId);
   const [showCode, setShowCode] = useState(false);
 
+  const kind = codeKindOf(program);
+  const kindMeta = codeKindMeta(kind);
   const lang = programLanguageMeta(program.language);
   const starter = useMemo(() => generateProgramCode(diagram, program), [diagram, program]);
   const templated = hasDriver(program.language, diagram.dialect);
+  const members = useMemo(() => codeChildren(diagram).get(program.id) ?? [], [diagram, program.id]);
+  const descendants = useMemo(() => codeDescendantIds(diagram, program.id).length, [diagram, program.id]);
+  const callers = useMemo(() => callersOf(diagram, program.id), [diagram, program.id]);
+  // Containers this node could sit in: the right kind, and not itself or anything inside it.
+  const parentOptions = useMemo(
+    () => diagram.programs.filter((p) => p.id !== program.id && canContain(codeKindOf(p), kind) && !wouldNestInItself(diagram, program.id, p.id)).map((p) => ({ id: p.id, label: codePath(diagram, p) })),
+    [diagram, program.id, kind],
+  );
 
   const copyStarter = async () => {
     try {
@@ -52,6 +76,21 @@ export function ProgramEditor({ program }: { program: Program }) {
     }
   };
 
+  const onDelete = async () => {
+    if (descendants) {
+      const ok = await confirmDialog({
+        title: `Delete ${program.name} and the ${descendants} node${descendants === 1 ? '' : 's'} inside it?`,
+        message: 'Steps elsewhere that call them keep their code and are reported by Problems. This can be undone with Ctrl+Z.',
+        confirmLabel: 'Delete',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    deleteProgram(program.id);
+  };
+
+  const memberKinds = CODE_KINDS.filter((k) => canContain(kind, k.id));
+
   return (
     <div>
       <div className="field">
@@ -60,9 +99,33 @@ export function ProgramEditor({ program }: { program: Program }) {
           className="input input--mono"
           value={program.name}
           onChange={(e) => updateProgram(program.id, { name: e.target.value })}
-          placeholder="e.g. ingest_worker"
+          placeholder={kind === 'module' ? 'e.g. orders.py' : kind === 'class' ? 'e.g. OrderService' : kind === 'function' ? 'e.g. place_order' : 'e.g. ingest_worker'}
           autoFocus
         />
+      </div>
+
+      <div className="row">
+        <label className="field grow">
+          <span className="field__label">Kind</span>
+          <select className="select" value={kind} onChange={(e) => updateProgram(program.id, { kind: e.target.value as CodeKind })} title={kindMeta.hint}>
+            {CODE_KINDS.map((k) => (
+              <option key={k.id} value={k.id}>
+                {k.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field grow">
+          <span className="field__label">Inside</span>
+          <select className="select" value={program.parentId ?? ''} onChange={(e) => updateProgram(program.id, { parentId: e.target.value || undefined })}>
+            <option value="">Nothing (top level)</option>
+            {parentOptions.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       <div className="row">
@@ -76,30 +139,32 @@ export function ProgramEditor({ program }: { program: Program }) {
             ))}
           </select>
         </label>
-        <label className="field grow">
-          <span className="field__label">Runs as</span>
-          <select
-            className="select"
-            value={program.role ?? ''}
-            onChange={(e) => updateProgram(program.id, { role: (e.target.value || undefined) as Program['role'] })}
-          >
-            <option value="">Unspecified</option>
-            {PROGRAM_ROLES.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.label}
-              </option>
-            ))}
-          </select>
-        </label>
+        {kind === 'program' && (
+          <label className="field grow">
+            <span className="field__label">Runs as</span>
+            <select
+              className="select"
+              value={program.role ?? ''}
+              onChange={(e) => updateProgram(program.id, { role: (e.target.value || undefined) as Program['role'] })}
+            >
+              <option value="">Unspecified</option>
+              {PROGRAM_ROLES.map((r) => (
+                <option key={r.id} value={r.id}>
+                  {r.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
 
       <div className="field">
-        <span className="field__label">Where the code lives</span>
+        <span className="field__label">{kind === 'program' ? 'Where the code lives' : kind === 'module' ? 'Path' : 'Signature or location'}</span>
         <input
           className="input input--mono"
           value={program.entrypoint ?? ''}
           onChange={(e) => updateProgram(program.id, { entrypoint: e.target.value || undefined })}
-          placeholder="e.g. services/worker/main.py"
+          placeholder={kind === 'program' ? 'e.g. services/worker/main.py' : kind === 'module' ? 'e.g. src/orders.py' : kind === 'class' ? 'e.g. class OrderService(BaseService)' : 'e.g. def place_order(cart, customer) -> Order'}
         />
       </div>
 
@@ -110,14 +175,76 @@ export function ProgramEditor({ program }: { program: Program }) {
           rows={2}
           value={program.comment ?? ''}
           onChange={(e) => updateProgram(program.id, { comment: e.target.value || undefined })}
-          placeholder="Scores every pending job and writes the result back."
+          placeholder={kind === 'function' ? 'Validates the cart and writes the order.' : 'Scores every pending job and writes the result back.'}
         />
       </div>
 
       <div className="field">
         <span className="field__label">Color</span>
-        <Swatches value={program.color} onPick={(key) => updateProgram(program.id, { color: key })} label="Program colour" />
+        <Swatches value={program.color} onPick={(key) => updateProgram(program.id, { color: key })} label={`${kindMeta.label} colour`} />
       </div>
+
+      {kindMeta.container && (
+        <>
+          <div className="divider" />
+          <div className="section">
+            <div className="section__head">
+              <span className="section__title">Inside ({members.length})</span>
+              {members.length > 0 && (
+                <button className="btn btn--sm" onClick={() => setCodeCollapsed([program.id], !program.collapsed)} title={program.collapsed ? 'Draw the members again' : 'Fold everything inside into this one node; arrows gather onto it'}>
+                  {program.collapsed ? <ChevronsUpDown /> : <ChevronsDownUp />} {program.collapsed ? 'Expand' : 'Collapse'}
+                </button>
+              )}
+            </div>
+            {members.length === 0 && <div className="faint small">Nothing yet. Add a member below, or drag a node into this {kindMeta.label.toLowerCase()}&apos;s region on the canvas.</div>}
+            {members.map((m) => (
+              <div key={m.id} className="rel-item" style={{ cursor: 'default' }}>
+                <button
+                  className="grow row"
+                  style={{ background: 'none', border: 'none', color: 'inherit', cursor: 'pointer', padding: 0, textAlign: 'left' }}
+                  onClick={() => {
+                    setSelection({ programIds: [m.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+                    focusTable(m.id);
+                  }}
+                >
+                  <Crosshair size={13} className="faint" />
+                  <span className="faint small">{codeKindMeta(codeKindOf(m)).label.toLowerCase()}</span>
+                  <span style={{ fontWeight: 600 }}>{m.name}</span>
+                  <span className="faint small">{m.steps.length} step{m.steps.length === 1 ? '' : 's'}</span>
+                </button>
+              </div>
+            ))}
+            <div className="row row--wrap" style={{ marginTop: 6 }}>
+              {memberKinds.map((k) => (
+                <button key={k.id} className="btn btn--sm" title={k.hint} onClick={() => addProgram({ kind: k.id, parentId: program.id })}>
+                  <Plus /> {k.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        </>
+      )}
+
+      {callers.length > 0 && (
+        <div className="field">
+          <span className="field__label">Reached from</span>
+          <div className="chip-list">
+            {callers.map((c) => (
+              <button
+                key={c.id}
+                className="chip"
+                title={codePath(diagram, c)}
+                onClick={() => {
+                  setSelection({ programIds: [c.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+                  focusTable(c.id);
+                }}
+              >
+                {c.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="divider" />
 
@@ -130,10 +257,18 @@ export function ProgramEditor({ program }: { program: Program }) {
         {program.steps.map((step, i) => (
           <StepRow key={step.id} program={program} step={step} index={i} open={step.id === activeStepId} />
         ))}
-        {program.steps.length === 0 && <div className="faint small">Nothing yet. A program is its steps: what it reads, what it works out, what it writes back.</div>}
+        {program.steps.length === 0 && (
+          <div className="faint small">
+            {kind === 'function'
+              ? 'Nothing yet. A function is its steps: what it reads, what it calls, what it writes back.'
+              : kindMeta.container
+                ? 'Nothing yet. A container can have steps of its own — a module its imports, a class what it extends — or leave the steps to the functions inside it.'
+                : 'Nothing yet. A program is its steps: what it reads, what it works out, what it writes back.'}
+          </div>
+        )}
       </div>
 
-      <div className="row">
+      <div className="row row--wrap">
         {PROGRAM_STEP_OPS.map((op) => (
           <button key={op.id} className="btn btn--sm" title={op.hint} onClick={() => addProgramStep(program.id, { op: op.id })}>
             <Plus /> {op.label}
@@ -154,7 +289,7 @@ export function ProgramEditor({ program }: { program: Program }) {
         </div>
         <span className="field__hint">
           {templated
-            ? `Written from the steps above, against ${diagram.dialect}. A starting point, not a finished program: the compute steps come out as stubs.`
+            ? `Written from the steps above, against ${diagram.dialect}. A starting point, not a finished program: the compute steps and the calls come out as stubs.`
             : `No driver template for ${lang.label} on ${diagram.dialect} yet, so the starter is the plan in comments rather than runnable code.`}
         </span>
       </div>
@@ -162,12 +297,17 @@ export function ProgramEditor({ program }: { program: Program }) {
       {showCode && program.steps.length > 0 && <CodeBlock code={starter} language={program.language} className="program-starter" />}
 
       <div className="divider" />
-      <div className="row">
+      <div className="row row--wrap">
         <button className="btn btn--sm" onClick={() => duplicateProgram(program.id)}>
           <Copy /> Duplicate
         </button>
-        <button className="btn btn--danger btn--sm" onClick={() => deleteProgram(program.id)}>
-          <Trash2 /> Delete program
+        {kindMeta.container && members.length > 0 && (
+          <button className="btn btn--sm" onClick={() => dissolveCodeNode(program.id)} title="Remove this container and move what is inside it up one level">
+            <Ungroup /> Dissolve
+          </button>
+        )}
+        <button className="btn btn--danger btn--sm" onClick={() => void onDelete()}>
+          <Trash2 /> Delete {kindMeta.label.toLowerCase()}
         </button>
       </div>
     </div>
@@ -183,10 +323,15 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
   const setActiveStep = useUi((s) => s.setActiveProgramStepId);
   const [expanded, setExpanded] = useState(open);
   const scope = useMemo(() => diagramScope(diagram), [diagram]);
+  const codeOptions = useMemo(
+    () => diagram.programs.filter((p) => p.id !== program.id).map((p) => ({ id: p.id, label: codePath(diagram, p) })).sort((a, b) => a.label.localeCompare(b.label)),
+    [diagram, program.id],
+  );
 
-  const table = step.tableId ? diagram.tables.find((t) => t.id === step.tableId) : undefined;
-  const missing = step.op !== 'compute' && Boolean(step.tableId) && !table;
   const meta = programStepOpMeta(step.op);
+  const table = step.tableId ? diagram.tables.find((t) => t.id === step.tableId) : undefined;
+  const target = step.codeId ? diagram.programs.find((p) => p.id === step.codeId) : undefined;
+  const missing = (meta.touchesDatabase && Boolean(step.tableId) && !table) || (meta.namesCode && Boolean(step.codeId) && !target);
   const shown = open || expanded;
 
   const toggleColumn = (columnId: string) => {
@@ -211,7 +356,7 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
           ))}
         </select>
 
-        {step.op !== 'compute' && (
+        {meta.touchesDatabase && (
           <select
             className="select select--sm"
             value={step.tableId ?? ''}
@@ -221,6 +366,16 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
             {diagram.tables.map((t) => (
               <option key={t.id} value={t.id}>
                 {t.name}
+              </option>
+            ))}
+          </select>
+        )}
+        {meta.namesCode && (
+          <select className="select select--sm" value={step.codeId ?? ''} onChange={(e) => updateProgramStep(program.id, step.id, { codeId: e.target.value || undefined })}>
+            <option value="">{step.op === 'call' ? 'Pick what it calls…' : step.op === 'import' ? 'Pick what it imports…' : 'Pick the base class…'}</option>
+            {codeOptions.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.label}
               </option>
             ))}
           </select>
@@ -267,11 +422,15 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
         </button>
       </div>
 
-      {missing && <div className="program-step__alert">This step names a table that is no longer in the diagram. Point it at another one, or remove the step.</div>}
+      {missing && (
+        <div className="program-step__alert">
+          {meta.namesCode ? 'This step names code that is no longer in the diagram. Point it at another node, or remove the step.' : 'This step names a table that is no longer in the diagram. Point it at another one, or remove the step.'}
+        </div>
+      )}
 
       {shown && (
         <div className="program-step__body">
-          {step.op !== 'compute' && table && (
+          {meta.touchesDatabase && table && (
             <div className="field">
               <span className="field__label">Columns it touches</span>
               <div className="chip-list">
@@ -290,7 +449,7 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
             </div>
           )}
 
-          {step.op !== 'compute' && (
+          {meta.touchesDatabase && (
             <div className="field">
               <span className="field__label">The statement it runs</span>
               <SqlEditor
@@ -315,7 +474,7 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
                 className="input input--sm"
                 value={step.note ?? ''}
                 onChange={(e) => updateProgramStep(program.id, step.id, { note: e.target.value || undefined })}
-                placeholder="why this step exists"
+                placeholder={isCodeStepOp(step.op) ? 'what is passed, or why' : 'why this step exists'}
               />
             </div>
           )}
@@ -327,7 +486,7 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
               onChange={(v) => updateProgramStep(program.id, step.id, { code: v || undefined })}
               language={program.language}
               rows={5}
-              placeholder={step.op === 'compute' ? 'The part the database never sees.' : 'The code around this statement.'}
+              placeholder={step.op === 'compute' ? 'The part the database never sees.' : isCodeStepOp(step.op) ? 'The line that makes the call.' : 'The code around this statement.'}
               ariaLabel="Step code"
             />
           </div>

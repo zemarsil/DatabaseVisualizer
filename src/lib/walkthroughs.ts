@@ -1,5 +1,5 @@
 /**
- * The fifteen walkthroughs in docs/walkthroughs/, bundled for the in-app
+ * The sixteen walkthroughs in docs/walkthroughs/, bundled for the in-app
  * browser (Help -> Walkthroughs). Front matter uses the same deliberately
  * tiny subset of YAML as scripts/walkthrough-lib.mjs; this is a second,
  * browser-side implementation because that script runs under Node, not Vite.

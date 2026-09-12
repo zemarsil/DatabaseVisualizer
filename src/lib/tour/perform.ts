@@ -26,8 +26,9 @@ export function currentView(): TourView {
     selectedRelationshipId: s.selection.relationshipId,
     showCardinality: ui.showCardinality,
     simulateTargetId: sim.targetId,
-    tracePath: s.trace.result?.tableIds ?? null,
-    focusTableId: ui.focus?.tableId ?? null,
+    tracePath: s.trace.result?.nodeIds ?? null,
+    focusTableId: ui.focus?.nodeId ?? null,
+    selectedProgramIds: s.selection.programIds,
   };
 }
 
@@ -57,7 +58,12 @@ function viewApi(): TourViewApi {
       s.setTraceEndpoints(fromId, toId);
       s.runTrace();
     },
-    setFocus: (tableId) => useUi.getState().setFocus(tableId ? { tableId, hops: 1 } : null),
+    setFocus: (tableId) => useUi.getState().setFocus(tableId ? { nodeId: tableId, hops: 1 } : null),
+    selectCode: (id) => {
+      s.setSelection({ programIds: [id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+      s.setInspectorOpen(true);
+      s.focusTable(id);
+    },
   };
 }
 

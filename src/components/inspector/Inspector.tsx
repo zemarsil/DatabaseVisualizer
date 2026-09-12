@@ -13,7 +13,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import { alignTables, distributeTables, type AlignMode } from '@/lib/canvasOps';
-import { kindMeta } from '@shared/types';
+import { codeKindMeta, codeKindOf, kindMeta } from '@shared/types';
 import { selectSelectedGroup, selectSelectedNote, selectSelectedProgram, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
 import { TableEditor } from './TableEditor';
 import { RelationshipEditor } from './RelationshipEditor';
@@ -74,7 +74,7 @@ export function Inspector() {
     title = 'Note';
     body = <NoteEditor note={note} />;
   } else if (program) {
-    title = 'Program';
+    title = codeKindMeta(codeKindOf(program)).label;
     body = <ProgramEditor program={program} />;
   } else if (group) {
     title = group.external ? 'External group' : 'Group';
@@ -86,7 +86,7 @@ export function Inspector() {
     const parts: string[] = [];
     if (selectedTableIds.length) parts.push(`${selectedTableIds.length} table${selectedTableIds.length > 1 ? 's' : ''}`);
     if (selectedNoteIds.length) parts.push(`${selectedNoteIds.length} note${selectedNoteIds.length > 1 ? 's' : ''}`);
-    if (selectedProgramIds.length) parts.push(`${selectedProgramIds.length} program${selectedProgramIds.length > 1 ? 's' : ''}`);
+    if (selectedProgramIds.length) parts.push(`${selectedProgramIds.length} code node${selectedProgramIds.length > 1 ? 's' : ''}`);
     title = `${parts.join(' + ')} selected`;
     body = (
       <div className="stack">

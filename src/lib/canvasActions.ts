@@ -40,9 +40,9 @@ export const DBVIZ_FLAVOR_WEB = `web ${DBVIZ_FLAVOR}`;
 /** In-memory fallback for browsers that refuse clipboard reads. */
 let lastCopied: ClipboardFlavors | null = null;
 
-function flavorsFor(tableIds?: string[]): ClipboardFlavors | null {
+function flavorsFor(tableIds?: string[], programIds?: string[]): ClipboardFlavors | null {
   const s = useStore.getState();
-  return selectionFlavors(s.diagram, tableIds ?? s.selection.tableIds);
+  return selectionFlavors(s.diagram, tableIds ?? s.selection.tableIds, programIds ?? (tableIds ? [] : s.selection.programIds));
 }
 
 /**
@@ -125,7 +125,7 @@ export function writeSelectionToEvent(e: ClipboardEvent, tableIds?: string[]): n
   if (!flavors || !e.clipboardData) return 0;
   lastCopied = flavors;
   fillEvent(e.clipboardData, flavors);
-  return flavors.tableCount;
+  return flavors.tableCount + flavors.codeCount;
 }
 
 /**
@@ -159,7 +159,7 @@ function writeViaCopyEvent(flavors: ClipboardFlavors): boolean {
 
 /** The toast after a copy: it says where each flavor lands so the change is discoverable. */
 export function copiedMessage(n: number): string {
-  return `Copied ${n} table${n === 1 ? '' : 's'}: SQL as plain text, Markdown in a rich-text editor, tables here.`;
+  return `Copied ${n} node${n === 1 ? '' : 's'}: SQL as plain text, Markdown in a rich-text editor, the diagram fragment here.`;
 }
 
 function blob(text: string, type: string): Blob {
@@ -207,11 +207,11 @@ export async function copyTextToClipboard(text: string, message: string): Promis
   }
 }
 
-export async function copySelectionToClipboard(tableIds?: string[]): Promise<boolean> {
-  const flavors = flavorsFor(tableIds);
+export async function copySelectionToClipboard(tableIds?: string[], programIds?: string[]): Promise<boolean> {
+  const flavors = flavorsFor(tableIds, programIds);
   if (!flavors) return false;
   await writeFlavors(flavors);
-  useStore.getState().toast('success', copiedMessage(flavors.tableCount));
+  useStore.getState().toast('success', copiedMessage(flavors.tableCount + flavors.codeCount));
   return true;
 }
 
@@ -219,14 +219,16 @@ export async function copySelectionToClipboard(tableIds?: string[]): Promise<boo
 export function cutSelection(opts: { alreadyOnClipboard?: boolean } = {}): void {
   const s = useStore.getState();
   const ids = s.selection.tableIds;
-  if (!ids.length) return;
+  const codeIds = s.selection.programIds;
+  if (!ids.length && !codeIds.length) return;
   if (!opts.alreadyOnClipboard) {
-    const flavors = flavorsFor(ids);
+    const flavors = flavorsFor(ids, codeIds);
     if (!flavors) return;
     void writeFlavors(flavors);
   }
-  s.removeElements({ tableIds: ids, noteIds: s.selection.noteIds });
-  s.toast('success', `Cut ${ids.length} table${ids.length === 1 ? '' : 's'}.`);
+  s.removeElements({ tableIds: ids, noteIds: s.selection.noteIds, programIds: codeIds });
+  const n = ids.length + codeIds.length;
+  s.toast('success', `Cut ${n} node${n === 1 ? '' : 's'}.`);
 }
 
 /** Lay pasted tables out in a grid whose top-left corner is `at`. */
@@ -255,13 +257,15 @@ export function pasteText(text: string, at?: { x: number; y: number }): 'clipboa
   if (kind === 'clipboard') {
     const payload = decodeClipboard(text)!;
     let offset = { x: 40, y: 40 };
-    if (at && payload.tables.length) {
-      const minX = Math.min(...payload.tables.map((t) => t.position.x));
-      const minY = Math.min(...payload.tables.map((t) => t.position.y));
+    const placed = [...payload.tables, ...payload.programs];
+    if (at && placed.length) {
+      const minX = Math.min(...placed.map((t) => t.position.x));
+      const minY = Math.min(...placed.map((t) => t.position.y));
       offset = { x: at.x - minX, y: at.y - minY };
     }
-    const ids = s.pasteTables(payload.tables, payload.relationships, payload.customTypes, offset, payload.extensions);
-    s.toast('success', `Pasted ${ids.length} table${ids.length === 1 ? '' : 's'}.`);
+    const ids = s.pasteTables(payload.tables, payload.relationships, payload.customTypes, offset, payload.extensions, payload.programs);
+    const n = ids.length + payload.programs.length;
+    s.toast('success', `Pasted ${n} node${n === 1 ? '' : 's'}.`);
   } else if (kind === 'sql') {
     const res = importSql(text, s.diagram.dialect, s.diagram);
     if (res.tables.length === 0) {

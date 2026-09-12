@@ -11,7 +11,8 @@
  * The verbs, and what each one asserts, are documented in
  * docs/walkthroughs/WALKTHROUGH_FORMAT.md.
  */
-import type { Diagram } from '@shared/types';
+import { codeKindMeta, codeKindOf, isCodeKind, type Diagram, type Program } from '@shared/types';
+import { codePath, findCodeByPath } from './codemap';
 import { generateSchema } from './sql/generator';
 import { lintDiagram } from './lint';
 import { simulateFlows } from './simulate/engine';
@@ -69,6 +70,27 @@ function count(n: number, singular: string): string {
 export function parseCheck(raw: string): { verb: string; arg: string } {
   const cut = raw.indexOf('|');
   return cut === -1 ? { verb: raw.trim(), arg: '' } : { verb: raw.slice(0, cut).trim(), arg: raw.slice(cut + 1).trim() };
+}
+
+/** "function checkout.py/place_order" -> the kind and the path. A missing kind means any. */
+export function parseCodeRef(arg: string): { kind: string | null; path: string } {
+  const m = /^\s*(program|module|class|function)\s+(.+)$/i.exec(arg);
+  return m ? { kind: m[1].toLowerCase(), path: m[2].trim() } : { kind: null, path: arg.trim() };
+}
+
+/** "a -> b" -> ["a", "b"]. */
+export function splitArrow(arg: string): [string, string] {
+  const [a, b] = arg.split('->');
+  return [(a ?? '').trim(), (b ?? '').trim()];
+}
+
+/** A code node named by "kind path" or a bare path, with a reason when it is not there. */
+export function findCodeRef(d: Diagram, arg: string): { node?: Program; kind: string | null; path: string; detail: string } {
+  const { kind, path } = parseCodeRef(arg);
+  const node = findCodeByPath(d, path);
+  if (!node) return { kind, path, detail: `there is no code node called ${path} yet.` };
+  if (kind && isCodeKind(kind) && codeKindOf(node) !== kind) return { kind, path, detail: `${path} is a ${codeKindMeta(codeKindOf(node)).label.toLowerCase()}, not a ${kind}.` };
+  return { node, kind, path, detail: '' };
 }
 
 export function runWalkthroughCheck(raw: string, d: Diagram, opts: CheckOptions = {}): CheckResult {
@@ -144,12 +166,41 @@ export function runWalkthroughCheck(raw: string, d: Diagram, opts: CheckOptions 
       return done(rows > 0, rows > 0 ? `${arg} simulates to ${count(rows, 'row')} with no warnings.` : `the flow into ${arg} produced no rows.`);
     }
     case 'trace': {
-      const [fromName, toName] = arg.split('->').map((s) => s.trim());
-      const from = d.tables.find((t) => t.name === fromName);
-      const to = d.tables.find((t) => t.name === toName);
-      if (!from || !to) return done(false, `no table called ${!from ? fromName : toName}.`);
+      // Either end may be a table or a code node, since a trace walks both.
+      const [fromName, toName] = splitArrow(arg);
+      const from = d.tables.find((t) => t.name === fromName) ?? findCodeByPath(d, fromName);
+      const to = d.tables.find((t) => t.name === toName) ?? findCodeByPath(d, toName);
+      if (!from || !to) return done(false, `no table or code node called ${!from ? fromName : toName}.`);
       const path = findPath(d, from.id, to.id);
       return done(!!path && path.hops.length > 0, path && path.hops.length ? `Trace finds ${fromName} → ${toName} in ${count(path.hops.length, 'hop')}.` : `Trace finds no path from ${fromName} to ${toName}.`);
+    }
+    case 'code': {
+      const found = findCodeRef(d, arg);
+      if (!found.node) return done(false, found.detail);
+      return done(true, `${codePath(d, found.node)} is a ${codeKindMeta(codeKindOf(found.node)).label.toLowerCase()} on the canvas.`);
+    }
+    case 'calls':
+    case 'imports':
+    case 'extends': {
+      const op = verb === 'calls' ? 'call' : verb === 'imports' ? 'import' : 'extends';
+      const [fromRef, toRef] = splitArrow(arg);
+      const from = findCodeRef(d, fromRef);
+      const to = findCodeRef(d, toRef);
+      if (!from.node) return done(false, from.detail);
+      if (!to.node) return done(false, to.detail);
+      const hit = from.node.steps.some((s) => s.op === op && s.codeId === to.node!.id);
+      return done(hit, hit ? `${from.node.name} ${verb} ${to.node.name}.` : `${from.node.name} does not ${op === 'extends' ? 'extend' : op} ${to.node.name} yet.`);
+    }
+    case 'reads table':
+    case 'writes table': {
+      const op = verb === 'reads table' ? 'read' : 'write';
+      const [codeRef, tableName] = splitArrow(arg);
+      const from = findCodeRef(d, codeRef);
+      const table = d.tables.find((t) => t.name === tableName);
+      if (!from.node) return done(false, from.detail);
+      if (!table) return done(false, `there is no table called ${tableName}.`);
+      const hit = from.node.steps.some((s) => s.op === op && s.tableId === table.id);
+      return done(hit, hit ? `${from.node.name} ${verb.split(' ')[0]} ${tableName}.` : `${from.node.name} has no ${op} step on ${tableName} yet.`);
     }
     default:
       return done(false, `unknown check verb "${verb}".`);

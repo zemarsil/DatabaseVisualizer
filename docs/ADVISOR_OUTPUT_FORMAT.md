@@ -8,7 +8,7 @@ Two input channels exist. Pick one per recommendation; do not mix them in one fi
 
 | Channel | How the user loads it | Carries | Loses |
 | --- | --- | --- | --- |
-| **`.dbviz.json` diagram** | File menu → Open (`Ctrl+O`) | everything below: tables, columns, indexes, checks, comments, views, enum/composite types, **extensions**, foreign keys, **data-flow edges with derivations**, **dependency and serialized edges**, **external-source groups**, **tagged queries**, **programs that talk to the schema from outside it**, **sticky notes**, colours, positions — and, in the workspace form, **several diagrams in one file** | nothing |
+| **`.dbviz.json` diagram** | File menu → Open (`Ctrl+O`) | everything below: tables, columns, indexes, checks, comments, views, enum/composite types, **extensions**, foreign keys, **data-flow edges with derivations**, **dependency and serialized edges**, **external-source groups**, **tagged queries**, **programs that talk to the schema from outside it, and the code map inside them** (modules, classes, functions, calls), **sticky notes**, colours, positions — and, in the workspace form, **several diagrams in one file** | nothing |
 | **Plain DDL** | Bottom drawer → **Import SQL** → paste → *Add to the current diagram* / *Replace* | tables, columns, indexes, uniques, checks, `COMMENT ON`, foreign keys, `CREATE VIEW`, `CREATE TYPE` (enum and composite), `CREATE EXTENSION` | flows, dependencies, derivations, groups, tagged queries, programs, notes, colours, positions |
 
 The "Loses" column describes DDL *you* write. A `.sql` script the app itself exported
@@ -303,7 +303,10 @@ the generated skeleton and the **Simulate** mode (which runs the flows over samp
 shows the lineage of every value), the query covers what it cannot express (a join that is
 not a foreign key, the upsert, the trigger).
 
-**Program** — something outside the database that talks to it.
+**Program** — something outside the database that talks to it. A program can also be the
+root of a **code map**: the modules inside it, the classes inside those, the functions that
+run the statements, and the calls between them. The full format for that is
+[`CODE_MAP_FORMAT.md`](CODE_MAP_FORMAT.md); the short version is at the end of this section.
 
 ```json
 {
@@ -348,6 +351,38 @@ for the round trip around it.
 - Edges are **derived from the steps** — do not try to express a program with a
   relationship, which only joins two tables. Position the program to the left of the
   tables it touches so its arrows have room.
+
+The code map inside a program uses the same object, plus `kind` and `parentId`:
+
+```json
+{ "id": "mod_orders", "name": "orders.py", "kind": "module", "parentId": "prg_api", "language": "python",
+  "steps": [ { "id": "stp_1", "op": "import", "columnIds": [], "codeId": "mod_inventory" } ] },
+{ "id": "cls_svc", "name": "OrderService", "kind": "class", "parentId": "mod_orders", "language": "python", "steps": [] },
+{ "id": "fn_place", "name": "place_order", "kind": "function", "parentId": "cls_svc", "language": "python",
+  "entrypoint": "def place_order(self, email, cart) -> int",
+  "steps": [
+    { "id": "stp_2", "op": "read", "tableId": "tbl_customers", "columnIds": ["col_customers_id"] },
+    { "id": "stp_3", "op": "write", "tableId": "tbl_orders", "columnIds": [] },
+    { "id": "stp_4", "op": "call", "columnIds": [], "codeId": "fn_reserve" }
+  ] }
+```
+
+- `kind` is `module`, `class` or `function`; leave it out for a program. `parentId` names
+  the node this one sits inside: a module inside a program or a module, a class inside a
+  program, a module or a class, a function inside any of those. A function holds nothing.
+  Every node is a top-level entry of `programs`, whatever it sits inside — there is no
+  nesting in the JSON.
+- Three more `op`s name code rather than a table: `call` (a function, class or program it
+  hands control to), `import` (a module it depends on), `extends` (the class it inherits
+  from). Each carries `codeId`, the id of that node, and never a `tableId` or `sql`.
+- Put the statements on the **functions**, not on the modules: a module's steps are its
+  imports, a function's steps are what it reads, writes and calls. Give every function a
+  `position` inside its file's area; the regions for modules and classes are drawn around
+  their members and never stored, so a container's own `position` only matters while it
+  is empty or `"collapsed": true`.
+- Use it when the recommendation is *about the code*: which function owns a write, what a
+  column rename will break, where a transaction boundary should be. A single program with
+  steps is still right for "a job does this nightly".
 
 **Note** — sticky note on the canvas, for prose the schema cannot hold.
 
@@ -410,9 +445,12 @@ the app writes for a single diagram, and it is what every other tool that reads
    target table; `columnIds` in an index belong to its own table; a `groupId` names a
    group in this file; a derivation's `targetColumnId` is a column of the flow's target;
    a program step's `tableId` names a table in this file and its `columnIds` are columns
-   of that table.
-   Dangling ids load without an error but draw a broken diagram — and a dangling `groupId`
-   is dropped, so the table silently leaves the group.
+   of that table; a code node's `parentId` names another node in `programs` whose kind
+   may hold it, and a `call`, `import` or `extends` step's `codeId` names a node in
+   `programs`.
+   Dangling ids load without an error but draw a broken diagram — a dangling `groupId`
+   is dropped, so the table silently leaves the group, and a dangling or looping
+   `parentId` is dropped, so the node silently lands at the top level.
 3. **Lay out the tables.** Positions are pixels; tables are ~280 wide. Place them on a
    grid — `x = 320 * column`, `y = 260 * row` — with referenced (parent) tables above the
    tables that reference them and derived tables at the bottom. Keep a group's tables in

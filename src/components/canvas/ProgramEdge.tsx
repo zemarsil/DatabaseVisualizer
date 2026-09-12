@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
 import type { Program, Table } from '@shared/types';
 import { estimateNodeSize, HEADER_HEIGHT, rowCenterY } from '@/lib/geometry';
-import { estimateProgramSize, stepCenterY } from '@/lib/programs';
+import { estimateProgramSize, PROGRAM_HEADER_HEIGHT, stepCenterY } from '@/lib/programs';
 
 /**
  * The arrow between a program and a table, one per step that names one.
@@ -14,13 +14,15 @@ import { estimateProgramSize, stepCenterY } from '@/lib/programs';
  * returning are how a round trip reads off the canvas without opening anything.
  */
 export interface ProgramEdgeData extends Record<string, unknown> {
-  /** 1-based position of the step within the program. */
-  step: number;
+  /** 1-based position of the step within the program, or null once steps from inside a folded container are gathered onto the arrow. */
+  step: number | null;
+  /** Steps gathered onto the arrow; 1 for a direct one. */
+  count: number;
   /** read -> table to program, write -> program to table. */
   op: 'read' | 'write';
-  /** The step this arrow belongs to, used to find its measured handle. */
-  stepId: string;
-  /** Row index of the step inside the program node; the fallback anchor before measuring. */
+  /** The step this arrow belongs to, used to find its measured handle; null for a gathered arrow. */
+  stepId: string | null;
+  /** Row index of the step inside the program node, or -1 to leave from the header. */
   stepIndex: number;
   /** Row index of the first named column in the table, or -1 to meet the header. */
   tableRow: number;
@@ -29,6 +31,8 @@ export interface ProgramEdgeData extends Record<string, unknown> {
   dimmed: boolean;
   /** The program is selected, or this is the step the inspector is on. */
   highlighted: boolean;
+  /** The arrow is on the path Trace found. */
+  traced: boolean;
   /** Both a read and a write of this table exist, so the pair is a round trip. */
   roundTrip: boolean;
 }
@@ -91,13 +95,15 @@ function ProgramEdgeInner({ id, source, target, data, selected }: EdgeProps<Prog
   // actually is rather than re-deriving it from the CSS. The estimate is only
   // the fallback for the frame before the node has been measured.
   const handles = sourceNode.internals.handleBounds?.source ?? [];
-  const handle = handles.find((h) => h.id === `${data.stepId}|l` || h.id === `${data.stepId}|r`);
-  const py = p.y + (handle ? handle.y + handle.height / 2 : Math.min(stepCenterY(data.stepIndex), p.h - 8));
+  const handle = data.stepId ? handles.find((h) => h.id === `${data.stepId}|l` || h.id === `${data.stepId}|r`) : undefined;
+  // A gathered arrow, or one whose step row is folded away, leaves the header.
+  const py = p.y + (handle ? handle.y + handle.height / 2 : data.stepIndex >= 0 ? Math.min(stepCenterY(data.stepIndex), p.h - 8) : PROGRAM_HEADER_HEIGHT / 2);
   const ty = t.y + (data.tableRow >= 0 ? rowCenterY(data.tableRow) : HEADER_HEIGHT / 2);
   const g = curve(p, py, t, ty);
 
-  const color = selected || data.highlighted ? 'var(--accent)' : 'var(--program)';
-  const width = selected || data.highlighted ? 2.5 : 1.5;
+  const on = selected || data.highlighted || data.traced;
+  const color = on ? 'var(--accent)' : 'var(--program)';
+  const width = on ? 2.5 : 1.5;
   const opacity = data.dimmed ? 0.16 : 1;
   // The arrowhead sits at whichever end the rows arrive at, which is the whole
   // difference between a read and a write.
@@ -105,11 +111,11 @@ function ProgramEdgeInner({ id, source, target, data, selected }: EdgeProps<Prog
   const arrow = `M ${head.x + head.dir * STUB} ${head.y - 5} L ${head.x} ${head.y} L ${head.x + head.dir * STUB} ${head.y + 5}`;
 
   const labelClasses = ['program-edge__label'];
-  if (selected || data.highlighted) labelClasses.push('program-edge__label--on');
+  if (on) labelClasses.push('program-edge__label--on');
   if (data.dimmed) labelClasses.push('program-edge__label--dim');
 
   const tooltip = [
-    `Step ${data.step}: ${data.op}`,
+    data.step !== null ? `Step ${data.step}: ${data.op}` : `${data.count} ${data.op} step${data.count === 1 ? '' : 's'} inside this container`,
     data.columns.length ? data.columns.join(', ') : 'the whole row',
     data.roundTrip ? 'Part of a round trip: this program both reads and writes this table.' : '',
   ]
@@ -126,7 +132,7 @@ function ProgramEdgeInner({ id, source, target, data, selected }: EdgeProps<Prog
           title={tooltip}
           style={{ transform: `translate(-50%, -50%) translate(${g.labelX}px, ${g.labelY}px)` }}
         >
-          <span className="program-edge__step">{data.step}</span>
+          {data.step !== null ? <span className="program-edge__step">{data.step}</span> : <span className="program-edge__step program-edge__step--count">×{data.count}</span>}
           <span className="program-edge__op">{data.op}</span>
         </div>
       </EdgeLabelRenderer>

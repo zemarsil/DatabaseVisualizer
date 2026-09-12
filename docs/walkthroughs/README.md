@@ -1,11 +1,11 @@
 # Walkthroughs
 
-Fifteen short, hands-on guides to Database Visualizer that build **one
+Sixteen short, hands-on guides to Database Visualizer that build **one
 database, once**. Walkthrough 00 puts two tables on the canvas; walkthrough 14
-exports the eighteen-table bookshop those two tables grew into. Nothing is ever
-thrown away and restarted: each walkthrough picks the canvas up exactly where
-the last one put it down, so the schema in front of you is always the one you
-built.
+exports the eighteen-table bookshop those two tables grew into; walkthrough 16
+draws the code that uses it. Nothing is ever thrown away and restarted: each
+walkthrough picks the canvas up exactly where the last one put it down, so the
+schema in front of you is always the one you built.
 
 That is a promise the tooling checks. A walkthrough's `start:` is literally the
 previous walkthrough's finished diagram — the same file — and
@@ -62,6 +62,7 @@ type "walkthrough".
 | 13 | [Run the schema on a real database](13-run-the-schema-on-a-real-database.md) | advanced | 20 min | The whole bookshop schema, created inside a Docker PostgreSQL container, queried, seeded, migrated after a change, and read back into the diagram. |
 | 14 | [Export, share and save](14-export-share-and-save.md) | beginner | 10 min | Turn the finished bookshop into SQL, a Markdown dictionary, Mermaid, DBML, a picture, a link or a portable file, and see exactly what each one keeps. |
 | 15 | [Add an extension](15-add-an-extension.md) | intermediate | 14 min | A book_embeddings table typed with pgvector and a case-insensitive email column, by declaring the two extensions PostgreSQL needs before either will create. |
+| 16 | [Map the code that talks to it](16-map-the-code-that-talks-to-it.md) | intermediate | 20 min | The checkout service drawn beside the schema it uses, as a program, two modules, a class and two functions, with an arrow for everything each one reads, writes and calls. |
 
 The series builds one schema, so its diagrams are the stages of that build.
 Open any of them with **File → Open** (`Ctrl+O`), or by dropping the file on
@@ -83,6 +84,7 @@ the stage it starts from for you:
 - [`diagrams/12-read-a-big-diagram.dbviz.json`](diagrams/12-read-a-big-diagram.dbviz.json) — the canvas at the end of 12 Read a big diagram
 - [`diagrams/13-run-the-schema-on-a-real-database.dbviz.json`](diagrams/13-run-the-schema-on-a-real-database.dbviz.json) — the canvas at the end of 13 Run the schema on a real database
 - [`diagrams/15-add-an-extension.dbviz.json`](diagrams/15-add-an-extension.dbviz.json) — the canvas at the end of 15 Add an extension
+- [`diagrams/16-map-the-code-that-talks-to-it.dbviz.json`](diagrams/16-map-the-code-that-talks-to-it.dbviz.json) — the canvas at the end of 16 Map the code that talks to it
 
 <!-- /generated -->
 

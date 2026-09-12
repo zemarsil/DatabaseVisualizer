@@ -2,7 +2,8 @@
  * Mermaid `erDiagram` export. GitHub, GitLab, Notion and mermaid.live render
  * it, so this is the quickest way to put a schema into a README.
  */
-import { describeRelationship, programLanguageMeta, type Diagram, type Program, type Table } from '@shared/types';
+import { codeKindMeta, codeKindOf, describeRelationship, isCodeStepOp, programLanguageMeta, type Diagram, type Program, type Table } from '@shared/types';
+import { codeLinks, codePath } from '../codemap';
 import { externalTableIds } from '../groups';
 import { foreignKeyColumnIds } from '../model';
 import { programLinks } from '../programs';
@@ -96,12 +97,22 @@ function programNames(d: Diagram, taken: Set<string>): Map<string, string> {
 
 function programBlock(d: Diagram, p: Program, name: string): string[] {
   const byId = new Map(d.tables.map((t) => [t.id, t]));
-  const lines = [`    %% program: ${p.name} (${programLanguageMeta(p.language).label})`, `    ${name} {`];
+  const codeById = new Map(d.programs.map((x) => [x.id, x]));
+  const kind = codeKindOf(p);
+  // Marked the way a view and an external table are: with a comment naming
+  // what it is and where it sits, since an erDiagram entity has no kind.
+  const where = p.parentId && codeById.get(p.parentId) ? ` in ${codePath(d, codeById.get(p.parentId)!, codeById)}` : '';
+  const lines = [`    %% ${kind}: ${p.name} (${programLanguageMeta(p.language).label})${where}`, `    ${name} {`];
   for (const s of p.steps) {
-    const what = s.op === 'compute' ? mermaidName(s.note || 'outside_the_database') : mermaidName(byId.get(s.tableId ?? '')?.name ?? 'missing_table');
+    const what =
+      s.op === 'compute'
+        ? mermaidName(s.note || 'outside_the_database')
+        : isCodeStepOp(s.op)
+          ? mermaidName(codeById.get(s.codeId ?? '')?.name ?? 'missing_code')
+          : mermaidName(byId.get(s.tableId ?? '')?.name ?? 'missing_table');
     lines.push(`        ${s.op} ${what}`);
   }
-  if (p.steps.length === 0) lines.push('        step none');
+  if (p.steps.length === 0) lines.push(`        ${codeKindMeta(kind).label.toLowerCase()} empty`);
   lines.push('    }');
   return lines;
 }
@@ -158,6 +169,14 @@ export function exportMermaid(d: Diagram, options: MermaidOptions = {}): string 
       // Drawn as the program touching many rows of the table, which is the only
       // cardinality Mermaid has that is not a lie about a program.
       lines.push(`    ${from} ||..o{ ${to} : ${quoted(`${link.step} ${link.op}`)}`);
+    }
+    // Containment is a comment on the member, above; a call, an import or an
+    // extends is a link, one to one, since neither end is a table of rows.
+    for (const link of codeLinks(d)) {
+      const from = pNames.get(link.fromId);
+      const to = pNames.get(link.toId);
+      if (!from || !to) continue;
+      lines.push(`    ${from} ||..|| ${to} : ${quoted(`${link.step} ${link.op}`)}`);
     }
   }
   return lines.join('\n') + '\n';

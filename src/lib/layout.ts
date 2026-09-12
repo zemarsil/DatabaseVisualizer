@@ -1,5 +1,6 @@
 import dagre from '@dagrejs/dagre';
-import type { Diagram, Relationship, RelationshipKind } from '@shared/types';
+import { codeKindMeta, codeKindOf, type Diagram, type Program, type Relationship, type RelationshipKind } from '@shared/types';
+import { CODE_HEADER, CODE_PADDING, codeChildren, codeDepth, codeDescendantIds, codeVisibility, drawnCodeEdges, EMPTY_CODE_HEIGHT, EMPTY_CODE_WIDTH } from './codemap';
 import { estimateNodeSize } from './geometry';
 import { estimateProgramSize, programTableIds } from './programs';
 import { effectiveDisplay, visibleColumns } from './visibleColumns';
@@ -119,34 +120,109 @@ export function layoutDiagram(diagram: Diagram, opts: LayoutOptions = {}): Recor
     return build(false);
   }
 
-  return { ...tables, ...placePrograms(diagram, tables, opts) };
+  return { ...tables, ...placeCode(diagram, tables, opts) };
 }
 
 /**
- * Where the programs go once the tables are placed.
+ * Where the code goes once the tables are placed.
  *
- * They are deliberately kept out of the ranking. A program is not part of the
+ * It is deliberately kept out of the ranking. A program is not part of the
  * schema's dependency order — it is the caller, and putting it in a rank would
  * push apart tables that belong next to each other to make room for something
- * the database does not contain. Instead each program is parked in a margin
- * beside the tables it touches: to their left when the layout runs left to
- * right, above them when it runs top to bottom, so its arrows come in from the
- * outside rather than through the middle of the diagram.
+ * the database does not contain. Instead the whole code side is laid out as a
+ * graph of its own — callers before callees, base classes before the classes
+ * that extend them, expanded containers as clusters so a module's functions
+ * stay inside its region — and that block is parked in a margin beside the
+ * tables it touches: to their left when the layout runs left to right, above
+ * them when it runs top to bottom, so its arrows come in from the outside
+ * rather than through the middle of the diagram.
  *
- * Programs sharing that margin are stacked rather than overlapped, and one that
- * touches nothing goes at the end of the stack, since there is nothing to sit
- * beside.
+ * Collapsed containers are laid out as the single nodes they are drawn as; the
+ * members inside them keep their positions, so expanding one later finds them
+ * where they were.
  */
-function placePrograms(
+function placeCode(
   diagram: Diagram,
   tables: Record<string, { x: number; y: number }>,
   opts: LayoutOptions,
 ): Record<string, { x: number; y: number }> {
   if (!diagram.programs.length) return {};
   const horizontal = (opts.direction ?? 'LR') === 'LR';
-  const sizeOf = (id: string) => opts.sizes?.[id] ?? estimateNodeSize(diagram.tables.find((t) => t.id === id)?.columns ?? []);
-  const MARGIN = 120;
-  const GAP = 40;
+  const vis = codeVisibility(diagram);
+  const children = codeChildren(diagram);
+  const expanded = new Set(vis.expanded.map((p) => p.id));
+  const sizeOf = (p: Program) => opts.sizes?.[p.id] ?? estimateProgramSize(p, { hiddenMembers: vis.hidden.get(p.id) ?? 0 });
+
+  const build = (withClusters: boolean): Record<string, { x: number; y: number }> | null => {
+    const g = new dagre.graphlib.Graph({ multigraph: true, compound: withClusters });
+    g.setGraph({ rankdir: opts.direction ?? 'LR', nodesep: 40, ranksep: 90, marginx: 0, marginy: 0, ranker: 'network-simplex' });
+    g.setDefaultEdgeLabel(() => ({}));
+    for (const p of vis.drawn) {
+      if (withClusters && expanded.has(p.id)) g.setNode(p.id, {});
+      else if (expanded.has(p.id)) continue;
+      else {
+        const empty = codeKindMeta(codeKindOf(p)).container && !p.collapsed && !(children.get(p.id)?.length ?? 0);
+        const size = empty ? { width: EMPTY_CODE_WIDTH, height: EMPTY_CODE_HEIGHT } : sizeOf(p);
+        g.setNode(p.id, { width: size.width, height: size.height });
+      }
+    }
+    if (withClusters) {
+      for (const p of vis.drawn) {
+        if (p.parentId && expanded.has(p.parentId) && g.hasNode(p.id) && g.hasNode(p.parentId)) g.setParent(p.id, p.parentId);
+      }
+    }
+    const seen = new Set<string>();
+    for (const e of drawnCodeEdges(diagram, vis)) {
+      // Whatever the other end depends on comes first: the callee after its
+      // caller, the base class before the class that extends it.
+      const [from, to] = e.op === 'extends' ? [e.toId, e.fromId] : [e.fromId, e.toId];
+      if (!g.hasNode(from) || !g.hasNode(to)) continue;
+      const key = `${from}->${to}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      g.setEdge(from, to, { weight: e.links.length }, e.id);
+    }
+    dagre.layout(g);
+    const out: Record<string, { x: number; y: number }> = {};
+    for (const p of vis.drawn) {
+      const n = g.node(p.id);
+      if (!n || !Number.isFinite(n.x) || !Number.isFinite(n.y)) {
+        if (expanded.has(p.id) && !withClusters) continue;
+        return null;
+      }
+      out[p.id] = { x: n.x - (n.width ?? 0) / 2, y: n.y - (n.height ?? 0) / 2 };
+    }
+    return out;
+  };
+
+  let placed: Record<string, { x: number; y: number }> | null = null;
+  if (expanded.size) {
+    try {
+      placed = build(true);
+    } catch {
+      placed = null;
+    }
+  }
+  placed ??= build(false) ?? {};
+
+  // The block's own bounding box, from the nodes that have a size.
+  let bMinX = Infinity;
+  let bMinY = Infinity;
+  let bMaxX = -Infinity;
+  let bMaxY = -Infinity;
+  for (const p of vis.drawn) {
+    const at = placed[p.id];
+    if (!at || expanded.has(p.id)) continue;
+    const size = sizeOf(p);
+    bMinX = Math.min(bMinX, at.x);
+    bMinY = Math.min(bMinY, at.y);
+    bMaxX = Math.max(bMaxX, at.x + size.width);
+    bMaxY = Math.max(bMaxY, at.y + size.height);
+  }
+  if (!Number.isFinite(bMinX)) return {};
+  // Room for the regions drawn around the members, one level per depth.
+  const depth = Math.max(0, ...vis.drawn.map((p) => codeDepth(diagram, p.id)));
+  const pad = depth * (CODE_PADDING + CODE_HEADER);
 
   let minX = Infinity;
   let minY = Infinity;
@@ -156,40 +232,44 @@ function placePrograms(
     minX = Math.min(minX, at.x);
     minY = Math.min(minY, at.y);
   }
+  const MARGIN = 120;
+  const tableSize = (id: string) => opts.sizes?.[id] ?? estimateNodeSize(diagram.tables.find((t) => t.id === id)?.columns ?? []);
+  // Line the block up with the middle of the tables it touches, like a single
+  // program used to be, so the arrows into the schema stay short.
+  const touched = [...new Set(diagram.programs.flatMap((p) => programTableIds(p)))].filter((id) => tables[id]);
+  const middle = touched.length
+    ? touched.reduce((sum, id) => sum + (horizontal ? tables[id].y + tableSize(id).height / 2 : tables[id].x + tableSize(id).width / 2), 0) / touched.length
+    : null;
+
+  let dx: number;
+  let dy: number;
   if (!Number.isFinite(minX)) {
-    minX = 0;
-    minY = 0;
+    dx = 40 + pad - bMinX;
+    dy = 40 + pad - bMinY;
+  } else if (horizontal) {
+    dx = minX - MARGIN - pad - bMaxX;
+    dy = (middle ?? minY + (bMaxY - bMinY) / 2) - (bMinY + bMaxY) / 2;
+  } else {
+    dx = (middle ?? minX + (bMaxX - bMinX) / 2) - (bMinX + bMaxX) / 2;
+    dy = minY - MARGIN - pad - bMaxY;
   }
 
-  const widest = Math.max(...diagram.programs.map((p) => estimateProgramSize(p).width));
   const out: Record<string, { x: number; y: number }> = {};
-  // Where the next program goes along the margin, so two never land on each other.
-  let cursor = Infinity;
-
-  const ordered = [...diagram.programs].sort((a, b) => {
-    const centre = (id: string) => {
-      const ids = programTableIds(diagram.programs.find((p) => p.id === id)!).filter((tid) => tables[tid]);
-      if (!ids.length) return Infinity;
-      const values = ids.map((tid) => (horizontal ? tables[tid].y + sizeOf(tid).height / 2 : tables[tid].x + sizeOf(tid).width / 2));
-      return values.reduce((s, v) => s + v, 0) / values.length;
-    };
-    return centre(a.id) - centre(b.id);
-  });
-
-  for (const prg of ordered) {
-    const size = estimateProgramSize(prg);
-    const touched = programTableIds(prg).filter((id) => tables[id]);
-    // Line the program up with the middle of what it touches, then push it clear
-    // of whatever was placed before it in the same margin.
-    const middle = touched.length
-      ? touched.reduce((sum, id) => sum + (horizontal ? tables[id].y + sizeOf(id).height / 2 : tables[id].x + sizeOf(id).width / 2), 0) / touched.length
-      : cursor;
-    const along = Number.isFinite(middle) ? middle - (horizontal ? size.height : size.width) / 2 : minY;
-    const placed = Number.isFinite(cursor) ? Math.max(along, cursor) : along;
-    out[prg.id] = horizontal
-      ? { x: Math.round(minX - widest - MARGIN), y: Math.round(placed) }
-      : { x: Math.round(placed), y: Math.round(minY - size.height - MARGIN) };
-    cursor = placed + (horizontal ? size.height : size.width) + GAP;
+  for (const p of vis.drawn) {
+    const at = placed[p.id];
+    if (!at) continue;
+    out[p.id] = { x: Math.round(at.x + dx), y: Math.round(at.y + dy) };
+  }
+  // Members hidden inside a collapsed container travel with it, so that
+  // expanding it later does not scatter them across the old layout.
+  for (const c of vis.collapsed) {
+    const from = diagram.programs.find((p) => p.id === c.id)!.position;
+    const to = out[c.id];
+    if (!to) continue;
+    for (const id of codeDescendantIds(diagram, c.id, children)) {
+      const m = diagram.programs.find((p) => p.id === id)!;
+      out[id] = { x: Math.round(m.position.x + (to.x - from.x)), y: Math.round(m.position.y + (to.y - from.y)) };
+    }
   }
   return out;
 }

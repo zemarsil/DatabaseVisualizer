@@ -303,3 +303,237 @@
   max-height: 420px;
   overflow: auto;
 }
+
+/* ------------------------------------------------------------------ */
+/* Code maps: kinds, folding, and the regions expanded containers draw  */
+/* ------------------------------------------------------------------ */
+
+/* The kinds share the program's square-cornered, gutter-numbered shape —
+   they are all code — and differ in the badge and a border weight that
+   thins as the map goes finer: a program is the heaviest box, a function
+   the lightest. */
+.program-node--module {
+  border-width: 1.5px;
+}
+.program-node--class {
+  border-style: double;
+  border-width: 3px;
+}
+.program-node--function {
+  border-width: 1px;
+  box-shadow: var(--node-shadow);
+}
+.program-node--function .program-node__header {
+  height: 36px;
+  border-bottom-width: 1px;
+}
+.program-node--collapsed {
+  box-shadow: var(--node-shadow), 0 0 0 3px var(--program-soft), 4px 4px 0 -1px color-mix(in srgb, var(--program) 45%, var(--node-bg));
+}
+.program-node--trace {
+  border-color: var(--accent);
+}
+.program-node--pick {
+  cursor: crosshair;
+}
+.program-node__role--trace {
+  color: var(--accent);
+  font-weight: 700;
+}
+.program-node__rename {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.program-node__fold {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.program-node__fold svg {
+  width: 13px;
+  height: 13px;
+}
+.program-node__fold:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.program-node__step--call .program-node__op,
+.program-node__step--import .program-node__op,
+.program-node__step--extends .program-node__op {
+  color: var(--program);
+}
+.program-node__step--call .program-node__label,
+.program-node__step--import .program-node__label,
+.program-node__step--extends .program-node__label {
+  flex: 1;
+  max-width: none;
+}
+.program-node__step--folded {
+  cursor: pointer;
+}
+.program-node__label--folded {
+  flex: 1;
+  max-width: none;
+  font-family: var(--sans);
+  font-style: italic;
+  color: var(--text-muted);
+}
+.program-node__handle--left {
+  left: -4px;
+  right: auto;
+}
+.program-node:hover .program-node__handle--left {
+  opacity: 0.8;
+}
+.program-edge__step--count {
+  width: auto;
+  padding: 0 4px;
+  border-radius: 7px;
+}
+.program-edge__label--extends .program-edge__op {
+  font-style: italic;
+}
+
+/* A container's region: the group region's recipe, with square corners so it
+   reads as code rather than as schema, and a nested one a shade darker so
+   depth is visible without a legend. */
+.react-flow__node-codegroup {
+  pointer-events: none !important;
+  cursor: default;
+}
+.code-group {
+  --hue: #f2a6d8;
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  border: 1.5px solid color-mix(in srgb, var(--hue) var(--group-stroke), transparent);
+  background: color-mix(in srgb, var(--hue) var(--group-fill), transparent);
+  position: relative;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.code-group--depth-1 {
+  background: color-mix(in srgb, var(--hue) calc(var(--group-fill) + 3%), transparent);
+}
+.code-group--depth-2,
+.code-group--depth-3 {
+  background: color-mix(in srgb, var(--hue) calc(var(--group-fill) + 6%), transparent);
+}
+.code-group--class {
+  border-style: double;
+  border-width: 3px;
+}
+.code-group--selected {
+  border-color: var(--hue);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--hue) 26%, transparent);
+}
+.code-group--trace {
+  border-color: var(--accent);
+}
+.code-group--drop {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.code-group--dim {
+  opacity: 0.3;
+}
+.code-group__header {
+  pointer-events: all;
+  cursor: grab;
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: calc(100% - 16px);
+  height: 22px;
+  padding: 0 6px 0 9px;
+  border-radius: 4px;
+  border: 1px solid color-mix(in srgb, var(--hue) 45%, var(--node-border));
+  background: color-mix(in srgb, var(--hue) 18%, var(--node-bg));
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 700;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+}
+.code-group__header:active {
+  cursor: grabbing;
+}
+.code-group__header > svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+  color: var(--hue);
+}
+.code-group__kind {
+  font-family: var(--sans);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.code-group__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.code-group__count {
+  color: var(--text-faint);
+  font-weight: 600;
+}
+.code-group__badge {
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 9.5px;
+}
+.code-group__fold {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+}
+.code-group__fold svg {
+  width: 12px;
+  height: 12px;
+}
+.code-group__fold:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.code-group__handle {
+  width: 8px;
+  height: 8px;
+  border: none;
+  background: var(--program);
+  opacity: 0;
+  right: -4px;
+}
+.code-group__header:hover .code-group__handle {
+  opacity: 0.8;
+}
+.exporting .program-node__handle,
+.exporting .program-node__step-handle,
+.exporting .code-group__handle {
+  opacity: 0 !important;
+}

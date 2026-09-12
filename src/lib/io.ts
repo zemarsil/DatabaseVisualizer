@@ -1,11 +1,13 @@
 import {
   AGGREGATE_FUNCTIONS,
+  isCodeKind,
   isProgramLanguage,
   isProgramRole,
   isProgramStepOp,
   isRelationshipKind,
   isWindowFunction,
   normalizeVerb,
+  programStepOpMeta,
   type AggregateFunction,
   type CustomType,
   type Derivation,
@@ -75,15 +77,21 @@ function parseDerivations(v: unknown): Derivation[] | undefined {
 }
 
 /**
- * Programs and their steps. Absent -> an empty list, which is what every file
+ * Programs and their steps — and, since code maps, the modules, classes and
+ * functions inside them. Absent -> an empty list, which is what every file
  * written before programs existed means.
  *
  * A step is sanitised rather than trusted: an unknown op becomes a read, a
  * compute step is stripped of any table and columns a hand-edited file gave it,
- * and an entry with no usable shape is skipped. Table and column ids are *not*
- * checked against the diagram here, because the caller may be merging this
- * diagram into another one; the linter is where a reference with nothing at the
- * end of it gets reported.
+ * a call keeps its code target and nothing of a table's, and an entry with no
+ * usable shape is skipped. Table, column and code ids are *not* checked against
+ * the diagram here, because the caller may be merging this diagram into
+ * another one; the linter is where a reference with nothing at the end of it
+ * gets reported.
+ *
+ * Containment is the one reference that is checked, because a node whose
+ * parent is missing, or whose parent chain loops back to itself, cannot be
+ * drawn at all: those nodes are put at the top level rather than lost.
  */
 function parsePrograms(v: unknown): Program[] {
   if (!Array.isArray(v)) return [];
@@ -93,18 +101,20 @@ function parsePrograms(v: unknown): Program[] {
     const p = rp as Record<string, unknown>;
     if (typeof p.id !== 'string' || typeof p.name !== 'string') continue;
     const pos = (p.position ?? {}) as Record<string, unknown>;
+    const kind = isCodeKind(p.kind) ? p.kind : undefined;
     const steps: ProgramStep[] = [];
     for (const rs of Array.isArray(p.steps) ? p.steps : []) {
       if (!rs || typeof rs !== 'object') continue;
       const s = rs as Record<string, unknown>;
       const op = isProgramStepOp(s.op) ? s.op : 'read';
-      const compute = op === 'compute';
+      const meta = programStepOpMeta(op);
       steps.push({
         id: typeof s.id === 'string' && s.id ? s.id : newId('pstep'),
         op,
-        ...(!compute && typeof s.tableId === 'string' && s.tableId ? { tableId: s.tableId } : {}),
-        columnIds: compute ? [] : strArray(s.columnIds),
-        ...(!compute && typeof s.sql === 'string' && s.sql ? { sql: s.sql } : {}),
+        ...(meta.touchesDatabase && typeof s.tableId === 'string' && s.tableId ? { tableId: s.tableId } : {}),
+        columnIds: meta.touchesDatabase ? strArray(s.columnIds) : [],
+        ...(meta.namesCode && typeof s.codeId === 'string' && s.codeId ? { codeId: s.codeId } : {}),
+        ...(meta.touchesDatabase && typeof s.sql === 'string' && s.sql ? { sql: s.sql } : {}),
         ...(typeof s.code === 'string' && s.code ? { code: s.code } : {}),
         ...(typeof s.note === 'string' && s.note ? { note: s.note } : {}),
       });
@@ -112,8 +122,13 @@ function parsePrograms(v: unknown): Program[] {
     out.push({
       id: p.id,
       name: p.name,
+      // 'program' is the default and is left unwritten, so a file that never
+      // heard of kinds reads back byte for byte as it was written.
+      ...(kind && kind !== 'program' ? { kind } : {}),
+      ...(typeof p.parentId === 'string' && p.parentId ? { parentId: p.parentId } : {}),
+      ...(p.collapsed === true ? { collapsed: true } : {}),
       language: isProgramLanguage(p.language) ? p.language : 'other',
-      ...(isProgramRole(p.role) ? { role: p.role } : {}),
+      ...(isProgramRole(p.role) && (kind ?? 'program') === 'program' ? { role: p.role } : {}),
       ...(typeof p.entrypoint === 'string' && p.entrypoint ? { entrypoint: p.entrypoint } : {}),
       position: { x: num(pos.x), y: num(pos.y) },
       color: str(p.color, 'slate'),
@@ -121,7 +136,33 @@ function parsePrograms(v: unknown): Program[] {
       steps,
     });
   }
+  pruneCodeParents(out);
   return out;
+}
+
+/** Drop a parent pointer that names no node in the list, or that would put a node inside itself. */
+export function pruneCodeParents(programs: Program[]): void {
+  const ids = new Set(programs.map((p) => p.id));
+  const byId = new Map(programs.map((p) => [p.id, p]));
+  for (const p of programs) {
+    if (!p.parentId) continue;
+    if (!ids.has(p.parentId) || p.parentId === p.id) {
+      delete p.parentId;
+      continue;
+    }
+    // Walk up; meeting this node again means the chain is a loop, and the
+    // pointer that closes it is the one dropped.
+    const seen = new Set<string>([p.id]);
+    let cur = byId.get(p.parentId);
+    while (cur) {
+      if (seen.has(cur.id)) {
+        delete p.parentId;
+        break;
+      }
+      seen.add(cur.id);
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined;
+    }
+  }
 }
 
 function readJson(text: string): unknown {

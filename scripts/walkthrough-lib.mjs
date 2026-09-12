@@ -118,7 +118,13 @@ export const CHECK_VERBS = {
   'lint clean': null,
   'lint errors': 'the exact number of error-severity findings Problems reports; for a walkthrough that ships a deliberately broken diagram',
   simulate: 'a table name that must simulate with rows and no warnings',
-  trace: 'two table names as "a -> b" that must have a path between them',
+  trace: 'two tables or code nodes as "a -> b" that must have a path between them',
+  code: 'a code node as "kind path", e.g. "function checkout.py/place_order"',
+  calls: 'two code paths as "a -> b": a call step on a naming b',
+  imports: 'two code paths as "a -> b": an import step on a naming b',
+  extends: 'two code paths as "a -> b": an extends step on a naming b',
+  'reads table': 'a code path and a table as "a -> t": a read step on a naming t',
+  'writes table': 'a code path and a table as "a -> t": a write step on a naming t',
 };
 
 /* ------------------------------------------------------------------ */
@@ -163,6 +169,7 @@ export const TARGET_KINDS = {
   table: 'a table on the canvas, by name',
   column: 'a column row on the canvas, as table.column',
   rel: 'a connection on the canvas, as "source -> target"',
+  code: 'a code node on the canvas, by its path, e.g. checkout.py/place_order',
   none: 'nothing: the card floats free (takes no argument)',
 };
 
@@ -186,7 +193,15 @@ export const GOAL_VERBS = {
   'lint clean': null,
   'lint errors': 'the exact number of errors Problems reports',
   simulate: 'a table that must simulate with rows and no warnings',
-  trace: 'two table names as "a -> b" with a path between them',
+  trace: 'two tables or code nodes as "a -> b" with a path between them',
+  code: 'a kind and a path, e.g. "function checkout.py/place_order"',
+  calls: 'from -> to, as code paths',
+  imports: 'from -> to, as code paths',
+  extends: 'from -> to, as code paths',
+  'reads table': 'code path -> table name',
+  'writes table': 'code path -> table name',
+  'code collapsed': 'a code path : on or off',
+  'select code': 'the path of a code node that must be selected',
   table: 'a table name that must exist',
   view: 'a view name that must exist',
   extension: 'an extension the diagram must declare, e.g. vector',
@@ -223,8 +238,8 @@ export const GOAL_VERBS = {
   'select connection': 'source -> target of the connection that must be selected',
   cardinality: 'on or off',
   simulating: 'the table a simulation must be feeding',
-  traced: 'from -> to, the two ends of a trace that must have run',
-  focus: 'the table whose neighbourhood must be focused, or "none"',
+  traced: 'from -> to, the two ends (tables or code nodes) of a trace that must have run',
+  focus: 'the table or code node whose neighbourhood must be focused, or "none"',
 };
 
 /** `data-tour="…"` attributes the components actually carry, so `ui:` targets can be checked. */
@@ -319,7 +334,7 @@ export function validateStepMeta(meta, { anchors }) {
     const takesArg = GOAL_VERBS[verb] !== null;
     if (takesArg && !arg) errors.push(`goal "${raw}" needs an argument after "|" (${GOAL_VERBS[verb]})`);
     if (!takesArg && arg) errors.push(`goal "${raw}" takes no argument`);
-    if (['fk', 'flow', 'embed', 'dependency', 'traced', 'trace'].includes(verb) && arg && !arg.includes('->')) {
+    if (['fk', 'flow', 'embed', 'dependency', 'traced', 'trace', 'calls', 'imports', 'extends', 'reads table', 'writes table'].includes(verb) && arg && !arg.includes('->')) {
       errors.push(`goal "${raw}" must name both ends as "a -> b"`);
     }
     if (['ondelete', 'label', 'reverse label', 'query', 'select connection'].includes(verb) && arg && !arg.includes('->')) {
@@ -328,7 +343,7 @@ export function validateStepMeta(meta, { anchors }) {
     if (['indexes', 'derivations', 'lint errors'].includes(verb) && arg && !/^\d+$/.test(arg)) {
       errors.push(`goal "${raw}" must give a whole number`);
     }
-    if (['flags', 'default', 'schema', 'collapsed', 'materialized', 'enum', 'composite', 'derivation'].includes(verb) && arg && !arg.includes(':')) {
+    if (['flags', 'default', 'schema', 'collapsed', 'materialized', 'enum', 'composite', 'derivation', 'code collapsed'].includes(verb) && arg && !arg.includes(':')) {
       errors.push(`goal "${raw}" must read "subject : what it should be"`);
     }
   }
@@ -563,7 +578,7 @@ export function validateWalkthrough(file, opts = {}) {
       const takesArg = CHECK_VERBS[verb] !== null;
       if (takesArg && !arg) errors.push(`check "${raw}" needs an argument after "|" (${CHECK_VERBS[verb]})`);
       if (!takesArg && arg) errors.push(`check "${raw}" takes no argument`);
-      if (verb === 'trace' && arg && !arg.includes('->')) errors.push(`check "${raw}" must read "table_a -> table_b"`);
+      if (['trace', 'calls', 'imports', 'extends', 'reads table', 'writes table'].includes(verb) && arg && !arg.includes('->')) errors.push(`check "${raw}" must read "a -> b"`);
       if ((verb === 'indexes' || verb === 'derivations' || verb === 'lint errors') && arg && !/^\d+$/.test(arg)) errors.push(`check "${raw}" must give a whole number`);
       if (verb === 'kinds' && arg) {
         for (const part of splitList(arg)) {

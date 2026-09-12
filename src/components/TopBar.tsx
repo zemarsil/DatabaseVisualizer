@@ -2,8 +2,12 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import {
   BookmarkPlus,
+  Box,
   Boxes,
   Check,
+  Cpu,
+  FileCode,
+  SquareFunction,
   ChevronDown,
   Database,
   Download,
@@ -113,6 +117,7 @@ export function TopBar() {
   const setDialect = useStore((s) => s.setDialect);
   const addTable = useStore((s) => s.addTable);
   const addNote = useStore((s) => s.addNote);
+  const addProgram = useStore((s) => s.addProgram);
   const addGroup = useStore((s) => s.addGroup);
   const addCustomType = useStore((s) => s.addCustomType);
   const applyLayout = useStore((s) => s.applyLayout);
@@ -271,8 +276,9 @@ export function TopBar() {
       setTracePicking(false);
       return;
     }
-    if (selection.tableIds.length >= 2) {
-      setTraceEndpoints(selection.tableIds[0], selection.tableIds[1]);
+    const picked = [...selection.tableIds, ...selection.programIds];
+    if (picked.length >= 2) {
+      setTraceEndpoints(picked[0], picked[1]);
       runTrace();
       return;
     }
@@ -359,6 +365,20 @@ export function TopBar() {
                 <Boxes /> {selection.tableIds.length > 1 ? `Group the ${selection.tableIds.length} selected tables` : 'Group region'} <span className="kbd">G</span>
               </button>
               <div className="menu__sep" />
+              <div className="menu__label">Code map</div>
+              <button className="menu__item" data-tour="add-program" onClick={() => void (close(), addProgram(), setInspectorOpen(true))}>
+                <Cpu /> Program
+              </button>
+              <button className="menu__item" data-tour="add-module" onClick={() => void (close(), addProgram({ kind: 'module', parentId: selection.programIds[0] }), setInspectorOpen(true))}>
+                <FileCode /> Module
+              </button>
+              <button className="menu__item" data-tour="add-class" onClick={() => void (close(), addProgram({ kind: 'class', parentId: selection.programIds[0] }), setInspectorOpen(true))}>
+                <Box /> Class
+              </button>
+              <button className="menu__item" data-tour="add-function" onClick={() => void (close(), addProgram({ kind: 'function', parentId: selection.programIds[0] }), setInspectorOpen(true))}>
+                <SquareFunction /> Function
+              </button>
+              <div className="menu__sep" />
               <button className="menu__item" onClick={() => void (close(), addCustomType('enum'), openDrawer('types'))}>
                 <Shapes /> Enum type
               </button>
@@ -410,7 +430,7 @@ export function TopBar() {
             </>
           )}
         </Menu>
-        <button data-tour="trace" className={`btn${tracePicking ? ' btn--active' : ''}`} onClick={onTrace} title="Trace a connection between two tables">
+        <button data-tour="trace" className={`btn${tracePicking ? ' btn--active' : ''}`} onClick={onTrace} title="Trace a connection between two tables or code nodes">
           <Route /> Trace
         </button>
         <button data-tour="simulate" className={`btn${simulating ? ' btn--active' : ''}`} onClick={onSimulate} title={simulating ? 'Leave simulation mode (Esc)' : 'Simulate data flowing into the selected table (S)'}>

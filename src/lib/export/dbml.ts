@@ -2,7 +2,8 @@
  * DBML export (dbdiagram.io / dbdocs). Tables, custom types, groups, refs and
  * documentation-only connections as notes.
  */
-import { describeRelationship, dialectLabel, programLanguageMeta, type Diagram, type Table } from '@shared/types';
+import { codeKindMeta, codeKindOf, describeRelationship, dialectLabel, programLanguageMeta, type Diagram, type Table } from '@shared/types';
+import { codePath } from '../codemap';
 import { fileSlug } from '../io';
 import { describeProgram, describeStep } from '../programs';
 
@@ -120,16 +121,18 @@ export function exportDbml(d: Diagram): string {
   // being dropped: dbdiagram will not draw it, but the steps and the reasoning
   // survive the trip instead of vanishing on export.
   const tableById = new Map(d.tables.map((t) => [t.id, t]));
+  const codeById = new Map(d.programs.map((p) => [p.id, p]));
   for (const prg of d.programs) {
+    const kind = codeKindOf(prg);
     const body = [
       describeProgram(d, prg),
-      `Written in ${programLanguageMeta(prg.language).label}${prg.entrypoint?.trim() ? `, in ${prg.entrypoint.trim()}` : ''}.`,
+      `${codeKindMeta(kind).label} written in ${programLanguageMeta(prg.language).label}${prg.parentId && codeById.get(prg.parentId) ? `, inside ${codePath(d, codeById.get(prg.parentId)!, codeById)}` : ''}${prg.entrypoint?.trim() ? `, in ${prg.entrypoint.trim()}` : ''}.`,
       prg.comment?.trim() ?? '',
-      prg.steps.map((s, i) => `${i + 1}. ${describeStep(s, s.tableId ? tableById.get(s.tableId) : undefined)}`).join('\n'),
+      prg.steps.map((s, i) => `${i + 1}. ${describeStep(s, s.tableId ? tableById.get(s.tableId) : undefined, s.codeId ? codeById.get(s.codeId) : undefined)}`).join('\n'),
     ]
       .filter(Boolean)
       .join('\n\n');
-    parts.push(`Note ${ident(`program_${fileSlug(prg.name).replace(/-/g, '_')}`)} {\n  ${note(body)}\n}`);
+    parts.push(`Note ${ident(`${kind}_${fileSlug(codePath(d, prg, codeById)).replace(/-/g, '_')}`)} {\n  ${note(body)}\n}`);
   }
 
   return parts.join('\n\n') + '\n';
