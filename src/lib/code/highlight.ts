@@ -27,6 +27,8 @@ interface LanguageSyntax {
   triples?: string[];
   /** Raw strings introduced by a prefix, e.g. Rust's r#"..."#. */
   rawHash?: boolean;
+  /** C++11's R"delim(...)delim", where the delimiter is chosen per literal. */
+  rawParen?: boolean;
   keywords: Set<string>;
   types: Set<string>;
   /** Literals coloured apart from keywords: true, nil, None. */
@@ -70,17 +72,35 @@ const GO: LanguageSyntax = {
   constants: words(`true false nil iota make new len cap append copy delete panic recover`),
 };
 
-const C_FAMILY: LanguageSyntax = {
+// C and C++ get separate tables rather than one: `class` and `namespace` are
+// not C keywords, and colouring them in a .c file would be telling the reader
+// something untrue about the language they are in.
+const C_LANG: LanguageSyntax = {
   line: ['//'],
   block: C_BLOCK,
   quotes: ['"', "'"],
-  keywords: words(`alignas alignof auto break case catch class const constexpr continue decltype default delete do else
-    enum explicit export extern for friend goto if inline mutable namespace new noexcept operator private protected
-    public register return sizeof static static_cast dynamic_cast const_cast reinterpret_cast struct switch template
-    this throw try typedef typename union using virtual volatile while include define ifdef ifndef endif pragma`),
+  keywords: words(`auto break case const continue default do else enum extern for goto if inline register restrict
+    return sizeof static struct switch typedef union volatile while _Atomic _Bool _Generic _Noreturn _Static_assert
+    include define ifdef ifndef endif pragma undef elif`),
+  types: words(`char double float int long short signed unsigned void size_t ssize_t ptrdiff_t int8_t int16_t int32_t
+    int64_t uint8_t uint16_t uint32_t uint64_t FILE va_list`),
+  constants: words(`NULL true false EOF stdin stdout stderr`),
+};
+
+const CPP: LanguageSyntax = {
+  line: ['//'],
+  block: C_BLOCK,
+  quotes: ['"', "'"],
+  rawParen: true,
+  keywords: words(`alignas alignof auto break case catch class co_await co_return co_yield concept const consteval
+    constexpr constinit continue decltype default delete do else enum explicit export extern for friend goto if inline
+    mutable namespace new noexcept operator private protected public register requires return sizeof static
+    static_cast dynamic_cast const_cast reinterpret_cast struct switch template this throw try typedef typename union
+    using virtual volatile while include define ifdef ifndef endif pragma`),
   types: words(`bool char char8_t char16_t char32_t double float int long short signed unsigned void wchar_t size_t
-    ssize_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t string vector map set pair array`),
-  constants: words(`true false NULL nullptr`),
+    ssize_t int8_t int16_t int32_t int64_t uint8_t uint16_t uint32_t uint64_t string string_view vector map set
+    unordered_map unordered_set pair array optional variant span unique_ptr shared_ptr`),
+  constants: words(`true false NULL nullptr std this`),
 };
 
 const JAVA: LanguageSyntax = {
@@ -144,8 +164,8 @@ const SYNTAX: Record<ProgramLanguage, LanguageSyntax> = {
   python: PYTHON,
   rust: RUST,
   go: GO,
-  c: C_FAMILY,
-  cpp: C_FAMILY,
+  c: C_LANG,
+  cpp: CPP,
   java: JAVA,
   javascript: JS,
   typescript: JS,
@@ -182,6 +202,19 @@ export function highlightCode(text: string, language: ProgramLanguage): Highligh
       while (j < n && /\s/.test(text[j])) j++;
       push('text', j);
       continue;
+    }
+
+    // C++11's R"sql( … )sql", whose delimiter is chosen per literal so that a
+    // query holding a quote needs no escaping. Checked before words, or the R
+    // reads as an identifier and the SQL as code.
+    if (syn.rawParen && ch === 'R' && text[i + 1] === '"') {
+      const open = text.indexOf('(', i + 2);
+      if (open !== -1) {
+        const close = `)${text.slice(i + 2, open)}"`;
+        const at = text.indexOf(close, open + 1);
+        push('string', at === -1 ? n : at + close.length);
+        continue;
+      }
     }
 
     // Raw strings first: Rust's r"..." and r#"..."# would otherwise read as a

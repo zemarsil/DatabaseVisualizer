@@ -9,7 +9,7 @@ import { parseDiagramFile } from '@/lib/io';
 import { lintDiagram } from '@/lib/lint';
 
 /**
- * The Python scanner, against a service written to be scanned.
+ * The scanner, against a service written to be scanned — once per language.
  *
  * tests/fixtures/bookshop_api is the checkout service walkthrough 16 draws by
  * hand, as code: the same two files, the same class, the same round trip. So
@@ -17,6 +17,12 @@ import { lintDiagram } from '@/lib/lint';
  * that it produces the one a person drew from the same program — and that what
  * it writes is a file the app loads, the linter passes and the validator
  * accepts.
+ *
+ * The same service is then written again in Rust, Go, Java, TypeScript,
+ * JavaScript, C and C++, and asserted against the same schema. One reader
+ * covers all seven, so the point of scanning each is that the shapes they
+ * spell differently — a receiver, an `impl` block, a header and its source, a
+ * template literal — all arrive as the same nodes and the same steps.
  */
 
 const SOURCE = 'tests/fixtures/bookshop_api';
@@ -34,15 +40,19 @@ const python = (() => {
 const out = mkdtempSync(join(tmpdir(), 'dbviz-scan-'));
 let serial = 0;
 
-function scan(...args: string[]): { diagram: Diagram; file: string; report: string } {
+function scanOf(source: string, ...args: string[]): { diagram: Diagram; file: string; report: string } {
   const file = join(out, `scan-${++serial}.dbviz.json`);
   // The diagram goes where it was asked to go; what the scan could not work
   // out goes to stderr, which is the half these tests check as closely.
-  const run = spawnSync(python as string, ['scripts/scan_python.py', SOURCE, '-o', file, ...args], {
+  const run = spawnSync(python as string, ['scripts/scan_code.py', source, '-o', file, ...args], {
     encoding: 'utf8',
   });
   if (run.status !== 0) throw new Error(`the scan failed (${run.status}): ${run.stderr}`);
   return { diagram: parseDiagramFile(readFileSync(file, 'utf8')), file, report: run.stderr };
+}
+
+function scan(...args: string[]): { diagram: Diagram; file: string; report: string } {
+  return scanOf(SOURCE, ...args);
 }
 
 /** A node by the path the format names it with, which is how the docs name it too. */
@@ -63,7 +73,7 @@ function steps(d: Diagram, path: string): string[] {
   });
 }
 
-describe.skipIf(!python)('scripts/scan_python.py', () => {
+describe.skipIf(!python)('scripts/scan_code.py', () => {
   const mapped = scan('--into', SCHEMA);
 
   it('draws the program, its files, its classes and the functions that reach the database', () => {
@@ -251,5 +261,227 @@ describe.skipIf(!python)('scripts/scan_python.py', () => {
     expect(back.color).toBe('teal');
     // What the code says is read again, though: the steps come back.
     expect(back.steps).toHaveLength(4);
+  });
+});
+
+/**
+ * The same service, written seven more times.
+ *
+ * One reader covers Rust, Go, Java, TypeScript, JavaScript, C and C++, so what
+ * is worth asserting per language is the shape only that language has: Go's
+ * receiver, Rust's `impl` block, C's header beside its source, Java's text
+ * block, a template literal's hole. Everything the seven have in common — a
+ * query is a step, a call is an arrow, a constant is followed to whatever runs
+ * it — is asserted once, for all of them, in the table at the top.
+ */
+interface LanguageCase {
+  /** What the fixture is called, and what the program node is therefore named. */
+  name: string;
+  language: string;
+  /** Path of the function that places an order, and of the one that reserves stock. */
+  place: string;
+  reserve: string;
+  /** Path of the file that holds `reserve_stock`, for the import assertion. */
+  inventory: string;
+  /** Path of the file or class that imports it. */
+  importer: string;
+  /** The comment above `place`, which Go writes starting with the name. */
+  comment?: string;
+}
+
+const CASES: LanguageCase[] = [
+  {
+    name: 'bookshop_rs',
+    language: 'rust',
+    place: 'bookshop_rs/src/orders.rs/OrderService/place_order',
+    reserve: 'bookshop_rs/src/inventory.rs/reserve_stock',
+    inventory: 'bookshop_rs/src/inventory.rs',
+    importer: 'bookshop_rs/src/orders.rs',
+  },
+  {
+    name: 'bookshop_go',
+    language: 'go',
+    place: 'bookshop_go/orders/orders.go/Service/PlaceOrder',
+    reserve: 'bookshop_go/inventory/inventory.go/ReserveStock',
+    inventory: 'bookshop_go/inventory',
+    importer: 'bookshop_go/orders/orders.go',
+    comment: 'PlaceOrder turns a cart into an order and its lines, then reserves the stock.',
+  },
+  {
+    name: 'bookshop_java',
+    language: 'java',
+    place: 'bookshop_java/src/com/example/bookshop/OrderService.java/OrderService/placeOrder',
+    reserve: 'bookshop_java/src/com/example/bookshop/stock/Inventory.java/Inventory/reserveStock',
+    inventory: 'bookshop_java/src/com/example/bookshop/stock/Inventory.java',
+    importer: 'bookshop_java/src/com/example/bookshop/OrderService.java',
+  },
+  {
+    name: 'bookshop_ts',
+    language: 'typescript',
+    place: 'bookshop_ts/src/orders.ts/OrderService/placeOrder',
+    reserve: 'bookshop_ts/src/inventory.ts/reserveStock',
+    inventory: 'bookshop_ts/src/inventory.ts',
+    importer: 'bookshop_ts/src/orders.ts',
+  },
+  {
+    name: 'bookshop_js',
+    language: 'javascript',
+    place: 'bookshop_js/orders.js/OrderService/placeOrder',
+    reserve: 'bookshop_js/inventory.js/reserveStock',
+    inventory: 'bookshop_js/inventory.js',
+    importer: 'bookshop_js/orders.js',
+  },
+  {
+    name: 'bookshop_c',
+    language: 'c',
+    place: 'bookshop_c/orders.c/place_order',
+    reserve: 'bookshop_c/inventory.c/reserve_stock',
+    inventory: 'bookshop_c/inventory.c',
+    importer: 'bookshop_c/orders.c',
+  },
+  {
+    name: 'bookshop_cpp',
+    language: 'cpp',
+    place: 'bookshop_cpp/orders.cpp/bookshop/OrderService/place_order',
+    reserve: 'bookshop_cpp/inventory.cpp/bookshop/Inventory/reserve_stock',
+    inventory: 'bookshop_cpp/inventory.cpp',
+    importer: 'bookshop_cpp/orders.cpp',
+  },
+];
+
+/** The paths this scan added, as opposed to the ones the target diagram already had. */
+function own(d: Diagram, program: string): string[] {
+  return d.programs.map((p) => codePath(d, p)).filter((p) => p === program || p.startsWith(`${program}/`));
+}
+
+describe.skipIf(!python)('scripts/scan_code.py, on the brace languages', () => {
+  const scans = new Map<string, ReturnType<typeof scanOf>>();
+  for (const one of CASES) scans.set(one.name, scanOf(`tests/fixtures/${one.name}`, '--into', SCHEMA));
+
+  describe.each(CASES)('$language', (one) => {
+    const mapped = () => scans.get(one.name)!;
+
+    it('reads the round trip off the queries, in the order the code runs them', () => {
+      expect(steps(mapped().diagram, one.place)).toEqual([
+        'read customers [id,email]',
+        'write orders [customer_id,status,total_cents]',
+        'write order_items [order_id,book_id,quantity,unit_price_cents]',
+        `call ${one.reserve}`,
+      ]);
+    });
+
+    it('follows a query parked in a constant to the function that actually runs it', () => {
+      expect(steps(mapped().diagram, one.inventory)).not.toContain('read stock_levels [warehouse_code,book_id,on_hand]');
+      expect(steps(mapped().diagram, one.reserve).slice(0, 2)).toEqual([
+        'read stock_levels [warehouse_code,book_id,on_hand]',
+        'write stock_levels [on_hand]',
+      ]);
+    });
+
+    it('leaves a sentence that opens with a SQL verb alone', () => {
+      // "Update the stock count whenever an order is placed." has no SET, so it
+      // is English rather than a statement, and draws nothing.
+      const audits = mapped().diagram.programs.filter((p) => /^audit$/i.test(p.name));
+      expect(audits).toHaveLength(1);
+      expect(steps(mapped().diagram, codePath(mapped().diagram, audits[0]))).toEqual([
+        'write audit_log [action,book_id,at]',
+      ]);
+    });
+
+    it('draws the import between the file that calls and the file that holds', () => {
+      expect(steps(mapped().diagram, one.importer)).toContain(`import ${one.inventory}`);
+    });
+
+    it('says which language every node it drew is written in', () => {
+      // The target diagram already holds a Python map drawn by hand, so the
+      // question is what this scan added, not what the file ends up holding.
+      const drew = own(mapped().diagram, one.name);
+      const languages = new Set(
+        mapped().diagram.programs.filter((p) => drew.includes(codePath(mapped().diagram, p))).map((p) => p.language),
+      );
+      expect([...languages]).toEqual([one.language]);
+    });
+
+    it('takes a node’s comment from the comment above it', () => {
+      expect(at(mapped().diagram, one.place).comment).toBe(
+        one.comment ?? 'Turn a cart into an order and its lines, then reserve the stock.',
+      );
+    });
+
+    it('writes a diagram the app loads, the linter has nothing to fault, and the validator accepts', () => {
+      expect(lintDiagram(mapped().diagram).filter((f) => f.severity === 'error')).toEqual([]);
+      const report = execFileSync('node', ['scripts/validate-dbviz.mjs', mapped().file], {
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      expect(report).toContain('OK');
+    });
+
+    it('updates a map on a second scan rather than growing a second copy of it', () => {
+      const again = scanOf(`tests/fixtures/${one.name}`, '--into', mapped().file);
+      expect(readFileSync(again.file, 'utf8')).toBe(readFileSync(mapped().file, 'utf8'));
+    });
+  });
+
+  it('reads a Go method as a method of the type it hangs off', () => {
+    const diagram = scans.get('bookshop_go')!.diagram;
+    // `func (s *Service) PlaceOrder(...)` names its receiver, and a call on
+    // that receiver is a call on the type, not on a variable called s.
+    expect(at(diagram, 'bookshop_go/orders/orders.go/Service').kind).toBe('class');
+    expect(steps(diagram, 'bookshop_go/orders/orders.go/Service/PlaceOrder')).toContain(
+      'call bookshop_go/inventory/inventory.go/ReserveStock',
+    );
+  });
+
+  it('merges a Rust struct with the impl blocks that give it its methods', () => {
+    const all = scanOf('tests/fixtures/bookshop_rs', '--into', SCHEMA, '--all');
+    const paths = own(all.diagram, 'bookshop_rs');
+    expect(paths.filter((p) => p.endsWith('/OrderService'))).toHaveLength(1);
+    // `impl Restocker for WarehouseDesk` is inheritance, spelled the other way round.
+    expect(steps(all.diagram, 'bookshop_rs/src/inventory.rs/WarehouseDesk')).toEqual([
+      'extends bookshop_rs/src/inventory.rs/Restocker',
+    ]);
+  });
+
+  it('reads a Java text block, and a class extends a base in the same package', () => {
+    const all = scanOf('tests/fixtures/bookshop_java', '--into', SCHEMA, '--all');
+    const insert = at(all.diagram, CASES[2].place).steps.find((s) => s.sql?.startsWith('INSERT INTO orders'));
+    expect(insert?.sql).toBe("INSERT INTO orders (customer_id, status, total_cents)\nVALUES (?, 'pending', ?)");
+    expect(steps(all.diagram, 'bookshop_java/src/com/example/bookshop/OrderService.java/OrderService')).toEqual([
+      'extends bookshop_java/src/com/example/bookshop/BaseService.java/BaseService',
+    ]);
+  });
+
+  it('reads a header and the source beside it as one module', () => {
+    const all = scanOf('tests/fixtures/bookshop_c', '--into', SCHEMA, '--all');
+    const paths = own(all.diagram, 'bookshop_c');
+    // inventory.h declares what inventory.c defines: one module, one function.
+    expect(paths).not.toContain('bookshop_c/inventory.h');
+    expect(paths.filter((p) => p.endsWith('/reserve_stock'))).toEqual(['bookshop_c/inventory.c/reserve_stock']);
+  });
+
+  it('reads a C++ class split over a header and a source, inside its namespace', () => {
+    const all = scanOf('tests/fixtures/bookshop_cpp', '--into', SCHEMA, '--all');
+    expect(at(all.diagram, 'bookshop_cpp/inventory.cpp/bookshop').kind).toBe('module');
+    expect(steps(all.diagram, 'bookshop_cpp/inventory.cpp/bookshop/Inventory')).toEqual([
+      'extends bookshop_cpp/inventory.cpp/bookshop/Restocker',
+    ]);
+    // The raw string literal keeps its newlines and loses its R"sql( … )sql".
+    expect(at(all.diagram, CASES[6].reserve).steps[0].sql).toContain('\nWHERE book_id = $1');
+  });
+
+  it('keeps the hole where a table name was pasted in, rather than inventing a table', () => {
+    for (const name of ['bookshop_rs', 'bookshop_go', 'bookshop_java', 'bookshop_ts', 'bookshop_c']) {
+      const mapped = scans.get(name)!;
+      expect(mapped.report).toContain('built at run time');
+      expect(mapped.diagram.tables.some((t) => /[{%]/.test(t.name))).toBe(false);
+    }
+  });
+
+  it('reads only the language it was asked for', () => {
+    const only = scanOf('tests/fixtures/bookshop_ts', '--into', SCHEMA, '--lang', 'go', '--all');
+    // The TypeScript is there and is not read, so the program node stands alone.
+    expect(own(only.diagram, 'bookshop_ts')).toEqual(['bookshop_ts']);
+    expect(only.report).toContain('No SQL found');
   });
 });

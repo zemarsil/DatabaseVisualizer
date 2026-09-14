@@ -13,7 +13,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "check:docs": "node scripts/validate-walkthrough.mjs && node scripts/build-walkthrough-index.mjs --check",
-    "scan:python": "python3 scripts/scan_python.py",
+    "scan:code": "python3 scripts/scan_code.py",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.server.json --noEmit"
   },
