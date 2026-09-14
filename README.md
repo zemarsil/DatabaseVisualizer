@@ -420,10 +420,10 @@ table, exactly as a plain program would. Only the outermost collapsed
 container counts, so folding a program hides its folded modules too.
 
 The map goes everywhere a program goes, the generated starter included: a
-module's starter is the file, holding the classes and functions drawn inside it.
-The SQL annotation block names nodes
-by **path** (`bookshop_api/orders.py/OrderService/place_order`) rather than
-id, so it survives a re-import; the Markdown export's `## Code` section walks
+module's starter is the file, holding the classes and functions drawn inside
+it. The SQL annotation block names nodes by **path**
+(`bookshop_api/orders.py/OrderService/place_order`) rather than id, so it
+survives a re-import; the Markdown export's `## Code` section walks
 the tree; Mermaid and DBML carry each node; copying a container copies its
 members; **Problems** adds the rules a map needs — a container holding a kind
 it cannot, a call to something that is gone (the step and its code are kept,
@@ -459,6 +459,12 @@ draft to correct. Running it again updates the map in place rather than growing
 a second copy, keeping where you dragged each node and what you renamed.
 [`docs/CODE_MAP_FORMAT.md`](docs/CODE_MAP_FORMAT.md#scanning-a-python-codebase)
 has the flags and the full list of what it reads and what it cannot.
+
+The scanner and the starter are the same road in both directions: one reads a
+module into the map, the other writes the map back out as the module. What
+survives the round trip is what the diagram is *for* — the files, the classes,
+the functions, the statements and the order they run in — and what does not is
+the work outside the database, which is the part the map never claimed to know.
 
 ## Several diagrams in one workspace
 
