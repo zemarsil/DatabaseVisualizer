@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Box, CheckCircle2, CloudDownload, Play, Plug, RefreshCw, Square, Trash2, Upload, XCircle } from 'lucide-react';
-import { DIALECTS, SERVER_DIALECTS, dialectLabel, isServerDialect, type ContainerInfo, type Dialect, type ServerDialect, type StatementResult } from '@shared/types';
+import { Box, CheckCircle2, CloudDownload, Play, Plug, Plus, RefreshCw, Square, Trash2, Upload, XCircle } from 'lucide-react';
+import { DIALECTS, SERVER_DIALECTS, dialectLabel, isServerDialect, type ContainerInfo, type ServerDialect, type StatementResult } from '@shared/types';
 import { api, type DockerStatus } from '@/lib/api';
 import { useStore } from '@/store/useStore';
 import { defaultConnection, useConnection } from '@/store/useConnection';
 import { backendFor } from '@/lib/backend';
 import { generateDropStatements, generateSchema } from '@/lib/sql/generator';
-import { introspectionToDiagram } from '@/lib/introspectImport';
+import { readSchemaInto } from '@/lib/readSchema';
 import { confirmDialog } from '../ui/Modal';
+import { ConnectionFields } from './database/ConnectionFields';
+import { ExternalDatabases, offerSchemaImport } from './database/ExternalDatabases';
 import { MigrateSection } from './database/MigrateSection';
 import { SeedSection } from './database/SeedSection';
 import { SqliteSection } from './database/SqliteSection';
@@ -16,7 +18,6 @@ import { DuckdbSection } from './database/DuckdbSection';
 export function DatabasePanel() {
   const diagram = useStore((s) => s.diagram);
   const toast = useStore((s) => s.toast);
-  const importTables = useStore((s) => s.importTables);
   const setDialect = useStore((s) => s.setDialect);
 
   const [docker, setDocker] = useState<DockerStatus | null>(null);
@@ -34,32 +35,40 @@ export function DatabasePanel() {
     image: DIALECTS.find((d) => d.id === initialServerDialect)!.image,
   }));
 
-  const conn = useConnection((s) => s.conn);
-  const setConn = useConnection((s) => s.setConn);
-  const setConnField = useConnection((s) => s.setField);
-  const setConnDialect = useConnection((s) => s.setDialect);
-  const testResult = useConnection((s) => s.testResult);
-  const setTestResult = useConnection((s) => s.setTestResult);
+  const main = useConnection((s) => s.main);
+  const externals = useConnection((s) => s.externals);
+  const setMainConfig = useConnection((s) => s.setMainConfig);
+  const addExternal = useConnection((s) => s.addExternal);
+  const promote = useConnection((s) => s.promote);
+  const setResult = useConnection((s) => s.setResult);
+  const conn = main.config;
   const backend = useMemo(() => backendFor(conn), [conn]);
   const embedded = !isServerDialect(conn.dialect);
   const [dropFirst, setDropFirst] = useState(false);
   const [stopOnError, setStopOnError] = useState(true);
   const [results, setResults] = useState<StatementResult[] | null>(null);
   const [importMode, setImportMode] = useState<'merge' | 'replace'>('replace');
-  // Reading a second database is the usual reason to want a group: keep those
-  // tables together and, by default, out of the schema being designed.
-  const [importGroup, setImportGroup] = useState(true);
+  // Reading the main database into the diagram it designs normally means
+  // starting from what is there, so it needs no group of its own.
+  const [importGroup, setImportGroup] = useState(false);
   const [importGroupName, setImportGroupName] = useState('');
-  const [importGroupExternal, setImportGroupExternal] = useState(true);
+  const [importGroupExternal, setImportGroupExternal] = useState(false);
+
+  /** Which connection, if any, already speaks for this container. */
+  const connectedAs = useCallback(
+    (c: ContainerInfo): 'main' | 'external' | null => {
+      if (main.containerId === c.id) return 'main';
+      return externals.some((x) => x.containerId === c.id) ? 'external' : null;
+    },
+    [main.containerId, externals],
+  );
 
   const refresh = useCallback(async () => {
     setLoadingContainers(true);
     try {
       // When the app runs inside Docker, the server tells us how to reach host-published ports.
       const health = await api.health();
-      if (health.defaultDbHost && health.defaultDbHost !== '127.0.0.1') {
-        if (useConnection.getState().conn.host === '127.0.0.1') useConnection.getState().setField('host', health.defaultDbHost);
-      }
+      if (health.defaultDbHost) useConnection.getState().setDefaultHost(health.defaultDbHost);
       const status = await api.docker.status();
       setDocker(status);
       if (status.available) setContainers(await api.docker.list());
@@ -77,10 +86,33 @@ export function DatabasePanel() {
 
   const generated = useMemo(() => generateSchema(diagram), [diagram]);
 
-  const useContainer = (c: ContainerInfo) => {
+  /** Point the main connection at this container: the diagram is designed for it. */
+  const useAsMain = (c: ContainerInfo) => {
     if (!c.connection || !c.dialect) return;
-    setConn({ ...defaultConnection(c.dialect), ...c.connection, dialect: c.dialect });
+    // Already connected on the side: move that connection over rather than
+    // leaving two entries pointing at one container.
+    const already = externals.find((x) => x.containerId === c.id);
+    if (already) promote(already.id);
+    else setMainConfig({ ...defaultConnection(c.dialect), ...c.connection, dialect: c.dialect }, { name: c.name, containerId: c.id });
     if (c.dialect !== diagram.dialect) toast('info', `This container runs ${dialectLabel(c.dialect)} but the diagram is ${dialectLabel(diagram.dialect)}. Switch the dialect before creating the schema.`);
+  };
+
+  /** Connect this container alongside the main database, and offer to read it in. */
+  const useAsExternal = async (c: ContainerInfo) => {
+    if (!c.connection || !c.dialect) return;
+    const id = addExternal({ name: c.name, config: { ...defaultConnection(c.dialect), ...c.connection, dialect: c.dialect }, containerId: c.id });
+    setBusy(c.id + 'external');
+    try {
+      const result = await backendFor(useConnection.getState().byId(id)!.config).test();
+      setResult(id, result);
+      if (!result.ok) {
+        toast('error', `Connected "${c.name}", but it did not answer: ${result.message}`);
+        return;
+      }
+      await offerSchemaImport(id);
+    } finally {
+      setBusy(null);
+    }
   };
 
   const waitForDb = async (target: typeof conn, attempts = 30) => {
@@ -95,7 +127,7 @@ export function DatabasePanel() {
   const createContainer = async () => {
     setBusy('create');
     try {
-      const { connection } = await api.docker.create({
+      const { container, connection } = await api.docker.create({
         dialect: form.dialect,
         name: form.name,
         hostPort: Number(form.hostPort),
@@ -103,11 +135,11 @@ export function DatabasePanel() {
         database: form.database,
         image: form.image,
       });
-      setConn(connection);
+      setMainConfig(connection, { name: form.name, containerId: container.id });
       toast('info', `Container "${form.name}" started; waiting for ${dialectLabel(form.dialect)} to accept connections…`);
       await refresh();
       const version = await waitForDb(connection);
-      setTestResult({ ok: true, message: version });
+      setResult(useConnection.getState().main.id, { ok: true, message: version });
       toast('success', `${dialectLabel(form.dialect)} is ready on port ${connection.port}.`);
       await refresh();
     } catch (e) {
@@ -136,11 +168,11 @@ export function DatabasePanel() {
 
   const testConnection = async () => {
     setBusy('test');
-    setTestResult(null);
+    setResult(main.id, null);
     try {
-      setTestResult(await backend.test());
+      setResult(main.id, await backend.test());
     } catch (e) {
-      setTestResult({ ok: false, message: e instanceof Error ? e.message : String(e) });
+      setResult(main.id, { ok: false, message: e instanceof Error ? e.message : String(e) });
     } finally {
       setBusy(null);
     }
@@ -150,7 +182,7 @@ export function DatabasePanel() {
     if (conn.dialect !== diagram.dialect) {
       const ok = await confirmDialog({
         title: 'Dialect mismatch',
-        message: `The diagram generates ${dialectLabel(diagram.dialect)} SQL but the connection is ${dialectLabel(conn.dialect)}. Switch the diagram dialect (types will be translated) and continue?`,
+        message: `The diagram generates ${dialectLabel(diagram.dialect)} SQL but the main database is ${dialectLabel(conn.dialect)}. Switch the diagram dialect (types will be translated) and continue?`,
         confirmLabel: `Switch to ${dialectLabel(conn.dialect)}`,
       });
       if (!ok) return;
@@ -197,26 +229,18 @@ export function DatabasePanel() {
   const importFromDb = async () => {
     setBusy('introspect');
     try {
-      const res = await backend.introspect();
-      if (conn.dialect !== diagram.dialect) setDialect(conn.dialect, false);
-      const converted = introspectionToDiagram(res, conn.dialect, importMode === 'merge' ? diagram : null);
-      if (converted.tables.length === 0) {
+      const res = await readSchemaInto(main.id, {
+        mode: importMode,
+        group: importGroup,
+        groupName: importGroupName,
+        external: importGroup && importGroupExternal,
+      });
+      if (res.tables === 0) {
         toast('info', 'The database has no tables.');
         return;
       }
-      importTables(converted.tables, converted.relationships, importMode, {
-        customTypes: converted.customTypes,
-        extensions: converted.extensions,
-        group: importGroup
-          ? {
-              name: importGroupName.trim() || conn.database || 'Imported database',
-              external: importGroupExternal,
-              note: backend.label,
-            }
-          : undefined,
-      });
-        toast('success', `Imported ${converted.tables.length} tables from ${res.serverVersion.split(' ').slice(0, 2).join(' ')}.`);
-      if (converted.warnings.length) toast('info', converted.warnings.slice(0, 3).join(' '));
+      toast('success', `Imported ${res.tables} tables from ${res.serverVersion.split(' ').slice(0, 2).join(' ')}.`);
+      if (res.warnings.length) toast('info', res.warnings.slice(0, 3).join(' '));
     } catch (e) {
       toast('error', e instanceof Error ? e.message : String(e));
     } finally {
@@ -247,37 +271,49 @@ export function DatabasePanel() {
         )}
         {docker === null && <div className="small muted">Checking the API server…</div>}
 
-        {containers.map((c) => (
-          <div key={c.id} className="container-card">
-            <span className={`container-card__state${c.state === 'running' ? ' container-card__state--running' : ''}`} title={c.status} />
-            <div className="container-card__meta">
-              <div className="container-card__name">
-                {c.name} {c.managed && <span className="badge badge--accent">managed</span>}
+        {containers.map((c) => {
+          const role = connectedAs(c);
+          return (
+            <div key={c.id} className="container-card">
+              <span className={`container-card__state${c.state === 'running' ? ' container-card__state--running' : ''}`} title={c.status} />
+              <div className="container-card__meta">
+                <div className="container-card__name">
+                  {c.name} {c.managed && <span className="badge badge--accent">managed</span>}
+                  {role && <span className="badge badge--muted">{role === 'main' ? 'main' : 'external'}</span>}
+                </div>
+                <div className="container-card__sub">
+                  {c.image} · {c.status}
+                  {c.hostPort ? ` · port ${c.hostPort}` : ''}
+                </div>
               </div>
-              <div className="container-card__sub">
-                {c.image} · {c.status}
-                {c.hostPort ? ` · port ${c.hostPort}` : ''}
-              </div>
-            </div>
-            {c.state === 'running' ? (
-              <>
-                <button className="btn btn--sm" onClick={() => useContainer(c)} disabled={!c.connection} title="Fill the connection form from this container">
-                  <Plug /> Use
+              {c.state === 'running' ? (
+                <>
+                  <button className="btn btn--sm" onClick={() => useAsMain(c)} disabled={!c.connection || role === 'main'} title="Design for this database: Create schema, Migrate and Seed act on it">
+                    <Plug /> Main
+                  </button>
+                  <button
+                    className="btn btn--sm"
+                    onClick={() => void useAsExternal(c)}
+                    disabled={!c.connection || busy !== null || role !== null}
+                    title="Connect it alongside the main database, and offer to read its schema in"
+                  >
+                    <Plus /> {busy === c.id + 'external' ? 'Connecting…' : 'External'}
+                  </button>
+                  <button className="btn btn--sm btn--icon" onClick={() => containerAction(c, 'stop')} disabled={busy !== null} title="Stop">
+                    <Square />
+                  </button>
+                </>
+              ) : (
+                <button className="btn btn--sm btn--icon" onClick={() => containerAction(c, 'start')} disabled={busy !== null} title="Start">
+                  <Play />
                 </button>
-                <button className="btn btn--sm btn--icon" onClick={() => containerAction(c, 'stop')} disabled={busy !== null} title="Stop">
-                  <Square />
-                </button>
-              </>
-            ) : (
-              <button className="btn btn--sm btn--icon" onClick={() => containerAction(c, 'start')} disabled={busy !== null} title="Start">
-                <Play />
+              )}
+              <button className="btn btn--sm btn--icon btn--danger" onClick={() => containerAction(c, 'remove')} disabled={busy !== null} title="Remove container">
+                <Trash2 />
               </button>
-            )}
-            <button className="btn btn--sm btn--icon btn--danger" onClick={() => containerAction(c, 'remove')} disabled={busy !== null} title="Remove container">
-              <Trash2 />
-            </button>
-          </div>
-        ))}
+            </div>
+          );
+        })}
         {docker?.available && containers.length === 0 && !loadingContainers && <div className="small muted" style={{ marginBottom: 8 }}>No database containers yet.</div>}
 
         {docker?.available && (
@@ -329,65 +365,39 @@ export function DatabasePanel() {
               <Box /> {busy === 'create' ? 'Creating…' : `Create & start ${dialectLabel(form.dialect)}`}
             </button>
             <div className="field__hint" style={{ marginTop: 6 }}>
-              Pulls the image on first use, binds the port to 127.0.0.1 only, and labels the container so it shows up here as managed.
+              Pulls the image on first use, binds the port to 127.0.0.1 only, and labels the container so it shows up here as managed. It becomes the main database;
+              a container you only want to read from is better connected with <em>External</em>.
             </div>
           </details>
         )}
       </div>
 
-      {/* ---------------- Connection & schema ---------------- */}
+      {/* ---------------- Connections & schema ---------------- */}
       <div className="drawer__col" style={{ overflow: 'auto' }}>
-        <h3>Connection</h3>
-        <div className="form-grid">
-          <div className="field">
-            <span className="field__label">Engine</span>
-            <select className="select select--sm" value={conn.dialect} onChange={(e) => setConnDialect(e.target.value as Dialect)}>
-              {DIALECTS.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.label}
-                </option>
-              ))}
-            </select>
-          </div>
-          {!embedded && (
-            <>
-              <div className="field">
-                <span className="field__label">Host</span>
-                <input className="input input--sm" value={conn.host} onChange={(e) => setConnField('host', e.target.value)} spellCheck={false} />
-              </div>
-              <div className="field">
-                <span className="field__label">Port</span>
-                <input className="input input--sm" type="number" value={conn.port} onChange={(e) => setConnField('port', Number(e.target.value))} />
-              </div>
-              <div className="field">
-                <span className="field__label">Database</span>
-                <input className="input input--sm" value={conn.database} onChange={(e) => setConnField('database', e.target.value)} spellCheck={false} />
-              </div>
-              <div className="field">
-                <span className="field__label">User</span>
-                <input className="input input--sm" value={conn.user} onChange={(e) => setConnField('user', e.target.value)} spellCheck={false} autoComplete="off" />
-              </div>
-              <div className="field">
-                <span className="field__label">Password</span>
-                <input className="input input--sm" type="password" value={conn.password} onChange={(e) => setConnField('password', e.target.value)} autoComplete="off" />
-              </div>
-            </>
-          )}
+        <div className="row" style={{ marginBottom: 8 }}>
+          <h3 style={{ margin: 0 }}>Main database</h3>
+          <span className="badge badge--muted" title="The database this diagram designs: Create schema, Migrate and Seed act on it">
+            the diagram designs this one
+          </span>
         </div>
+        <ConnectionFields conn={main} />
         {embedded && (conn.dialect === 'duckdb' ? <DuckdbSection /> : <SqliteSection />)}
         <div className="row row--wrap" style={{ marginBottom: 8, marginTop: embedded ? 8 : 0 }}>
           <button className="btn" onClick={testConnection} disabled={busy !== null}>
             <Plug /> {busy === 'test' ? 'Testing…' : 'Test connection'}
           </button>
-          {testResult && (
-            <span className={`row small ${testResult.ok ? 'success' : 'danger'}`} style={{ gap: 4 }}>
-              {testResult.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
-              <span style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={testResult.message}>
-                {testResult.message}
+          {main.result && (
+            <span className={`row small ${main.result.ok ? 'success' : 'danger'}`} style={{ gap: 4 }}>
+              {main.result.ok ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+              <span style={{ maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={main.result.message}>
+                {main.result.message}
               </span>
             </span>
           )}
         </div>
+
+        <div className="divider" />
+        <ExternalDatabases />
 
         <div className="divider" />
         <h3>Create the schema</h3>
@@ -423,7 +433,7 @@ export function DatabasePanel() {
         <SeedSection />
 
         <div className="divider" />
-        <h3>Import from the database</h3>
+        <h3>Import from the main database</h3>
         <div className="row row--wrap">
           <label className="checkbox small">
             <input type="radio" name="db-import-mode" checked={importMode === 'replace'} onChange={() => setImportMode('replace')} /> Replace diagram
@@ -456,8 +466,8 @@ export function DatabasePanel() {
           )}
         </div>
         <div className="field__hint" style={{ marginTop: 6 }}>
-          Reads tables, columns, keys, indexes and foreign keys from the connected database and lays them out. Grouping them keeps a database you only read
-          from visually separate; marking it as another database also keeps it out of the CREATE TABLE script.
+          Reads tables, columns, keys, indexes and foreign keys from the main database and lays them out. To read a database you only query, connect it under
+          <em> Other databases</em> instead: what it reads goes into a group of its own and stays out of the script.
         </div>
       </div>
     </div>

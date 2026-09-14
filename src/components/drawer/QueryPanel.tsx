@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ClipboardCopy, Play, Settings2 } from 'lucide-react';
+import { AlertTriangle, ClipboardCopy, Database, Play, Settings2 } from 'lucide-react';
 import type { QueryResult } from '@shared/types';
 import { dialectLabel, isServerDialect } from '@shared/types';
 import { useStore } from '@/store/useStore';
@@ -35,7 +35,10 @@ export function QueryPanel() {
   const traceResult = useStore((s) => s.trace.result);
   const openDrawer = useStore((s) => s.openDrawer);
   const toast = useStore((s) => s.toast);
-  const conn = useConnection((s) => s.conn);
+  const main = useConnection((s) => s.main);
+  const externals = useConnection((s) => s.externals);
+  const targetId = useConnection((s) => s.queryTargetId);
+  const setQueryTarget = useConnection((s) => s.setQueryTarget);
   const pending = useUi((s) => s.pendingQuery);
   const clearPending = useUi((s) => s.clearPendingQuery);
 
@@ -49,9 +52,16 @@ export function QueryPanel() {
   const editor = useRef<SqlEditorHandle>(null);
   const scope = useMemo(() => diagramScope(diagram), [diagram]);
 
+  // Any connected database can be queried, not only the one the diagram is for:
+  // half the reason to connect a second database is to look inside it.
+  const targets = useMemo(() => [main, ...externals], [main, externals]);
+  const target = targets.find((c) => c.id === targetId) ?? main;
+  const conn = target.config;
   const backend = useMemo(() => backendFor(conn), [conn]);
   const embedded = !isServerDialect(conn.dialect);
-  const mismatch = conn.dialect !== diagram.dialect;
+  // Only the main database is supposed to match the diagram; an external one
+  // being MariaDB while the diagram is PostgreSQL is the normal case.
+  const mismatch = target.id === main.id && conn.dialect !== diagram.dialect;
 
   useEffect(() => {
     try {
@@ -129,11 +139,25 @@ export function QueryPanel() {
     <div className="drawer__split query">
       <div className="drawer__col query__editor">
         <div className="drawer__toolbar" style={{ flexWrap: 'wrap' }}>
-          <span className="badge" title="Queries run against this connection">
-            {backend.label}
-          </span>
-          <button className="btn btn--sm btn--ghost" onClick={() => openDrawer('database')} title="Change the connection in the Database tab">
-            <Settings2 /> change
+          {targets.length > 1 ? (
+            <label className="row small" style={{ gap: 4 }} title={backend.label}>
+              <Database size={13} />
+              <select className="select select--sm" value={target.id} onChange={(e) => setQueryTarget(e.target.value)} aria-label="Database to query">
+                {targets.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name}
+                    {c.id === main.id ? ' (main)' : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : (
+            <span className="badge" title="Queries run against this connection">
+              {backend.label}
+            </span>
+          )}
+          <button className="btn btn--sm btn--ghost" onClick={() => openDrawer('database')} title="Connect another database, or change this one, in the Database tab">
+            <Settings2 /> {targets.length > 1 ? 'databases' : 'change'}
           </button>
           {mismatch && (
             <span className="badge badge--warn" title="The diagram's dialect differs from the connection">

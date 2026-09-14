@@ -14,7 +14,7 @@ import '@/styles/migrate.css';
 export function SeedSection() {
   const diagram = useStore((s) => s.diagram);
   const toast = useStore((s) => s.toast);
-  const conn = useConnection((s) => s.conn);
+  const conn = useConnection((s) => s.main.config);
   const backend = useMemo(() => backendFor(conn), [conn]);
   const [rows, setRows] = useState(10);
   const [seed, setSeed] = useState(1);

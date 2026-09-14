@@ -61,7 +61,7 @@ docker compose up --build
 
 | What | How |
 | --- | --- |
-| Several databases at once | The tabs above the canvas are the diagrams of this workspace, like the worksheets of a spreadsheet: **+** adds one, double-click a tab to rename it, drag to reorder, right-click for duplicate / move / close, `Ctrl+PgUp` / `Ctrl+PgDn` steps between them. Each tab keeps its own dialect, undo history, selection and viewport; `Ctrl+C` in one and `Ctrl+V` in another copies tables across; **File → Save** writes every tab into one `.dbviz.json` |
+| Several diagrams at once | The tabs above the canvas are the diagrams of this workspace, like the worksheets of a spreadsheet: **+** adds one, double-click a tab to rename it, drag to reorder, right-click for duplicate / move / close, `Ctrl+PgUp` / `Ctrl+PgDn` steps between them. Each tab keeps its own dialect, undo history, selection and viewport; `Ctrl+C` in one and `Ctrl+V` in another copies tables across; **File → Save** writes every tab into one `.dbviz.json` |
 | Find anything | `Ctrl+K` opens the command palette: type a table name to jump to it, or the first letters of an action (export, detangle, collapse, switch dialect…) |
 | Add a table | Double-click the canvas, press `T`, or use the **+ Table** button; the menu next to it adds a view, a note, a group or an enum type |
 | Select a group | `Shift` + drag a box over the canvas — every table and note it touches is selected; drag any of them (or the dashed box) to move the group, `Delete` removes it in one undo step |
@@ -99,8 +99,9 @@ docker compose up --build
 | Checkpoints | Inspector → Diagram panel → **Checkpoints**, or **File → Save checkpoint…**: a named snapshot you can restore any time. A checkpoint belongs to the tab it was taken on |
 | Export | File menu → PNG, SVG, SQL script, Markdown data dictionary, Mermaid ER diagram, or DBML; the SQL tab previews all the text formats |
 | Share | **File → Copy share link**: the whole diagram is compressed into the URL, so whoever opens it gets a copy with nothing to install |
-| Docker & database | **Database** button → left column manages containers, right column tests a connection, runs the schema, reads an existing schema, **migrates** a live database to match the diagram, or **seeds** it with generated rows |
-| Query | Bottom drawer → **Query**: read-only `SELECT`s against the connected database, with `Ctrl+Enter` to run the selection or the statement under the cursor, snippets from the diagram, history and CSV / JSON copy |
+| Docker & database | **Database** button → the left column manages containers, the right column holds the **main database** — the one this diagram designs — where you test the connection, run the schema, read an existing schema, **migrate** a live database to match the diagram, or **seed** it with generated rows |
+| Connect a second database | Under *Other databases* in the Database tab: **Connect another** (or **External** on a container on the left) connects a database you read but do not own, alongside the main one and as many more as you like. **Read schema** brings its tables, columns, keys, indexes, foreign keys, views and enums in as a group marked *another database*, so nothing generated ever tries to create them; **Re-read** refreshes that same group in place, and one undo puts the old reading back. Each one can also be tested, queried and — with the ☆ button — promoted to the main database, which makes the database it replaces external in its turn |
+| Query | Bottom drawer → **Query**: read-only `SELECT`s against any connected database — the picker at the top left says which, so you can read from an external one and write the answer into the main one — with `Ctrl+Enter` to run the selection or the statement under the cursor, snippets from the diagram, history and CSV / JSON copy |
 | SQLite in the browser | Pick the SQLite dialect and the Database tab runs the schema in an in-browser database (persisted in this browser) that Query, Migrate and Seed all talk to |
 | DuckDB in the browser | Pick the DuckDB dialect and the Database tab runs DuckDB-Wasm: the database is a real `.duckdb` file kept in the browser's private file storage, so it survives reloads, can be downloaded, and a `.duckdb` file can be opened or dropped on the canvas |
 
@@ -263,6 +264,8 @@ src/lib/library.ts       IndexedDB workspace library and per-diagram checkpoints
 src/lib/sqlite/          in-browser SQLite engine (sql.js) behind the same interface as the server
 src/lib/duckdb/          in-browser DuckDB engine (DuckDB-Wasm on the origin-private file system) behind the same interface
 src/store/useStore.ts    zustand store with undo/redo and autosave; the sheets of the workspace live here
+src/store/useConnection.ts  the databases connected at once: one main database plus the external ones, and what is kept between sessions
+src/lib/readSchema.ts    reading a live database into the diagram: a group per external database, refreshed in place when it is read again
 src/components/SheetTabs.tsx  the diagram tabs above the canvas
 src/store/useSimulation.ts  simulation mode: target, sample options, playback, recompute on edit
 src/components/          React UI (canvas, inspector, drawer panels, command palette)
@@ -590,6 +593,38 @@ which is the case for a database you query but do not own:
 **Database → Read schema** and **Import SQL** can both drop everything they
 bring in straight into a new group, external by default, which is usually what
 you want when you are reading someone else's database.
+
+### Connecting that second database for real
+
+An external group says *these tables live somewhere else*. Connecting that
+somewhere else makes the claim checkable: the Database tab holds one **main
+database** — the one the diagram designs, and the only one **Create schema**,
+**Migrate** and **Seed** ever touch — and any number of **other databases**
+beside it, each a live connection of its own.
+
+- **Connect another** in the Database tab adds one by hand; **External** on a
+  running container connects that container and offers to read it straight in.
+  The main database is set the same way, with **Main**.
+- **Read schema** on one of them introspects it and files what it finds into a
+  group marked *another database*: tables, columns, keys, indexes, foreign keys,
+  views, enums and the extensions that database has installed. The connection
+  remembers which group it filled, so **Re-read** refreshes that group in place —
+  same region, same colour, same position, one undo away — instead of dropping a
+  second copy of the same tables on the canvas.
+- Column types keep the spelling that database uses and the diagram's own
+  dialect is left alone, because the schema being designed is still the main
+  database's. Nothing generated tries to create those tables, which is exactly
+  what an external group already promised.
+- The **Query** tab can be pointed at any of them, so the read side of a data
+  flow can be run where the data actually is.
+- ☆ on a connection makes it the main database; the database it replaces becomes
+  one more external connection, and nothing on the canvas moves.
+
+The connections (including passwords, as before) are kept in the browser's local
+storage, not in the `.dbviz.json` file: a diagram you share describes schemas,
+never credentials. SQLite and DuckDB run as one instance inside the page, so two
+connections can never both claim the in-browser SQLite or the in-browser DuckDB —
+everything else can be connected as many times as you like.
 
 ## Extensions
 
