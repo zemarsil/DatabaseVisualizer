@@ -137,7 +137,7 @@ export function programReach(p: Program): Set<string> {
 /**
  * One line describing a step, the way the node and the exports both want it:
  * "read orders (id, status)", "compute", "write daily_totals", "call parse_order".
- * `target` is the code node a call, import or extends step names.
+ * `target` is the code node a call, import, extends or load step names.
  */
 export function describeStep(s: ProgramStep, table: Table | undefined, target?: Program): string {
   if (s.op === 'compute') return s.note?.trim() ? `compute — ${s.note.trim()}` : 'compute';
@@ -176,12 +176,23 @@ export function describeProgram(d: Diagram, p: Program): string {
   const calls = named('call');
   const imports = named('import');
   const bases = named('extends');
+  const loads = named('load');
   if (bases.length) clauses.push(`extends ${bases.join(', ')}`);
   if (imports.length) clauses.push(`imports ${imports.join(', ')}`);
+  if (loads.length) clauses.push(`loads ${loads.join(', ')}`);
   if (calls.length) clauses.push(`calls ${calls.join(', ')}`);
   const computes = p.steps.filter((s) => s.op === 'compute').length;
   if (computes) clauses.push(`${computes} step${computes === 1 ? '' : 's'} of work outside the database`);
   const article = /^[aeiou]/i.test(kind) ? 'an' : 'a';
+  // A data file does nothing, so the sentence for one is about what reads it.
+  // "does not touch the schema yet" would be true of every data file there
+  // will ever be, and so worth saying about none of them.
+  if (kindOf === 'data') {
+    const readers = [...new Set(d.programs.filter((x) => x.steps.some((s) => s.op === 'load' && s.codeId === p.id)).map((x) => x.name))];
+    return readers.length
+      ? `${p.name}, ${article} ${kind}, is loaded by ${readers.join(', ')}.`
+      : `${p.name}, ${article} ${kind}, and nothing in the diagram loads it yet.`;
+  }
   if (clauses.length) return `${p.name}, ${article} ${kind}, ${clauses.join('; ')}.`;
   const members = d.programs.filter((x) => x.parentId === p.id).length;
   if (members) return `${p.name}, ${article} ${kind}, holds ${members} node${members === 1 ? '' : 's'}.`;

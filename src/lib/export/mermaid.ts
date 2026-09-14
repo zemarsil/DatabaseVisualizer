@@ -112,7 +112,9 @@ function programBlock(d: Diagram, p: Program, name: string): string[] {
           : mermaidName(byId.get(s.tableId ?? '')?.name ?? 'missing_table');
     lines.push(`        ${s.op} ${what}`);
   }
-  if (p.steps.length === 0) lines.push(`        ${codeKindMeta(kind).label.toLowerCase()} empty`);
+  // An attribute is one type and one name, so a two-word kind ("data file")
+  // has to arrive as one word or the entity does not parse.
+  if (p.steps.length === 0) lines.push(`        ${mermaidName(codeKindMeta(kind).label.toLowerCase())} ${kind === 'data' ? 'values' : 'empty'}`);
   lines.push('    }');
   return lines;
 }

@@ -43,6 +43,7 @@
 import {
   codeKindOf,
   isCodeStepOp,
+  isDataNode,
   programLanguageMeta,
   programRoleMeta,
   type CodeKind,
@@ -194,7 +195,10 @@ export function resolveSteps(d: Diagram, p: Program, driver?: Driver): ProgramCo
         sql: '',
         generated: false,
         note: s.note?.trim() ?? '',
-        slug: unique(sanitize(`${s.op}_${target?.name ?? `step_${i + 1}`}`)),
+        // A load's slug is the name the file it reads is bound to, since that
+        // is what the reader will type next; every other code step's slug
+        // names the thing it reaches, because that one becomes a stub.
+        slug: unique(s.op === 'load' ? dataSlug(target?.name ?? `data_${i + 1}`) : sanitize(`${s.op}_${target?.name ?? `step_${i + 1}`}`)),
         params: [],
         stub: s.op === 'call',
       };
@@ -378,6 +382,11 @@ const SIGNATURE_SHAPE: Partial<Record<ProgramLanguage, RegExp>> = {
   typescript: /^(async\s+)?function\s+[A-Za-z_$][\w$]*\s*\(/,
   c: /^[A-Za-z_][\w\s*]*[\s*]\*?[A-Za-z_]\w*\s*\(/,
   cpp: /^[A-Za-z_][\w\s*:<>]*[\s*]\*?[A-Za-z_]\w*\s*\(/,
+  perl: /^sub\s+[A-Za-z_]\w*\s*\(/,
+  // `place_order()` and nothing else: the shell's one way of writing a
+  // function header, and a word followed by parentheses anywhere else in a
+  // script is a call rather than a declaration.
+  shell: /^[A-Za-z_]\w*\s*\(\s*\)$/,
 };
 
 function declaredSignature(u: CodeUnit, lang: ProgramLanguage): string | undefined {
@@ -444,8 +453,7 @@ const IMPORT_LINE: Partial<Record<ProgramLanguage, (s: ImportSpec) => string>> =
   typescript: (s) => jsImport(s),
   c: (s) => `#include "${s.module}.h"`,
   cpp: (s) => `#include "${s.module}.h"`,
-  csharp: (s) => `using ${typeName(s.module)};`,
-  ruby: (s) => `require "${s.module}"`,
+  perl: (s) => `use ${typeName(s.module)}${s.name ? ` qw(${ident(s.name)})` : ''};`,
   shell: (s) => `source ${s.module}.sh`,
 };
 
@@ -464,6 +472,10 @@ const IMPORT_BINDS: Partial<Record<ProgramLanguage, (s: ImportSpec) => string>> 
   go: (s) => sanitize(s.module),
   javascript: (s) => (s.name ? ident(s.name) : camel(snake(s.module))),
   typescript: (s) => (s.name ? ident(s.name) : camel(snake(s.module))),
+  perl: (s) => (s.name ? ident(s.name) : typeName(s.module)),
+  // A sourced shell file binds every function in it at once, so the one name
+  // it introduces is the file itself and nothing can collide with it.
+  shell: (s) => sanitize(s.module),
 };
 
 /** Names the generated file already uses, whatever the diagram is called. */
@@ -506,6 +518,135 @@ function importLines(d: Diagram, root: CodeUnit, lang: ProgramLanguage): string[
       seen.add(line);
       out.push(spec.note ? `${line}  ${marker} ${spec.note}` : line);
     }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------ */
+/* Data files                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A load step, resolved to the three things writing one takes: the name it
+ * binds, the file it reads, and which of the two formats that file is in.
+ *
+ * It is the one step whose target is not code. Everything else a step can name
+ * is something that runs; a YAML or JSON file is values, so the line written
+ * for it is a read from disk and a parse, and the only question the diagram
+ * has to answer is which parser.
+ */
+interface LoadSpec {
+  /** Identifier the file's contents land in: "config" for config.yaml. */
+  name: string;
+  /** The file, as the node says where it is. */
+  path: string;
+  /** JSON rather than YAML. */
+  json: boolean;
+}
+
+/** An identifier for a data file, kept clear of the names the generated file already uses. */
+function dataSlug(raw: string): string {
+  const base = sanitize(stem(raw));
+  return RESERVED.includes(base) ? `${base}_data` : base;
+}
+
+function loadSpec(s: ProgramCodeStep): LoadSpec | undefined {
+  if (s.op !== 'load' || !s.target) return undefined;
+  return { name: s.slug, path: s.target.entrypoint?.trim() || s.target.name, json: s.target.language === 'json' };
+}
+
+/** A path as a double-quoted literal, which every language here spells the same way. */
+const quoted = (path: string) => JSON.stringify(path);
+/** And as a single-quoted one, for Perl and the shell. */
+const sq = (path: string) => `'${path.replace(/'/g, "'\\''")}'`;
+
+/**
+ * The line a load step comes out as, per language.
+ *
+ * Each one is the call a reader of that language would actually write, with
+ * the library that language actually reaches for: `yaml.safe_load` and
+ * `json.load`, serde, Jackson, nlohmann and yaml-cpp, `jq` and `yq`. C is the
+ * exception and says so rather than inventing a parser: there is no standard
+ * one, so what it gets is the name of the library to add.
+ */
+const LOAD_LINE: Partial<Record<ProgramLanguage, (l: LoadSpec) => string[]>> = {
+  python: (l) => [`with open(${quoted(l.path)}, encoding="utf-8") as f:`, `    ${l.name} = ${l.json ? 'json.load(f)' : 'yaml.safe_load(f)'}`],
+  rust: (l) => {
+    const crate = l.json ? 'serde_json' : 'serde_yaml';
+    return [`let ${l.name}: ${crate}::Value = ${crate}::from_str(&std::fs::read_to_string(${quoted(l.path)})?)?;`];
+  },
+  go: (l) => {
+    const name = camel(l.name);
+    return [
+      `${name}Bytes, err := os.ReadFile(${quoted(l.path)})`,
+      'if err != nil {',
+      '\tlog.Fatal(err)',
+      '}',
+      `var ${name} map[string]any`,
+      `if err := ${l.json ? 'json' : 'yaml'}.Unmarshal(${name}Bytes, &${name}); err != nil {`,
+      '\tlog.Fatal(err)',
+      '}',
+    ];
+  },
+  java: (l) => [`JsonNode ${camel(l.name)} = new ObjectMapper(${l.json ? '' : 'new YAMLFactory()'}).readTree(new File(${quoted(l.path)}));`],
+  javascript: (l) => [jsLoad(l)],
+  typescript: (l) => [jsLoad(l)],
+  c: (l) => [`// ${l.path}: C has no parser of its own — read the file, then ${l.json ? 'cJSON_Parse' : 'yaml_parser_parse'}.`],
+  cpp: (l) =>
+    l.json
+      ? [`std::ifstream ${l.name}_file{${quoted(l.path)}};`, `nlohmann::json ${l.name} = nlohmann::json::parse(${l.name}_file);`]
+      : [`YAML::Node ${l.name} = YAML::LoadFile(${quoted(l.path)});`],
+  perl: (l) =>
+    l.json
+      ? [`open my $${l.name}_fh, '<', ${sq(l.path)} or die "${l.path}: $!";`, `my $${l.name} = decode_json(do { local $/; <$${l.name}_fh> });`, `close $${l.name}_fh;`]
+      : [`my $${l.name} = LoadFile(${sq(l.path)});`],
+  shell: (l) => [`${l.name}=$(${l.json ? 'jq -c .' : "yq -o=json '.'"} ${sq(l.path)})`],
+};
+
+function jsLoad(l: LoadSpec): string {
+  return `const ${camel(l.name)} = ${l.json ? 'JSON.parse' : 'YAML.parse'}(await readFile(${quoted(l.path)}, 'utf8'));`;
+}
+
+/**
+ * What reading a data file costs at the top of the file: an import, a crate to
+ * add, an include. Asked once per format the file actually loads, so a program
+ * that reads no YAML never mentions a YAML library.
+ */
+const LOAD_IMPORTS: Partial<Record<ProgramLanguage, (json: boolean) => string[]>> = {
+  python: (json) => (json ? ['import json'] : ['import yaml  # pip install PyYAML']),
+  rust: (json) => (json ? ['// cargo add serde_json'] : ['// cargo add serde_yaml']),
+  go: (json) => (json ? ['"encoding/json"'] : ['"gopkg.in/yaml.v3"']),
+  java: (json) => [
+    'import java.io.File;',
+    'import com.fasterxml.jackson.databind.JsonNode;',
+    'import com.fasterxml.jackson.databind.ObjectMapper;',
+    ...(json ? [] : ['import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;']),
+  ],
+  javascript: (json) => ["import { readFile } from 'node:fs/promises';", ...(json ? [] : ["import YAML from 'yaml';"])],
+  typescript: (json) => ["import { readFile } from 'node:fs/promises';", ...(json ? [] : ["import YAML from 'yaml';"])],
+  cpp: (json) => (json ? ['#include <fstream>', '#include <nlohmann/json.hpp>'] : ['#include <yaml-cpp/yaml.h>']),
+  perl: (json) => (json ? ['use JSON::PP;'] : ['use YAML::XS qw(LoadFile);']),
+};
+
+/** The load step's own lines, or nothing when it names no file to read. */
+function loadCode(s: ProgramCodeStep, lang: ProgramLanguage): string[] {
+  const spec = loadSpec(s);
+  return spec ? (LOAD_LINE[lang]?.(spec) ?? []) : [];
+}
+
+/** Every import the file's load steps ask for, once each, JSON before YAML. */
+function loadImports(root: CodeUnit, lang: ProgramLanguage): string[] {
+  const write = LOAD_IMPORTS[lang];
+  if (!write) return [];
+  const formats = new Set<boolean>();
+  for (const u of flatUnits(root)) for (const s of u.body) {
+    const spec = loadSpec(s);
+    if (spec) formats.add(spec.json);
+  }
+  const out: string[] = [];
+  for (const json of [true, false]) {
+    if (!formats.has(json)) continue;
+    for (const line of write(json)) if (!out.includes(line)) out.push(line);
   }
   return out;
 }
@@ -689,6 +830,7 @@ function pyDoc(lines: string[], pad: string): string[] {
 function pyStep(s: ProgramCodeStep, ctx: StepContext): string[] {
   const lines = [`# ${stepCaption(s)}`];
   if (s.stub) lines.push(`result_${s.index} = ${s.slug}(${ctx.inLoop ? 'row' : ''})`);
+  else if (s.op === 'load') lines.push(...loadCode(s, 'python'));
   else if (s.op === 'read') lines.push(`cur.execute(${upperSnake(s.slug)})`, `${ctx.first ? 'rows' : `${s.slug}_rows`} = cur.fetchall()`);
   // A one-element tuple needs its comma, or the driver is handed a bare value.
   else if (s.params.length) lines.push(`cur.execute(${upperSnake(s.slug)}, (${s.params.join(', ')}${s.params.length === 1 ? ',' : ''}))`);
@@ -749,7 +891,7 @@ function emitPython(d: Diagram, root: CodeUnit, driver: Driver): string {
   out.push(`"""${headerLines(d, root, driver).join('\n')}\n"""`);
   gap(out, 1);
   out.push(`# ${driver.install}`);
-  out.push(...driver.imports, ...importLines(d, root, 'python'));
+  out.push(...driver.imports, ...loadImports(root, 'python'), ...importLines(d, root, 'python'));
   gap(out, 1);
   out.push(`DSN = os.environ.get("DATABASE_URL", ${JSON.stringify(driver.dsn)})`);
 
@@ -815,6 +957,7 @@ function rustStep(driver: Driver): (s: ProgramCodeStep, ctx: StepContext) => str
     const lines = [`// ${stepCaption(s)}`];
     const rows = ctx.first ? 'rows' : `${s.slug}_rows`;
     if (s.stub) lines.push(`${s.slug}(${ctx.inLoop ? '&row' : ''})?;`);
+    else if (s.op === 'load') lines.push(...loadCode(s, 'rust'));
     else if (driver.shape === RUST_SQLX && s.op === 'read') {
       lines.push(`let ${rows} = sqlx::query(${upperSnake(s.slug)}).fetch_all(&pool).await?;`);
     } else if (driver.shape === RUST_SQLX) {
@@ -897,7 +1040,7 @@ function emitRust(d: Diagram, root: CodeUnit, driver: Driver): string {
   out.push('//');
   out.push(`// ${driver.install}`);
   gap(out, 1);
-  out.push(...driver.imports, ...importLines(d, root, 'rust'));
+  out.push(...driver.imports, ...loadImports(root, 'rust'), ...importLines(d, root, 'rust'));
 
   for (const s of fileSql(root)) {
     gap(out, 1);
@@ -945,6 +1088,7 @@ function emitRust(d: Diagram, root: CodeUnit, driver: Driver): string {
 function goStep(s: ProgramCodeStep, ctx: StepContext): string[] {
   const lines = [`// ${stepCaption(s)}`];
   if (s.stub) lines.push(`if err := ${camel(s.slug)}(${ctx.inLoop ? 'rows' : ''}); err != nil {`, '\tlog.Fatal(err)', '}');
+  else if (s.op === 'load') lines.push(...loadCode(s, 'go'));
   else if (s.op === 'read') {
     const rows = ctx.first ? 'rows' : `${camel(s.slug)}Rows`;
     lines.push(`${rows}, err := db.Query(${camel(s.slug)}SQL)`, 'if err != nil {', '\tlog.Fatal(err)', '}', `defer ${rows}.Close()`);
@@ -1018,7 +1162,9 @@ function emitGo(d: Diagram, root: CodeUnit, driver: Driver): string {
   out.push('import (');
   // gofmt sorts an import block by path, so emit it sorted and save the reader
   // a diff on their first save.
-  const imports = ['"log"', '"os"', ...driver.imports, ...importLines(d, root, 'go')].sort((a, b) => {
+  // A duplicated path is a compile error in Go, and `os` in particular is
+  // wanted by both the connection and a load step, so the block is a set.
+  const imports = [...new Set(['"log"', '"os"', ...driver.imports, ...loadImports(root, 'go'), ...importLines(d, root, 'go')])].sort((a, b) => {
     const path = (s: string) => s.slice(s.indexOf('"'));
     return path(a).localeCompare(path(b));
   });
@@ -1073,6 +1219,7 @@ const JAVA = '    ';
 function javaStep(s: ProgramCodeStep, ctx: StepContext): string[] {
   const lines = [`// ${stepCaption(s)}`];
   if (s.stub) lines.push(`${camel(s.slug)}(${ctx.inLoop ? 'rows' : ''});`);
+  else if (s.op === 'load') lines.push(...loadCode(s, 'java'));
   else if (s.op === 'read')
     lines.push(
       `PreparedStatement ${camel(s.slug)} = conn.prepareStatement(${upperSnake(s.slug)});`,
@@ -1141,7 +1288,7 @@ function emitJava(d: Diagram, root: CodeUnit, driver: Driver): string {
   out.push('//');
   out.push(`// Dependency: ${driver.install}`);
   gap(out, 1);
-  out.push(...driver.imports, ...importLines(d, root, 'java'));
+  out.push(...driver.imports, ...loadImports(root, 'java'), ...importLines(d, root, 'java'));
   gap(out, 1);
   out.push(`public class ${cls}${extend} {`);
   out.push(`    private static final String DSN = System.getenv().getOrDefault("DATABASE_URL", ${JSON.stringify(driver.dsn)});`);
@@ -1222,6 +1369,7 @@ function jsStep(driver: Driver): (s: ProgramCodeStep, ctx: StepContext) => strin
     const lines = [`// ${stepCaption(s)}`];
     const sql = `${camel(s.slug)}Sql`;
     if (s.stub) lines.push(`${camel(s.slug)}(${ctx.inLoop ? 'row' : ''});`);
+    else if (s.op === 'load') lines.push(...loadCode(s, 'javascript'));
     else if (s.op === 'read') lines.push(calls.rows(sql, ctx.first ? 'rows' : `${camel(s.slug)}Rows`));
     else {
       if (!s.params.length) lines.push('// bind what this statement needs');
@@ -1292,7 +1440,7 @@ function emitNode(d: Diagram, root: CodeUnit, driver: Driver, typed: boolean): s
   out.push('//');
   out.push(`// ${driver.install}`);
   gap(out, 1);
-  out.push(...driver.imports, ...importLines(d, root, lang));
+  out.push(...driver.imports, ...loadImports(root, lang), ...importLines(d, root, lang));
   gap(out, 1);
   out.push(`const DSN = process.env.DATABASE_URL ?? ${JSON.stringify(driver.dsn)};`);
   // More than one definition means more than one place that wants a
@@ -1593,10 +1741,11 @@ const CPP_SHAPES: Partial<Record<DriverShape, NativeShape>> = {
   },
 };
 
-function cStep(shape: NativeShape): (s: ProgramCodeStep, ctx: StepContext) => string[] {
+function cStep(shape: NativeShape, lang: ProgramLanguage): (s: ProgramCodeStep, ctx: StepContext) => string[] {
   return (s, ctx) => {
     const lines = [`// ${stepCaption(s)}`];
     if (s.stub) lines.push(shape.call(s.slug, ctx.inLoop));
+    else if (s.op === 'load') lines.push(...loadCode(s, lang));
     else if (s.op === 'read') lines.push(...shape.read(s, ctx.first ? 'rows' : `${s.slug}_rows`));
     else lines.push(...shape.write(s));
     return lines;
@@ -1610,14 +1759,14 @@ function cStep(shape: NativeShape): (s: ProgramCodeStep, ctx: StepContext) => st
  * needs to put it back, and each is handed the connection rather than opening
  * one of its own.
  */
-function cFunctions(d: Diagram, root: CodeUnit, shape: NativeShape): string[][] {
+function cFunctions(d: Diagram, root: CodeUnit, shape: NativeShape, lang: ProgramLanguage): string[][] {
   const out: string[][] = [];
   for (const u of flatUnits(root)) {
     if (u === root || !u.body.length) continue;
     const name = u.path.map(snake).join('_');
     const takes = needsConnection(u) ? `${shape.handle.type}${shape.handle.name}` : 'void';
     const block = [...commentBlock(unitDoc(d, u, true, true), '//').split('\n'), `static int ${name}(${takes}) {`];
-    block.push(buildBody(u.body, cStep(shape), { base: '    ', step: '    ', loopOpen: shape.loopOpen, loopClose: shape.loopClose }));
+    block.push(buildBody(u.body, cStep(shape, lang), { base: '    ', step: '    ', loopOpen: shape.loopOpen, loopClose: shape.loopClose }));
     block.push('');
     block.push('    return 0;');
     block.push('}');
@@ -1629,13 +1778,14 @@ function cFunctions(d: Diagram, root: CodeUnit, shape: NativeShape): string[][] 
 function emitC(d: Diagram, root: CodeUnit, driver: Driver, cpp: boolean): string {
   const shape = (cpp ? CPP_SHAPES : C_SHAPES)[driver.shape];
   if (!shape) return emitOutline(d, root);
+  const lang: ProgramLanguage = cpp ? 'cpp' : 'c';
   const out: string[] = [];
   out.push(commentBlock(headerLines(d, root, driver), '//'));
   out.push('//');
   out.push(`// ${driver.install}`);
   gap(out, 1);
   out.push(...shape.extras);
-  out.push(...driver.imports, ...importLines(d, root, cpp ? 'cpp' : 'c'));
+  out.push(...driver.imports, ...loadImports(root, lang), ...importLines(d, root, lang));
 
   for (const s of fileSql(root)) {
     gap(out, 1);
@@ -1654,7 +1804,7 @@ function emitC(d: Diagram, root: CodeUnit, driver: Driver, cpp: boolean): string
     out.push(...shape.stub(step.slug, stepCaption(step), inRowLoop(unit, step)));
   }
 
-  for (const block of cFunctions(d, root, shape)) {
+  for (const block of cFunctions(d, root, shape, lang)) {
     gap(out, 1);
     out.push(...block);
   }
@@ -1672,7 +1822,7 @@ function emitC(d: Diagram, root: CodeUnit, driver: Driver, cpp: boolean): string
   out.push(indent(shape.open.join('\n'), pad));
   if (root.body.length) {
     out.push('');
-    out.push(buildBody(root.body, cStep(shape), { base: pad, step: '    ', loopOpen: shape.loopOpen, loopClose: shape.loopClose }));
+    out.push(buildBody(root.body, cStep(shape, lang), { base: pad, step: '    ', loopOpen: shape.loopOpen, loopClose: shape.loopClose }));
   }
   for (const u of called) {
     out.push('');
@@ -1688,6 +1838,315 @@ function emitC(d: Diagram, root: CodeUnit, driver: Driver, cpp: boolean): string
   out.push('    return 0;');
   out.push('}');
   return `${out.join('\n')}\n`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Perl                                                                */
+/* ------------------------------------------------------------------ */
+
+const PL = '    ';
+
+/**
+ * DBI is the client side of Perl, whichever engine is underneath.
+ *
+ * So there is one shape here rather than four: prepare a statement, execute it
+ * with what it binds, walk the rows as hashes. What changes with the dialect is
+ * the DSN and the DBD package, and both of those are the driver's business
+ * rather than this file's.
+ */
+function perlStep(s: ProgramCodeStep, ctx: StepContext): string[] {
+  const lines = [`# ${stepCaption(s)}`];
+  const sth = ctx.first ? 'sth' : `${s.slug}_sth`;
+  if (s.stub) lines.push(`${s.slug}(${ctx.inLoop ? '$row' : ''});`);
+  else if (s.op === 'load') lines.push(...loadCode(s, 'perl'));
+  else if (s.op === 'read') lines.push(`my $${sth} = $dbh->prepare($${upperSnake(s.slug)});`, `$${sth}->execute();`);
+  else {
+    lines.push(`my $${s.slug}_sth = $dbh->prepare($${upperSnake(s.slug)});`);
+    // `use strict` means an undeclared name is a compile error rather than a
+    // hole to fill in, so the parameters are declared here and left empty.
+    if (s.params.length) lines.push(`my (${s.params.map((n) => `$${n}`).join(', ')});  # fill these in`);
+    else lines.push('# bind what this statement needs');
+    lines.push(`$${s.slug}_sth->execute(${s.params.map((n) => `$${n}`).join(', ')});`);
+  }
+  return lines;
+}
+
+/** A unit's steps, after whatever it takes to have a handle in scope. */
+function perlBody(u: CodeUnit, driver: Driver, pad: string, handed: boolean): string[] {
+  if (!u.body.length) return [];
+  const out: string[] = [];
+  const opens = !handed && needsConnection(u);
+  if (opens) {
+    out.push(`${pad}my $dbh = ${driver.connect};`);
+    out.push('');
+  }
+  out.push(buildBody(u.body, perlStep, { base: pad, step: PL, loopOpen: 'while (my $row = $sth->fetchrow_hashref) {', loopClose: '}' }));
+  // AutoCommit is off in every one of these connections, so the work has to be
+  // committed by whoever did it.
+  if (needsConnection(u)) {
+    out.push('');
+    out.push(`${pad}$dbh->commit;`);
+  }
+  if (opens) out.push(`${pad}$dbh->disconnect;`);
+  return out;
+}
+
+function perlSub(d: Diagram, u: CodeUnit, driver: Driver, pad: string, method: boolean, name?: string, doc?: string[]): string[] {
+  const declared = name ? undefined : declaredSignature(u, 'perl');
+  const inner = pad + PL;
+  const out = [...indentAll(commentBlock(doc ?? unitDoc(d, u, !declared), '#').split('\n'), pad), `${pad}${declared ? `${declared} {` : `sub ${name ?? snake(u.node.name)} {`}`];
+  // A signature Perl only understands with the feature on is written as given;
+  // `emitPerl` turns the feature on when any of them is.
+  const handed = takesHandle(declared, 'dbh') || (!declared && needsConnection(u));
+  if (!declared) {
+    const args = [method ? '$self' : '', needsConnection(u) ? '$dbh' : ''].filter(Boolean);
+    if (args.length) out.push(`${inner}my (${args.join(', ')}) = @_;`, '');
+  }
+  const body = perlBody(u, driver, inner, handed);
+  out.push(...(body.length ? body : [`${inner}return;`]));
+  out.push(`${pad}}`);
+  return out;
+}
+
+/**
+ * A class is a package, and Perl's package block nests, so the shape of the
+ * canvas survives into the file unchanged — which is not true of Rust, Go or C,
+ * and is the one place Perl's age works in its favour here.
+ */
+function perlPackage(d: Diagram, u: CodeUnit, driver: Driver, pad: string): string[] {
+  const inner = pad + PL;
+  const out = [...indentAll(commentBlock(unitDoc(d, u, true), '#').split('\n'), pad), `${pad}package ${typeName(u.node.name)} {`];
+  for (const base of u.bases) out.push(`${inner}use parent -norequire, '${typeName(base)}';`);
+  if (u.bases.length) out.push('');
+  if (u.body.length) out.push(...perlSub(d, u, driver, inner, true, ownStepsName(u), [`The steps drawn on ${u.node.name} itself.`]));
+  for (const m of u.members) {
+    gap(out, 1);
+    out.push(...perlDefinition(d, m, driver, inner));
+  }
+  gap(out, 0);
+  out.push(`${pad}}`);
+  return out;
+}
+
+function perlDefinition(d: Diagram, u: CodeUnit, driver: Driver, pad: string): string[] {
+  return u.kind === 'function' ? perlSub(d, u, driver, pad, Boolean(u.parent && u.parent.kind === 'class')) : perlPackage(d, u, driver, pad);
+}
+
+function emitPerl(d: Diagram, root: CodeUnit, driver: Driver): string {
+  const out: string[] = ['#!/usr/bin/env perl'];
+  out.push(commentBlock(headerLines(d, root, driver), '#'));
+  out.push('#');
+  out.push(`# ${driver.install}`);
+  gap(out, 1);
+  out.push(...driver.imports);
+  // Signatures are a feature rather than the default, and one is only written
+  // when the reader wrote it themselves on a node.
+  if (flatUnits(root).some((u) => declaredSignature(u, 'perl'))) {
+    out.push("use feature 'signatures';", "no warnings 'experimental::signatures';");
+  }
+  out.push(...loadImports(root, 'perl'), ...importLines(d, root, 'perl'));
+  gap(out, 1);
+  out.push(`my $DSN = $ENV{DATABASE_URL} // ${sq(driver.dsn)};`);
+
+  for (const s of fileSql(root)) {
+    gap(out, 1);
+    out.push(`# ${stepCaption(s)}`);
+    // A quoted heredoc: the statement is text, and a `$` in it is a dollar.
+    out.push(`my $${upperSnake(s.slug)} = <<'SQL';\n${s.sql}\nSQL`);
+  }
+
+  for (const { unit, step } of fileStubs(root)) {
+    gap(out, 2);
+    out.push(`# ${stepCaption(step)}`);
+    out.push(`sub ${step.slug} {`);
+    if (inRowLoop(unit, step)) out.push(`${PL}my ($row) = @_;`);
+    out.push(`${PL}die 'the work this program exists to do';`);
+    out.push('}');
+  }
+
+  for (const u of definitionsOf(root)) {
+    gap(out, 2);
+    out.push(...perlDefinition(d, u, driver, ''));
+  }
+
+  if (needsMain(root)) {
+    gap(out, 2);
+    out.push('sub main {');
+    const body = perlBody(root, driver, PL, false);
+    out.push(...(body.length ? body : [`${PL}return;`]));
+    out.push('}');
+    gap(out, 2);
+    // `unless caller` so the same file can be run and required.
+    out.push('main() unless caller;');
+  }
+  gap(out, 1);
+  out.push('1;');
+  return `${out.join('\n')}\n`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Shell                                                               */
+/* ------------------------------------------------------------------ */
+
+const SH = '  ';
+
+/**
+ * How each database's own command takes a statement.
+ *
+ * And one thing they disagree about that matters more than the flag: psql has
+ * parameters and the other three have not. `-v p1=…` with `:'p1'` in the text
+ * is interpolated and quoted by psql itself; everywhere else a value gets into
+ * the statement because the shell put it there, which the header says out loud
+ * rather than leaving the reader to notice.
+ */
+const CLI: Partial<Record<DriverShape, { statement: (sql: string) => string; binds: boolean }>> = {
+  'psql-cli': { statement: (sql) => `-c "${sql}"`, binds: true },
+  'mysql-cli': { statement: (sql) => `-e "${sql}"`, binds: false },
+  'sqlite-cli': { statement: (sql) => `"${sql}"`, binds: false },
+  'duckdb-cli': { statement: (sql) => `-c "${sql}"`, binds: false },
+};
+
+function cliFor(driver: Driver) {
+  return CLI[driver.shape] ?? CLI['psql-cli']!;
+}
+
+/** A statement, as the function that prints it. */
+function shellSql(s: ProgramCodeStep): string[] {
+  // Unquoted only when the generator itself put a `${p1}` in there: a quoted
+  // heredoc keeps a `$1` or a `$$ … $$` in the reader's own SQL intact.
+  const interpolates = /\$\{p\d+\}/.test(s.sql);
+  return [`${s.slug}_sql() {`, `${SH}cat <<${interpolates ? 'SQL' : "'SQL'"}`, ...s.sql.split('\n'), 'SQL', '}'];
+}
+
+function shellLoop(pad: string): BodyShape {
+  return {
+    base: pad,
+    step: SH,
+    // `read` on an empty result would still run the body once, which is the
+    // one thing a row loop must not do.
+    loopOpen: `while IFS=$'\\t' read -r row; do\n${pad}${SH}[ -n "$row" ] || continue`,
+    loopClose: 'done <<<"$rows"',
+  };
+}
+
+function shellStep(driver: Driver): (s: ProgramCodeStep, ctx: StepContext) => string[] {
+  const cli = cliFor(driver);
+  return (s, ctx) => {
+    const lines = [`# ${stepCaption(s)}`];
+    const vars = cli.binds ? s.params.map((n, i) => ` -v p${i + 1}="$${n}"`).join('') : '';
+    const run = `${driver.connect}${vars} ${cli.statement(`$(${s.slug}_sql)`)}`;
+    if (s.stub) lines.push(`${s.slug}${ctx.inLoop ? ' "$row"' : ''}`);
+    else if (s.op === 'load') lines.push(...loadCode(s, 'shell'));
+    else if (s.op === 'read') lines.push(`${ctx.first ? 'rows' : `${s.slug}_rows`}=$(${run})`);
+    else {
+      if (!s.params.length) lines.push('# bind what this statement needs');
+      // Without bound parameters the value has to be a shell variable the
+      // heredoc can see, so it is set on its own line first.
+      else if (!cli.binds) lines.push(...s.params.map((n, i) => `p${i + 1}="$${n}"`));
+      lines.push(run);
+    }
+    return lines;
+  };
+}
+
+/**
+ * The shell has functions and nothing else — no classes, no nesting, no
+ * modules — so a map is flattened into one function per node named for the
+ * path that reached it, exactly as C is, and the comment above each says where
+ * on the canvas it came from.
+ */
+function shellFunctions(d: Diagram, root: CodeUnit, driver: Driver): string[][] {
+  const out: string[][] = [];
+  for (const u of flatUnits(root)) {
+    if (u === root || !u.body.length) continue;
+    const block = [...commentBlock(unitDoc(d, u, true, true), '#').split('\n'), `${u.path.map(snake).join('_')}() {`];
+    block.push(buildBody(u.body, shellStep(driver), shellLoop(SH)));
+    block.push('}');
+    out.push(block);
+  }
+  return out;
+}
+
+function emitShell(d: Diagram, root: CodeUnit, driver: Driver): string {
+  const cli = cliFor(driver);
+  const out: string[] = ['#!/usr/bin/env bash'];
+  const header = [...headerLines(d, root, driver), ''];
+  header.push(
+    cli.binds
+      ? "Values are passed with -v and read back as :'p1', which psql quotes for you."
+      : `${driver.label} has no bound parameters, so a value reaches a statement by the shell pasting it in. Check anything that came from outside before it gets that far.`,
+  );
+  out.push(commentBlock(header, '#'));
+  out.push('#');
+  out.push(`# ${driver.install}`);
+  gap(out, 1);
+  out.push('set -euo pipefail');
+  out.push(...importLines(d, root, 'shell'));
+  gap(out, 1);
+  out.push(`DSN="\${DATABASE_URL:-${driver.dsn}}"`);
+
+  for (const s of fileSql(root)) {
+    gap(out, 1);
+    out.push(`# ${stepCaption(s)}`);
+    out.push(...shellSql(s));
+  }
+
+  for (const { unit, step } of fileStubs(root)) {
+    gap(out, 1);
+    out.push(`# ${stepCaption(step)}`);
+    out.push(`${step.slug}() {`);
+    if (inRowLoop(unit, step)) out.push(`${SH}local row="\${1:-}"`);
+    out.push(`${SH}echo "${step.slug}: the work this program exists to do" >&2`);
+    out.push(`${SH}return 1`);
+    out.push('}');
+  }
+
+  for (const block of shellFunctions(d, root, driver)) {
+    gap(out, 1);
+    out.push(...block);
+  }
+
+  const called = flatUnits(root).filter((u) => u !== root && u.body.length);
+  gap(out, 1);
+  out.push('main() {');
+  if (root.body.length) out.push(buildBody(root.body, shellStep(driver), shellLoop(SH)));
+  for (const u of called) {
+    gap(out, 1);
+    out.push(`${SH}# ${u.path.join('/')}`);
+    out.push(`${SH}${u.path.map(snake).join('_')}`);
+  }
+  // `set -e` and a function that falls through to nothing do not mix; a colon
+  // is the shell's way of saying "this body is deliberately empty".
+  if (!root.body.length && !called.length) out.push(`${SH}:`);
+  out.push('}');
+  gap(out, 1);
+  out.push('main "$@"');
+  return `${out.join('\n')}\n`;
+}
+
+/* ------------------------------------------------------------------ */
+/* Data files                                                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * The starter for a data file, which is the one node whose starter is not a
+ * program.
+ *
+ * There is nothing to generate from steps — a data file has none — so what it
+ * can honestly give is the file with what the diagram knows written above it:
+ * what it is for, and who reads it. JSON gets none of that and gets the empty
+ * document instead, because a comment in a JSON file is a JSON file that will
+ * not parse, and inventing keys nobody named would be worse than an empty one.
+ */
+function emitData(d: Diagram, root: CodeUnit): string {
+  const p = root.node;
+  if (p.language === 'json') return '{}\n';
+  const readers = [...new Set(d.programs.filter((x) => x.steps.some((s) => s.op === 'load' && s.codeId === p.id)).map((x) => x.name))];
+  const lines = [`${p.name} — a data file in the "${d.name}" diagram.`, '', describeProgram(d, p)];
+  if (p.comment?.trim()) lines.push('', p.comment.trim());
+  if (p.entrypoint?.trim()) lines.push('', `Belongs in ${p.entrypoint.trim()}.`);
+  lines.push('', readers.length ? 'Which keys are in here is the loading code\'s to say; the diagram only says the file is read.' : 'Nothing in the diagram loads it yet.');
+  return `${commentBlock(lines, programLanguageMeta(p.language).comment)}\n`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1727,6 +2186,8 @@ function emitOutline(d: Diagram, root: CodeUnit): string {
 
 /** The starter for a code node, in its own language, against the diagram's engine. */
 export function generateProgramCode(d: Diagram, p: Program): string {
+  // A data file is not a program and has no driver: what it gets is the file.
+  if (isDataNode(p)) return emitData(d, resolveUnits(d, p));
   const driver = driverFor(p.language, d.dialect);
   const root = resolveUnits(d, p, driver);
   if (!driver) return emitOutline(d, root);
@@ -1747,6 +2208,10 @@ export function generateProgramCode(d: Diagram, p: Program): string {
       return emitC(d, root, driver, false);
     case 'cpp':
       return emitC(d, root, driver, true);
+    case 'perl':
+      return emitPerl(d, root, driver);
+    case 'shell':
+      return emitShell(d, root, driver);
     default:
       return emitOutline(d, root);
   }
@@ -1760,7 +2225,8 @@ export function programCodeFilename(p: Program): string {
 
 /** Whether a node's starter has anything in it: its own steps, or something it holds. */
 export function hasStarter(d: Diagram, p: Program): boolean {
-  return p.steps.length > 0 || d.programs.some((x) => x.parentId === p.id);
+  // A data file always has one, and it is the whole of what the node is.
+  return isDataNode(p) || p.steps.length > 0 || d.programs.some((x) => x.parentId === p.id);
 }
 
 export { hasDriver };

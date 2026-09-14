@@ -123,6 +123,7 @@ export const CHECK_VERBS = {
   calls: 'two code paths as "a -> b": a call step on a naming b',
   imports: 'two code paths as "a -> b": an import step on a naming b',
   extends: 'two code paths as "a -> b": an extends step on a naming b',
+  loads: 'two code paths as "a -> b": a load step on a naming b, where b is a data file',
   'reads table': 'a code path and a table as "a -> t": a read step on a naming t',
   'writes table': 'a code path and a table as "a -> t": a write step on a naming t',
 };
@@ -198,6 +199,7 @@ export const GOAL_VERBS = {
   calls: 'from -> to, as code paths',
   imports: 'from -> to, as code paths',
   extends: 'from -> to, as code paths',
+  loads: 'from -> to, as code paths; the "to" is a data file',
   'reads table': 'code path -> table name',
   'writes table': 'code path -> table name',
   'code collapsed': 'a code path : on or off',
@@ -334,7 +336,7 @@ export function validateStepMeta(meta, { anchors }) {
     const takesArg = GOAL_VERBS[verb] !== null;
     if (takesArg && !arg) errors.push(`goal "${raw}" needs an argument after "|" (${GOAL_VERBS[verb]})`);
     if (!takesArg && arg) errors.push(`goal "${raw}" takes no argument`);
-    if (['fk', 'flow', 'embed', 'dependency', 'traced', 'trace', 'calls', 'imports', 'extends', 'reads table', 'writes table'].includes(verb) && arg && !arg.includes('->')) {
+    if (['fk', 'flow', 'embed', 'dependency', 'traced', 'trace', 'calls', 'imports', 'extends', 'loads', 'reads table', 'writes table'].includes(verb) && arg && !arg.includes('->')) {
       errors.push(`goal "${raw}" must name both ends as "a -> b"`);
     }
     if (['ondelete', 'label', 'reverse label', 'query', 'select connection'].includes(verb) && arg && !arg.includes('->')) {
@@ -578,7 +580,7 @@ export function validateWalkthrough(file, opts = {}) {
       const takesArg = CHECK_VERBS[verb] !== null;
       if (takesArg && !arg) errors.push(`check "${raw}" needs an argument after "|" (${CHECK_VERBS[verb]})`);
       if (!takesArg && arg) errors.push(`check "${raw}" takes no argument`);
-      if (['trace', 'calls', 'imports', 'extends', 'reads table', 'writes table'].includes(verb) && arg && !arg.includes('->')) errors.push(`check "${raw}" must read "a -> b"`);
+      if (['trace', 'calls', 'imports', 'extends', 'loads', 'reads table', 'writes table'].includes(verb) && arg && !arg.includes('->')) errors.push(`check "${raw}" must read "a -> b"`);
       if ((verb === 'indexes' || verb === 'derivations' || verb === 'lint errors') && arg && !/^\d+$/.test(arg)) errors.push(`check "${raw}" must give a whole number`);
       if (verb === 'kinds' && arg) {
         for (const part of splitList(arg)) {

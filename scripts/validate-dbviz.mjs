@@ -19,19 +19,22 @@ const COLORS = ['blue', 'teal', 'green', 'yellow', 'orange', 'red', 'pink', 'pur
 const ACTIONS = ['NO ACTION', 'RESTRICT', 'CASCADE', 'SET NULL', 'SET DEFAULT'];
 const DIALECTS = ['postgresql', 'mariadb', 'sqlite', 'duckdb'];
 const KINDS = ['fk', 'flow', 'embed', 'dependency'];
-const LANGUAGES = ['python', 'rust', 'go', 'cpp', 'c', 'java', 'javascript', 'typescript', 'csharp', 'ruby', 'shell', 'other'];
+const LANGUAGES = ['python', 'rust', 'go', 'cpp', 'c', 'java', 'javascript', 'typescript', 'perl', 'shell', 'yaml', 'json', 'other'];
+/** The languages nothing runs in: a node written in one is a data file. */
+const DATA_LANGUAGES = ['yaml', 'json'];
 const PROGRAM_ROLES = ['service', 'job', 'script', 'etl'];
-const STEP_OPS = ['read', 'write', 'compute', 'call', 'import', 'extends'];
+const STEP_OPS = ['read', 'write', 'compute', 'call', 'import', 'extends', 'load'];
 /** Steps that name a table (and may carry sql) rather than another code node. */
 const TABLE_STEP_OPS = ['read', 'write'];
 /** Steps that name another code node through "codeId". */
-const CODE_STEP_OPS = ['call', 'import', 'extends'];
+const CODE_STEP_OPS = ['call', 'import', 'extends', 'load'];
 /** Code node kind -> the kinds it may sit inside. A parent of the wrong kind is dropped on load. */
 const CODE_KINDS = {
   program: [],
   module: ['program', 'module'],
   class: ['program', 'module', 'class'],
   function: ['program', 'module', 'class'],
+  data: ['program', 'module'],
 };
 const AGGREGATES = ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX'];
 const WINDOW_FUNCTIONS = ['DIFF', 'LAG', 'LEAD', 'RUNNING_SUM', 'RUNNING_AVG', 'ROW_NUMBER', 'RANK'];
@@ -393,6 +396,18 @@ function validate(doc) {
     if (prg.language !== undefined && !LANGUAGES.includes(prg.language)) {
       warn(`${pw}: language "${prg.language}" is not one of ${LANGUAGES.join(', ')}; it loads as "other" and gets no generated starter.`);
     }
+    // Kind and language settle each other on load: either side saying "data
+    // file" makes it one, so a file that says only one of them is loading as
+    // something other than what it reads like.
+    if (kind === 'data' && prg.language !== undefined && !DATA_LANGUAGES.includes(prg.language)) {
+      warn(`${pw} is a data file written in "${prg.language}"; nothing runs in a data file, so it loads as ${DATA_LANGUAGES[0]}.`);
+    }
+    if (kind !== 'data' && DATA_LANGUAGES.includes(prg.language)) {
+      warn(`${pw} is a ${noun} written in ${prg.language}; nothing runs in ${prg.language}, so it loads as a data file and its steps are dropped.`);
+    }
+    if (kind === 'data' && Array.isArray(prg.steps) && prg.steps.length) {
+      warn(`${pw} is a data file with ${prg.steps.length} step(s); they are dropped on load, because a data file does nothing in order.`);
+    }
     if (prg.role !== undefined && !PROGRAM_ROLES.includes(prg.role)) warn(`${pw}: role "${prg.role}" is not one of ${PROGRAM_ROLES.join(', ')}; it is dropped on load.`);
     if (prg.role !== undefined && kind !== 'program') warn(`${pw} is a ${kind} with a role; only programs have roles, so it is dropped on load.`);
     if (prg.color !== undefined && !COLORS.includes(prg.color)) warn(`${pw}: colour "${prg.color}" is not in the palette.`);
@@ -430,7 +445,8 @@ function validate(doc) {
 
     const steps = Array.isArray(prg.steps) ? prg.steps : [];
     const container = kind !== 'function' && programs.some((other) => other.parentId === prg.id);
-    if (!steps.length && !container) warn(`${pw} has no steps, so the diagram does not say what it touches or calls.`);
+    // A data file having no steps is what a data file is, not a gap in the map.
+    if (!steps.length && !container && kind !== 'data') warn(`${pw} has no steps, so the diagram does not say what it touches or calls.`);
     for (const [si, s] of steps.entries()) {
       const sw = `${pw} step ${si + 1}`;
       if (!s || typeof s !== 'object') {
@@ -448,7 +464,7 @@ function validate(doc) {
         if (s.tableId) warn(`${sw} is a ${s.op} step with a tableId; it is dropped on load, because a ${s.op} step touches no table.`);
         if (s.sql) warn(`${sw} is a ${s.op} step with sql; it is dropped on load. Put the statement on a read or write step.`);
       }
-      if (!CODE_STEP_OPS.includes(s.op) && s.codeId) warn(`${sw} is a ${s.op} step with a codeId; it is dropped on load, because only call, import and extends name code.`);
+      if (!CODE_STEP_OPS.includes(s.op) && s.codeId) warn(`${sw} is a ${s.op} step with a codeId; it is dropped on load, because only call, import, extends and load name another node.`);
       if (s.op === 'compute') continue;
       if (CODE_STEP_OPS.includes(s.op)) {
         if (typeof s.codeId !== 'string' || !s.codeId) {
@@ -462,6 +478,10 @@ function validate(doc) {
           err(`${sw} ${s.op}s the node it belongs to, which cannot be what was meant.`);
         } else if (s.op === 'extends' && codeKindOf.get(s.codeId) !== 'class') {
           warn(`${sw} extends a ${codeKindOf.get(s.codeId)}; "extends" is meant for a class inheriting from a class.`);
+        } else if (s.op === 'load' && codeKindOf.get(s.codeId) !== 'data') {
+          err(`${sw} loads a ${codeKindOf.get(s.codeId)}; only a data file holds values to load.`);
+        } else if (s.op !== 'load' && codeKindOf.get(s.codeId) === 'data') {
+          err(`${sw} ${s.op}s a data file; nothing runs in one, so it can only be loaded.`);
         }
         continue;
       }

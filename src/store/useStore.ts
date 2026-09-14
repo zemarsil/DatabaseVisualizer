@@ -4,6 +4,9 @@ import {
   canContain,
   codeKindMeta,
   codeKindOf,
+  kindForLanguage,
+  languageForKind,
+  settleCodeNode,
   normalizeVerb,
   programLanguageMeta,
   programStepOpMeta,
@@ -25,7 +28,7 @@ import {
   type Workspace,
 } from '@shared/types';
 import { layoutDiagram, type LayoutDirection } from '@/lib/layout';
-import { canBeParentOf, codeBounds, codeChildren, codeDescendantIds, codeSubtreeIds, codeVisibility, defaultCodeOp, nextCodePosition, wouldNestInItself, type CodeLinkOp } from '@/lib/codemap';
+import { canBeParentOf, canLinkCode, codeBounds, codeChildren, codeDescendantIds, codeSubtreeIds, codeVisibility, defaultCodeOp, nextCodePosition, wouldNestInItself, type CodeLinkOp } from '@/lib/codemap';
 import {
   clonePrograms,
   cloneTables,
@@ -1246,19 +1249,25 @@ export const useStore = create<Store>()(
         const parentId = parent && canContain(codeKindOf(parent), kind) ? parent.id : undefined;
         // A member speaks its container's language; a node with no container
         // speaks whatever most of the map already does.
-        const language = opts.language ?? parent?.language ?? prevailingLanguage(d);
+        // Kind and language settle each other: a data file is written in YAML
+        // or JSON whatever its container is, and a node written in one of
+        // those is a data file whatever it was asked to be.
+        const settled = settleCodeNode(kind, opts.language ?? parent?.language ?? prevailingLanguage(d));
+        const language = settled.language;
         const fallbackName =
-          kind === 'program'
+          settled.kind === 'program'
             ? 'new_program'
-            : kind === 'module'
+            : settled.kind === 'module'
               ? `new_module.${programLanguageMeta(language).extension}`
-              : kind === 'class'
+              : settled.kind === 'class'
                 ? 'NewClass'
-                : 'new_function';
+                : settled.kind === 'data'
+                  ? `new_data.${programLanguageMeta(language).extension}`
+                  : 'new_function';
         const name = uniqueProgramName(d, opts.name ?? fallbackName, parentId);
         const prg = createProgram({
           name,
-          ...(kind !== 'program' ? { kind } : {}),
+          ...(settled.kind !== 'program' ? { kind: settled.kind } : {}),
           ...(parentId ? { parentId } : {}),
           position: opts.position ?? nextCodePosition(d, parentId, nextProgramPosition(d), get().placementSizes()),
           language,
@@ -1284,6 +1293,20 @@ export const useStore = create<Store>()(
               if (!parentId) delete p.parentId;
               else if (!wouldNestInItself(d as Diagram, id, parentId) && d.programs.some((x) => x.id === parentId)) p.parentId = parentId;
             }
+            // Whichever of the two the edit named, the other follows it: a node
+            // switched to YAML becomes a data file, and one switched away from
+            // a data file stops being written in YAML. Doing it here rather
+            // than in the editor means a paste and a fix cannot get round it.
+            if (rest.kind !== undefined) p.language = languageForKind(codeKindOf(p), p.language);
+            else if (rest.language !== undefined) {
+              const settled = kindForLanguage(p.language, codeKindOf(p));
+              if (settled === 'program') delete p.kind;
+              else p.kind = settled;
+            }
+            // Nothing runs in a data file, so it has nothing it does in order.
+            // The steps go rather than being kept where they can never mean
+            // anything; Ctrl+Z is what brings them back.
+            if (codeKindOf(p) === 'data') p.steps = [];
             if (codeKindOf(p) !== 'program') delete p.role;
           },
           { coalesce: textPatchKey(`program:${id}`, patch) },
@@ -1388,6 +1411,9 @@ export const useStore = create<Store>()(
         const from = d.programs.find((p) => p.id === fromId);
         const to = d.programs.find((p) => p.id === toId);
         if (!from || !to || from.id === to.id) return null;
+        // An arrow out of a data file, or any arrow into one that is not a
+        // load, is refused rather than drawn as a step that cannot be true.
+        if (!canLinkCode(from, to, op)) return null;
         const chosen = op ?? defaultCodeOp(from, to);
         if (from.steps.some((s) => s.op === chosen && s.codeId === to.id)) return null;
         const step = createProgramStep({ op: chosen, codeId: to.id });

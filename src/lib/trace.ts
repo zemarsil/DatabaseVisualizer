@@ -1,4 +1,4 @@
-import { describeRelationship, kindMeta, type Diagram, type Program, type Relationship, type Table } from '@shared/types';
+import { describeRelationship, kindMeta, stepVerb, type Diagram, type Program, type Relationship, type Table } from '@shared/types';
 import { codeLinks, type CodeLink } from './codemap';
 import { externalTableIds } from './groups';
 import { programLinks, type ProgramLink } from './programs';
@@ -181,7 +181,7 @@ export function describeHop(d: Diagram, hop: PathHop): string {
     return l.op === 'read' ? `${code} reads ${table} (step ${l.step})` : `${code} writes ${table} (step ${l.step})`;
   }
   const l = link.link;
-  const verb = l.op === 'call' ? 'calls' : l.op === 'import' ? 'imports' : 'extends';
+  const verb = stepVerb(l.op);
   return `${codeName(d, l.fromId)} ${verb} ${codeName(d, l.toId)} (step ${l.step})`;
 }
 

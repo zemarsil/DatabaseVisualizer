@@ -88,10 +88,12 @@ function CodeEdgeInner({ id, source, target, data, selected }: EdgeProps<CodeEdg
   const color = on ? 'var(--accent)' : 'var(--program)';
   const width = on ? 2.5 : 1.5;
   const opacity = data.dimmed ? 0.16 : 1;
-  const dash = data.op === 'import' ? '2 5' : data.op === 'extends' ? undefined : '6 4';
+  // A load is the sparsest dash of the four: what it reaches is not code, and
+  // the arrow should not read like one program reaching another.
+  const dash = data.op === 'import' ? '2 5' : data.op === 'load' ? '1 4' : data.op === 'extends' ? undefined : '6 4';
   const dir = g.tx < g.sx ? 1 : -1;
-  // A call ends in an arrowhead, an import in an open one, an extends in the
-  // hollow triangle UML draws at the base class.
+  // A call ends in an arrowhead, an import and a load in an open one, an
+  // extends in the hollow triangle UML draws at the base class.
   const head =
     data.op === 'extends'
       ? `M ${g.tx} ${g.ty} L ${g.tx + dir * STUB} ${g.ty - 6} L ${g.tx + dir * STUB} ${g.ty + 6} Z`

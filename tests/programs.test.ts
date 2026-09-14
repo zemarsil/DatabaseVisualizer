@@ -393,11 +393,11 @@ describe('the generated starter', () => {
 
   it('falls back to the plan in comments when no driver template exists', () => {
     const { d, program } = jobRunner();
-    expect(hasDriver('csharp', 'postgresql')).toBe(false);
-    const code = generateProgramCode(d, { ...program, language: 'csharp' });
-    expect(code).toContain('No driver template exists for C#');
+    expect(hasDriver('other', 'postgresql')).toBe(false);
+    const code = generateProgramCode(d, { ...program, language: 'other' });
+    expect(code).toContain('No driver template exists for Other');
     // Every line is a comment: it is a plan, and never pretends to compile.
-    expect(code.split('\n').filter((l) => l.trim() && !l.trim().startsWith('//'))).toEqual([]);
+    expect(code.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'))).toEqual([]);
   });
 
   it('gives every step a distinct identifier even when two touch the same table', () => {

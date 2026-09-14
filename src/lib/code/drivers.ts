@@ -29,7 +29,9 @@ export type DriverShape =
   | 'jdbc'
   | 'pg' | 'mariadb-node' | 'node-sqlite' | 'duckdb-node'
   | 'libpq' | 'mysql-c' | 'sqlite3-c' | 'duckdb-c'
-  | 'libpqxx' | 'mariadb-cpp' | 'sqlitecpp' | 'duckdb-cpp';
+  | 'libpqxx' | 'mariadb-cpp' | 'sqlitecpp' | 'duckdb-cpp'
+  | 'dbi'
+  | 'psql-cli' | 'mysql-cli' | 'sqlite-cli' | 'duckdb-cli';
 
 export interface Driver {
   /** The package as a reader would search for it. */
@@ -38,7 +40,11 @@ export interface Driver {
   install: string;
   /** Import, use, include or require lines, already written in the language. */
   imports: string[];
-  /** Expression or statement that produces a live connection. */
+  /**
+   * Expression or statement that produces a live connection. A shell script has
+   * no such thing, so there it is the command that carries one statement — the
+   * nearest thing a CLI has to a connection, and what the emitter pipes SQL to.
+   */
   connect: string;
   /** Connection string the generated file starts from. */
   dsn: string;
@@ -335,6 +341,99 @@ const NODE: Table = {
   },
 };
 
+/**
+ * Perl reaches every one of these the same way, through DBI.
+ *
+ * That is not a simplification: DBI *is* the interface, and the DBD under it
+ * is a driver name in the DSN and a package to install. So the four entries
+ * differ in exactly those two things and in nothing else, which is the honest
+ * shape of the language rather than a shortcut taken with it.
+ *
+ * DuckDB is missing on purpose. There is no DBD for it anyone would tell you
+ * to install, and a pairing that is absent here falls back to the commented
+ * outline, which is better than naming a package that may not be there.
+ */
+const PERL: Table = {
+  postgresql: {
+    label: 'DBD::Pg (through DBI)',
+    install: 'cpanm DBI DBD::Pg',
+    imports: ['use strict;', 'use warnings;', 'use DBI;'],
+    connect: "DBI->connect($DSN, '', '', { RaiseError => 1, AutoCommit => 0 })",
+    dsn: 'dbi:Pg:dbname=postgres;host=localhost;port=5432',
+    placeholder: question,
+    shape: 'dbi',
+  },
+  mariadb: {
+    label: 'DBD::MariaDB (through DBI)',
+    install: 'cpanm DBI DBD::MariaDB',
+    imports: ['use strict;', 'use warnings;', 'use DBI;'],
+    connect: "DBI->connect($DSN, 'root', '', { RaiseError => 1, AutoCommit => 0 })",
+    dsn: 'dbi:MariaDB:database=mysql;host=localhost;port=3306',
+    placeholder: question,
+    shape: 'dbi',
+  },
+  sqlite: {
+    label: 'DBD::SQLite (through DBI)',
+    install: 'cpanm DBI DBD::SQLite',
+    imports: ['use strict;', 'use warnings;', 'use DBI;'],
+    connect: "DBI->connect($DSN, '', '', { RaiseError => 1, AutoCommit => 0 })",
+    dsn: 'dbi:SQLite:dbname=database.db',
+    placeholder: question,
+    shape: 'dbi',
+  },
+};
+
+/**
+ * The shell talks to a database through that database's own command.
+ *
+ * Which makes one thing worth saying out loud, because the generated script
+ * cannot hide it: only psql has parameters. `-v name=value` with `:'name'` in
+ * the statement is interpolated *and quoted* by psql itself, so it is a real
+ * bound parameter. The other three CLIs have nothing of the kind, so a value
+ * reaches them by the shell pasting it into the text of the statement, which
+ * is string concatenation with everything that implies. The starter writes it
+ * the only way it can be written and says so in the header, rather than
+ * spelling a placeholder that would look safe and not be.
+ */
+const SHELL: Table = {
+  postgresql: {
+    label: 'psql',
+    install: 'apt install postgresql-client / brew install libpq',
+    imports: [],
+    connect: 'psql "$DSN" --no-align --tuples-only --field-separator=$\'\\t\' -v ON_ERROR_STOP=1',
+    dsn: 'postgresql://postgres@localhost:5432/postgres',
+    placeholder: (n) => `:'p${n}'`,
+    shape: 'psql-cli',
+  },
+  mariadb: {
+    label: 'mariadb (the client)',
+    install: 'apt install mariadb-client / brew install mariadb',
+    imports: [],
+    connect: 'mariadb --batch --skip-column-names "$DSN"',
+    dsn: 'mysql',
+    placeholder: (n) => `'\${p${n}}'`,
+    shape: 'mysql-cli',
+  },
+  sqlite: {
+    label: 'sqlite3',
+    install: 'apt install sqlite3 / brew install sqlite',
+    imports: [],
+    connect: 'sqlite3 -batch -noheader -separator $\'\\t\' "$DSN"',
+    dsn: './database.db',
+    placeholder: (n) => `'\${p${n}}'`,
+    shape: 'sqlite-cli',
+  },
+  duckdb: {
+    label: 'duckdb (the CLI)',
+    install: 'download the duckdb binary from duckdb.org',
+    connect: 'duckdb -noheader -list -separator $\'\\t\' "$DSN"',
+    imports: [],
+    dsn: './database.duckdb',
+    placeholder: (n) => `'\${p${n}}'`,
+    shape: 'duckdb-cli',
+  },
+};
+
 const DRIVERS: Partial<Record<ProgramLanguage, Table>> = {
   python: PYTHON,
   rust: RUST,
@@ -344,6 +443,8 @@ const DRIVERS: Partial<Record<ProgramLanguage, Table>> = {
   java: JAVA,
   javascript: NODE,
   typescript: NODE,
+  perl: PERL,
+  shell: SHELL,
 };
 
 export function driverFor(language: ProgramLanguage, dialect: Dialect): Driver | undefined {

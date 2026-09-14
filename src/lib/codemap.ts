@@ -10,8 +10,10 @@
  *    inside it, so every descendant is represented by its outermost collapsed
  *    ancestor; the canvas, the layout and the exports all ask this module
  *    rather than each working it out.
- *  - The arrows. A call, an import or an extends step names another code node
- *    the way a read names a table, and the edge is derived from the step. When
+ *  - The arrows. A call, an import, an extends or a load step names another
+ *    code node the way a read names a table, and the edge is derived from the
+ *    step — a load being the one that points at a data file rather than at
+ *    code, since that is the only arrow a data file may be on the end of. When
  *    the two ends are hidden inside collapsed containers the edge is drawn
  *    between the containers instead, with the hidden steps gathered onto it,
  *    so a folded map still shows what talks to what.
@@ -24,7 +26,7 @@
  * same reason: a member list and a member pointer would have to be kept in
  * step by every action that moves a node.
  */
-import { canContain, codeKindMeta, codeKindOf, isCodeStepOp, type CodeKind, type Diagram, type Program, type ProgramStep } from '@shared/types';
+import { canContain, canStepName, codeKindMeta, codeKindOf, isCodeStepOp, type CodeKind, type Diagram, type Program, type ProgramStep } from '@shared/types';
 import { estimateProgramSize, PROGRAM_WIDTH, programLinkId, programLinks, type ProgramLink } from './programs';
 import type { Rect, SizeMap } from './groups';
 
@@ -172,7 +174,7 @@ export function codeVisibility(d: Diagram): CodeVisibility {
 /* The arrows between code nodes                                       */
 /* ------------------------------------------------------------------ */
 
-export type CodeLinkOp = 'call' | 'import' | 'extends';
+export type CodeLinkOp = 'call' | 'import' | 'extends' | 'load';
 
 /** One arrow from a code node to another, derived from one step of the first. */
 export interface CodeLink {
@@ -441,9 +443,25 @@ export function codeNoun(p: Pick<Program, 'kind'>): string {
 export function defaultCodeOp(from: Pick<Program, 'kind'>, to: Pick<Program, 'kind'>): CodeLinkOp {
   const a = codeKindOf(from);
   const b = codeKindOf(to);
+  // Only one thing can be meant by an arrow into a data file, and nothing can
+  // be meant by one out of it — `canLinkCode` refuses that before this is asked.
+  if (b === 'data') return 'load';
   if (a === 'class' && b === 'class') return 'extends';
   if (a === 'module' || a === 'program') return b === 'function' || b === 'class' ? 'import' : 'import';
   return 'call';
+}
+
+/**
+ * Whether an arrow may be drawn from one code node to another at all.
+ *
+ * The data files are the whole of this rule: nothing runs in one, so it has no
+ * steps to draw an arrow from, and the only arrow into one is a load. Every
+ * other pairing is allowed, because a map of real code holds stranger shapes
+ * than a rule here would let through.
+ */
+export function canLinkCode(from: Pick<Program, 'kind'>, to: Pick<Program, 'kind'>, op?: CodeLinkOp): boolean {
+  if (codeKindOf(from) === 'data') return false;
+  return canStepName(op ?? defaultCodeOp(from, to), codeKindOf(to));
 }
 
 /** The kinds a node of `kind` may be dropped into, for pickers. */
