@@ -13,10 +13,11 @@ agent, a person with a text editor, a scanner over a repository — and it is th
 companion to [`ADVISOR_OUTPUT_FORMAT.md`](ADVISOR_OUTPUT_FORMAT.md), which
 documents everything else in the file. There is a scanner in the box:
 [`scripts/scan_code.py`](#scanning-a-codebase), which reads Python, Rust, Go, C,
-C++, Java, JavaScript and TypeScript. The walkthrough that builds a map by hand
+C++, Java, JavaScript, TypeScript, Perl and the shell, and walks the YAML and
+JSON files they read. The walkthrough that builds a map by hand
 is [`walkthroughs/16-map-the-code-that-talks-to-it.md`](walkthroughs/16-map-the-code-that-talks-to-it.md).
 
-## One node family, four kinds
+## One node family, five kinds
 
 There is no separate "module" object. Everything in the code map is the same
 node the diagram already had for a program — *a node whose ordered steps are
@@ -28,10 +29,19 @@ other.
 
 | `kind` | Is | May sit inside | May hold |
 | --- | --- | --- | --- |
-| `program` (the default, left unwritten) | something that runs: a service, a job, a script | nothing — a program is a root | modules, classes, functions |
-| `module` | a file or a package | a program, or another module | modules, classes, functions |
+| `program` (the default, left unwritten) | something that runs: a service, a job, a script | nothing — a program is a root | modules, classes, functions, data files |
+| `module` | a file or a package | a program, or another module | modules, classes, functions, data files |
 | `class` | a class, a struct, a type with methods | a program, a module, or another class | classes, functions |
 | `function` | a function or a method | a program, a module or a class | nothing — a function is a leaf |
+| `data` | a YAML or JSON file other code reads | a program or a module | nothing — and it does nothing either |
+
+The last one is the only node that is not code. Nothing runs in a YAML or JSON
+file, so a data file has **no steps at all**, and the only arrow it may be on
+the end of is a [`load`](#steps-the-ordered-list-of-what-a-node-does). Its
+`kind` and its `language` are two halves of one fact: a node written in `yaml`
+or `json` loads as a data file whatever kind it claims, a data file written in
+anything else loads as `yaml`, and steps written on one are dropped on load
+rather than kept where they could never happen.
 
 A `.dbviz.json` written before code maps existed has only programs and no
 `kind` or `parentId` anywhere, and it loads unchanged. A file written *by* this
@@ -69,10 +79,10 @@ already there.
 | --- | --- | --- |
 | `id` | yes | Unique across the whole file, like every other id. Readable ones — `prg_api`, `mod_orders`, `cls_order_service`, `fn_place_order` — make the cross-references reviewable. |
 | `name` | yes | What the node is called. `orders.py`, `OrderService`, `place_order`. Names only have to be unique among **siblings** — two classes may each have a `save` — and **Problems** says so when they are not. |
-| `kind` | no | `module`, `class` or `function`. Omit it for a program; a program is written without the field so old files and new ones agree byte for byte. |
+| `kind` | no | `module`, `class`, `function` or `data`. Omit it for a program; a program is written without the field so old files and new ones agree byte for byte. |
 | `parentId` | no | The id of the node this one sits inside. Omit it for a top-level node. |
 | `collapsed` | no | `true` folds a container to a single node on the canvas. See [Collapsing](#collapsing-what-a-folded-container-stands-in-for). Meaningless on a function. |
-| `language` | no | Same list as a program: `python`, `rust`, `go`, `cpp`, `c`, `java`, `javascript`, `typescript`, `csharp`, `ruby`, `shell`, `other`. Defaults to `other`. A member added in the app inherits its container's language. |
+| `language` | no | Same list as a program: `python`, `rust`, `go`, `cpp`, `c`, `java`, `javascript`, `typescript`, `perl`, `shell`, `yaml`, `json`, `other`. Defaults to `other`. A member added in the app inherits its container's language. `yaml` and `json` are the two nothing runs in, and a node written in one is a data file. |
 | `role` | no | `service`, `job`, `script` or `etl`. **Programs only**; on any other kind it is dropped on load, because a file is not scheduled. |
 | `entrypoint` | no | Free text with a per-kind meaning: where a program starts, a module's path, a class's declaration, a function's signature. The inspector labels the box accordingly. A function's, when it reads as a signature in the node's own language, is the signature the generated starter writes. |
 | `comment` | no | What it is for. Travels into the SQL annotation block, the Markdown export and the DBML note. |
@@ -93,9 +103,17 @@ arrows.
 | `call` | hands control or data to another function, class or program | `codeId`, `code`, `note` | a numbered dashed arrow to that node |
 | `import` | depends on another module, or on a name defined in one | `codeId`, `code`, `note` | a dotted arrow with an open head to that node |
 | `extends` | inherits from another class | `codeId`, `code`, `note` | a solid arrow with a hollow head to that node |
+| `load` | reads values out of a data file: settings, fixtures, a lookup table | `codeId`, `code`, `note` | a finely dotted arrow to that data file |
 
-Only `read` and `write` may name a table; only `call`, `import` and `extends`
-may name code. The loader strips a `tableId` or `sql` from any other kind of
+A `load` is separate from an `import` because it happens at run time and what
+it names runs nothing, and separate from a `read` because a file is not a
+table. It is also the only op that may name a `data` node, and `call`, `import`
+and `extends` are the only ops that may not: **Problems** reports either
+mistake with a one-click fix that changes the op rather than throwing the step
+away.
+
+Only `read` and `write` may name a table; only `call`, `import`, `extends` and
+`load` may name code. The loader strips a `tableId` or `sql` from any other kind of
 step and a `codeId` from a step that is not a code step, rather than drawing
 something the step cannot mean. `columnIds` is always present and always empty
 on every step that is not a `read` or a `write`.
@@ -269,9 +287,11 @@ that is missing does. Nothing is silently dropped.
 | `code-cannot-contain` | warning | a function inside a function, a module inside a class: the parent pointer names a kind that cannot hold this one. Fix: move it up a level. |
 | `code-empty-container` | info | a module or class with nothing in it and no steps of its own; it draws as an empty region. |
 | `code-uncalled-function` | info | nothing in the map calls this function. Either it is an entry point — a route, `main`, a handler the framework reaches — or the call has not been drawn yet. Only raised once the map has at least one call, so a plain program never sees it. |
-| `code-step-without-target` | warning | a `call`, `import` or `extends` that names nothing, so it draws no arrow. |
+| `code-step-without-target` | warning | a `call`, `import`, `extends` or `load` that names nothing, so it draws no arrow. |
 | `code-step-missing-target` | error | it names a node that is no longer in the diagram. The step and its code stay; the fix removes the step, and is never applied in bulk. |
 | `code-step-names-itself` | warning | a module that imports itself, a class that extends itself. A function calling itself is recursion and is left alone. |
+| `code-step-op-mismatch` | warning | a `load` naming something that is not a data file, or a `call`, `import` or `extends` naming one. Nothing runs in a YAML or JSON file, so it can only be loaded. Fix: change the op; the step keeps its code and its note. |
+| `code-data-unread` | info | a data file nothing in the map loads. A YAML or JSON file is on the canvas because something reads it, so either that step has not been drawn or the file is no longer used. |
 | `code-import-cycle` | warning | `a imports b imports a`: the circular import that fails at run time and hides well in a big map. Reported once per cycle. |
 | `duplicate-program-name` | warning | two nodes with the same name **in the same container**. Siblings only; `Order.save` and `Customer.save` are fine. |
 
@@ -306,18 +326,41 @@ whose tables are the ones the queries implied.
 | JavaScript | `.js` `.jsx` `.mjs` `.cjs` | the tolerant lexer |
 | C++ | `.cpp` `.cc` `.cxx` `.hpp` `.hh` `.hxx` | the tolerant lexer |
 | C | `.c` `.h` | the tolerant lexer |
+| Perl | `.pl` `.pm` | the tolerant lexer |
+| Shell | `.sh` `.bash` | the tolerant lexer |
+| YAML | `.yaml` `.yml` | not read at all — the file becomes a data node |
+| JSON | `.json` | not read at all — the file becomes a data node |
 
 Everything in one tree is read at once, so a service whose API is TypeScript
 and whose workers are Go arrives as one program with both in it; `--lang`
 narrows it to one, and also settles whether a `.h` is C or C++.
 
 Python is parsed, which is why a `def` inside a string is not a function and a
-commented-out query is not a step. The other seven get a lexer instead — it
+commented-out query is not a step. The other nine get a lexer instead — it
 knows comments, strings, numbers, words and punctuation, and works out
-declarations from where the braces are. That is less than a parser and more
-than a regex, and the difference from a regex is the point: a `SELECT` inside a
-comment is a comment, a brace inside a string is not a brace, and `"INSERT INTO
-" + table` is one string with a hole in it.
+declarations from where the blocks open and close. That is less than a parser
+and more than a regex, and the difference from a regex is the point: a `SELECT`
+inside a comment is a comment, a brace inside a string is not a brace, and
+`"INSERT INTO " + table` is one string with a hole in it.
+
+The shell is the one that stretches the word "brace": its blocks are `then …
+fi` and `do … done`, and what the walk actually needs from it is `name() {` and
+the `}` that ends it. Perl and the shell also bring the heredoc, which is how
+both of them write a long query — it is read at its `<<SQL` and skipped where
+its body sits, so `my $sql = <<'SQL';` stays one statement. In both, a `$name`
+inside a double-quoted string or an unquoted heredoc is a hole, spelled `{name}`
+like every other hole, so a query built by interpolation is reported rather than
+drawn as one naming a table called `$table`.
+
+YAML and JSON are walked and never read: nothing runs in one, so there is
+nothing in it to read. What each file becomes is a `data` node, and what puts it
+on the canvas is something else naming it — a string holding its path
+(`open("config/settings.yaml")`, `yq … config/settings.yaml`) or a JavaScript
+`import rates from './rates.json'`, which is read as the run-time file read it
+really is. A data file nothing loads is dropped like any other node nothing
+reaches, so a repository full of YAML does not become a map full of it, and
+`package.json`, `package-lock.json`, `tsconfig*.json` and `composer.json` are
+excluded outright as build metadata rather than anything a program reads.
 
 ### What it reads
 
@@ -353,9 +396,14 @@ comment is a comment, a brace inside a string is not a brace, and `"INSERT INTO
 - **The links.** A call becomes a `call` step, an import of another scanned
   module an `import` step, a base class an `extends` step — `extends Base`,
   `implements Runnable`, `class Foo : public Bar`, `impl Restocker for
-  WarehouseDesk`. Names are resolved the way the language resolves them:
-  whatever the receiver is called, first — `self`, `this`, `Self`, or the `r` in
-  `func (r *Repo)` — then what the file imported, then what it defines. Import
+  WarehouseDesk` — and a data file the code names a `load` step. Names are
+  resolved the way the language resolves them: whatever the receiver is called,
+  first — `self`, `this`, `Self`, the `$self` in Perl, or the `r` in `func (r
+  *Repo)` — then what the file imported, then what it defines. Perl's `package`
+  line names the file the way Java's does, `use` is its import, and the shell's
+  is `source`; a bare word at the start of a shell command is a call, kept only
+  where it names a function the map actually holds, since otherwise every
+  `echo` in the script would invent one. Import
   paths are matched from their tail, so `"github.com/acme/api/store"` finds the
   `store` package and `#include "store/orders.h"` finds `orders`. A name none of
   that explains falls back to the format's own rule for reading a path — a bare
@@ -377,8 +425,8 @@ comment is a comment, a brace inside a string is not a brace, and `"INSERT INTO
 A repository of any size has thousands of functions and a handful that run a
 query, and the code map exists to point at tables. So by default what survives
 is the functions that touch the database, the ones that call those (`--callers
-N` hops, one by default), and the containers they sit in. `--all` keeps
-everything. A call or an `extends` whose other end did not survive loses its
+N` hops, one by default), the data files those read, and the containers they
+all sit in. `--all` keeps everything. A call or an `extends` whose other end did not survive loses its
 arrow with it — which means a base class whose methods never touch the database
 is not drawn, and one whose methods do is kept by the same rule as everything
 else.

@@ -13,7 +13,7 @@ A locally hosted web app for designing relational schemas visually.
 - **Simulate**: pick a table and watch sample rows flow into it. Every data flow upstream runs once, stage by stage: dots travel the connections on the canvas, the columns being read and written light up, and a grid shows each produced row with the rows it came from and how every value was computed. Edit a raw input cell and the change propagates.
 - **Describe how data moves**: a data-flow connection carries one derivation per target column: an expression, an aggregate over a grouping, a filter, and, for sequences, an operation over rows in order (change since the previous row, running total, rank…). Expressions may read columns of other tables as `table.column`; the diagram's own foreign keys say how they join. The same description drives the edge summary, the generated `INSERT … SELECT` (window functions and joins included, per dialect) and the simulation.
 - **Programs**: the work that happens *outside* the database gets a node of its own. A program is an ordered list of steps — read a table, compute something the database never sees, write the answer back — and each step that names a table draws a numbered arrow, so a round trip reads straight off the canvas. Steps carry the statement they run and the host-language code around it, and the app writes a starter for you: the real driver for your language and engine, your table and column names, parameters spelled the way that driver expects.
-- **Code maps**: a program can open up into the codebase behind it — modules as regions, classes inside them, functions as the nodes whose steps say what each one reads, writes and calls — so *this function reads that table* is one arrow in the same picture as the schema, and a rename or a drop can be traced into the code that would break. Every arrow and every region is derived from the steps and the containment, never stored; collapse a module and its arrows gather onto it. The whole map rides in the SQL script's annotation block, the Markdown export and the clipboard.
+- **Code maps**: a program can open up into the codebase behind it — modules as regions, classes inside them, functions as the nodes whose steps say what each one reads, writes, calls and loads, plus the YAML and JSON files it reads settings out of — so *this function reads that table* is one arrow in the same picture as the schema, and a rename or a drop can be traced into the code that would break. Every arrow and every region is derived from the steps and the containment, never stored; collapse a module and its arrows gather onto it. The whole map rides in the SQL script's annotation block, the Markdown export and the clipboard.
 - **Read a big diagram**: collapse tables to keys or headers (automatically when zoomed out), focus on one table and its neighbours, cardinality labels on every connection, and one-click grouping by schema.
 - **Command palette** (`Ctrl+K`): jump to any table or run any action by typing a few letters.
 - **Migrate and seed**: diff the diagram against a live database and get the `ALTER` statements that bring it up to date; generate deterministic seed rows that respect foreign keys, uniqueness and enums.
@@ -80,7 +80,7 @@ docker compose up --build
 | See what is computed | Any column a data flow fills carries a **Σ** mark, and its table a **Σ n** badge that survives collapsing. `D` (or **View → Derived-column lens**) turns that into a way of reading the whole canvas: computed columns take the green rail, the columns feeding them the flow colour, foreign keys step back. The **Derived** drawer tab lists every one with its formula; pick a column — there, or by right-clicking it → *Show where this comes from* — and the canvas narrows to that column's chain: every column read to produce it, and everything computed from it in turn. `Esc` widens the chain back, then puts the lens away |
 | One source, several look-alike targets | On a data-flow edge, **Match by name** adds a plain passthrough derivation for every target column a source column of the same name can fill (case and underscores ignored; columns already derived are left alone). *Feed other tables the same way* then ticks off the other tables that share those column names and draws the same flow into each, its derivations re-pointed at the columns each table spells the same way. Five tables fed from one is five edges either way — a connection joins two tables — but not five sets of derivations typed by hand |
 | Say what talks to the database from outside | Right-click the canvas → **Add program here** (or `Ctrl+K` → *Add program*). Name it, pick its language, then add steps in the order they happen: read a table, compute something the database never sees, write the answer back. Each step naming a table draws a numbered arrow, and the node says *round trip: jobs* when it both reads and writes one. Every step holds the statement it runs and the code around it; **Show the … starter** writes a runnable skeleton from the steps with the right driver for your language and engine, and on a module or a class it writes the whole file, definitions and all |
-| Map the code behind a program | With a program selected, the `▾` beside **+ Table** adds a **Module**, **Class** or **Function** inside it (or right-click the canvas → **Add module here**, or the **+ Module** buttons in the inspector's *Inside* section). A container is drawn as a region around its members; drag a node into or out of one to move it. Give a function read and write steps as you would a program, drag the handle on its header onto another node for a **call** (an **import** between modules, an **extends** between classes), and drag from a table's column handle onto a node for a read on that column. Right-click a region → **Collapse to one node** folds it and gathers its arrows; **Trace** accepts a code node at either end |
+| Map the code behind a program | With a program selected, the `▾` beside **+ Table** adds a **Module**, **Class**, **Function** or **Data file** inside it (or right-click the canvas → **Add module here**, or the **+ Module** buttons in the inspector's *Inside* section). A container is drawn as a region around its members; drag a node into or out of one to move it. Give a function read and write steps as you would a program, drag the handle on its header onto another node for a **call** (an **import** between modules, an **extends** between classes, a **load** onto a data file), and drag from a table's column handle onto a node for a read on that column. Right-click a region → **Collapse to one node** folds it and gathers its arrows; **Trace** accepts a code node at either end |
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express. The menu above the box offers queries written for this connection from what the diagram knows — the `JOIN` of a foreign key, its orphan check, an `INSERT … SELECT` with columns paired by name or a dialect-correct upsert for a data flow, the statement built from the derivations, JSON unpacking for a serialized one — as a starting point; `Ctrl+Enter` runs the query in the Query tab, and the expand button opens it in a bigger window |
 | Write SQL anywhere | Every SQL box is the same editor: the diagram's table and column names are coloured (so a typo shows up as plain text), `Ctrl+Space` completes tables, columns, keywords and functions — `orders.` or an alias's `o.` narrows to that table's columns — and problems show under the box as you type: an expression the simulator cannot parse, a column the source table does not have (with the `table.column` spelling that would reach it), a table the diagram does not have, an unclosed string or parenthesis. `Enter` keeps the indentation, `(` and `'` close themselves, `Tab` / `Shift+Tab` indent, `Ctrl+/` comments lines out, `Ctrl+Shift+F` formats |
@@ -269,7 +269,7 @@ src/components/          React UI (canvas, inspector, drawer panels, command pal
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
 scripts/                 scan_code.py + dbviz_scan/ (a codebase -> a code map), validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
 docs/                    ADVISOR_OUTPUT_FORMAT.md, CODE_MAP_FORMAT.md, EXTENSION_PACK_FORMAT.md, examples, and walkthroughs/
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, column lineage, layout, file format, the simulation, extensions, code maps, the scanner (against the same service written in each of the eight languages it reads, under tests/fixtures), the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, column lineage, layout, file format, the simulation, extensions, code maps, the scanner (against the same service written in each of the ten languages it reads, under tests/fixtures), the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
 ```
 
 ```bash
@@ -349,6 +349,8 @@ usually wants:
 | JavaScript / TypeScript | node-postgres | mariadb | `node:sqlite` | @duckdb/node-api |
 | C | libpq | MariaDB Connector/C | SQLite | DuckDB C API |
 | C++ | libpqxx | MariaDB Connector/C++ | SQLiteCpp | DuckDB C++ API |
+| Perl | DBD::Pg | DBD::MariaDB | DBD::SQLite | — |
+| Shell | psql | mariadb | sqlite3 | duckdb |
 
 Each of those is a different conversation, not one conversation with the names
 changed, and the starter writes the one its driver actually has: `PQntuples`
@@ -359,10 +361,21 @@ for `node:sqlite` against `const { rows } = await db.query(…)` for node-postgr
 C++ gets C++ libraries rather than C ones, because a reader of a `.cpp` file
 reaches for the library that owns its own handles.
 
+Perl is one shape rather than four, because DBI *is* the client side of Perl and
+what changes with the engine is the DSN and the DBD under it; DuckDB is the
+blank in that row on purpose, since there is no DBD anyone would tell you to
+install, and a blank falls back to the plan in comments. The shell is the other
+way round — four different commands and one real difference between them:
+**only psql has parameters**. `-v p1=…` with `:'p1'` in the statement is
+interpolated and quoted by psql itself; the other three CLIs have nothing of
+the kind, so a value gets into the statement because the shell put it there,
+and the generated script says that in its header rather than spelling a
+placeholder that would look safe and not be.
+
 It is a starting point and says so: compute steps come out as stubs that raise,
 because the work outside the database is exactly what the diagram cannot know.
-C#, Ruby, Shell and *Other* have no driver template, so they get the plan in
-comments rather than code pretending to compile.
+A pairing with no driver template — Perl on DuckDB, or *Other* — gets the plan
+in comments rather than code pretending to compile.
 
 Ask a **container** for its starter and you get the whole file, not one step
 list. A module is a file, so its classes and the functions in them are written
@@ -377,7 +390,12 @@ Two more things come from the node rather than from a guess. An **import** step
 becomes an import line at the top of the file — `import inventory`, `use
 crate::inventory`, `import * as inventory from './inventory.js'` — and an
 **extends** step becomes the base class in the declaration, or a comment where
-the language has no inheritance. And *Signature or location* is used as the
+the language has no inheritance. A **load** step becomes the line that language
+would really use to read the file — `yaml.safe_load`, `serde_json::from_str`,
+Jackson's `readTree`, nlohmann and yaml-cpp, `YAML::XS`'s `LoadFile`, `jq` and
+`yq` — with the import it needs, and only for the format the file actually is.
+C is the exception and says so: there is no standard parser, so what it gets is
+the name of the library to add. And *Signature or location* is used as the
 signature when what you typed reads as one in the file's own language, so
 `def place_order(self, email, cart) -> int` is the signature you get; a
 signature that already names the connection is handed it, and one that does not
@@ -411,13 +429,26 @@ behind it. The pieces are the same node with a **kind** and a **parent**:
 | Module | a file or a package | a program, or another module |
 | Class | a class, a struct, a type with methods | a program, a module, or another class |
 | Function | a function or a method, and the node whose steps say what it does | any of those |
+| Data file | a YAML or JSON file other code reads | a program or a module |
 
-Three more kinds of step name code instead of a table — **call**, **import**
-and **extends** — and each draws its arrow to the node it names, numbered in
-step order like a read or a write. So `place_order` reads `customers`, writes
-`orders`, writes `order_items` and calls `reserve_stock`, which reads and
-writes `stock_levels`: four arrows to tables and one to a function, and
-**Trace** from `place_order` to `stock_levels` runs through the call.
+Four more kinds of step name another node instead of a table — **call**,
+**import**, **extends** and **load** — and each draws its arrow to the node it
+names, numbered in step order like a read or a write. So `place_order` reads
+`customers`, writes `orders`, writes `order_items` and calls `reserve_stock`,
+which reads and writes `stock_levels`: four arrows to tables and one to a
+function, and **Trace** from `place_order` to `stock_levels` runs through the
+call.
+
+The last kind is the one that is not code. Nothing computes in a YAML or JSON
+file, so a **data file** is forced to be exactly what it is: it has no steps, it
+holds nothing, and the only arrow it may be on the end of is a **load** from the
+function that reads it. Pick YAML or JSON as a node's language and it *becomes* a
+data file; pick another kind and it stops being written in one — the two are two
+halves of one fact, and changing either moves the other rather than leaving a
+YAML function on the canvas. **Problems** reports a data file nothing loads, and
+a step that calls or imports one. Its starter is the file itself: in YAML, what
+the diagram knows written above it as comments; in JSON, the empty document,
+because a comment in a JSON file is a JSON file that will not parse.
 
 Nothing about the map is stored except the nodes, their parents and their
 steps. A module or class with members is drawn as a **region** — the bounding
@@ -451,11 +482,12 @@ already exists, point the scanner at it:
 python3 scripts/scan_code.py services/api --into bookshop.dbviz.json -o mapped.dbviz.json
 ```
 
-It reads **Python, Rust, Go, C, C++, Java, JavaScript and TypeScript** — one
-tree at a time, all of them at once if a service is written in more than one —
-and writes the files, classes and functions, the queries each one runs (with
-the tables and columns they touch, matched by name against the diagram you
-point it at), and the calls, imports and inheritance between them. Doc comments
+It reads **Python, Rust, Go, C, C++, Java, JavaScript, TypeScript, Perl and the
+shell** — one tree at a time, all of them at once if a service is written in
+more than one — and writes the files, classes and functions, the queries each
+one runs (with the tables and columns they touch, matched by name against the
+diagram you point it at), and the calls, imports, inheritance and data files
+between them. Doc comments
 become the nodes' comments; a route decorator, annotation or attribute —
 `@app.post('/orders')`, `@PostMapping("/orders")`, `#[post("/orders")]` —
 becomes the sentence saying how a function nobody calls is reached. By default
@@ -466,12 +498,20 @@ came from, which is either a table you forgot or a query that is out of date.
 
 Nothing to install: Python 3.9 and the standard library, whatever the code
 being scanned is written in. Python is read with Python's own `ast`; the other
-seven get a tolerant lexer, which knows enough that a `SELECT` in a comment is
+nine get a tolerant lexer, which knows enough that a `SELECT` in a comment is
 a comment, a brace in a string is not a brace, and a query spread over a Rust
-`r#"…"#`, a Java text block, a Go backtick or four adjacent C literals is one
-query. Each language's own shapes are followed: a Go method belongs to the type
-in its receiver, every `impl Foo` adds to the one `Foo`, a C header and the
-source beside it are one module.
+`r#"…"#`, a Java text block, a Go backtick, a Perl or shell heredoc or four
+adjacent C literals is one query. Each language's own shapes are followed: a Go
+method belongs to the type in its receiver, every `impl Foo` adds to the one
+`Foo`, a C header and the source beside it are one module, a Perl `package`
+line names the file, and a bare word at the start of a shell command is a call
+when it names a function the map holds.
+
+The YAML and JSON files are walked and never read — nothing runs in one — and
+each becomes a **data file** node. What puts one on the canvas is something
+else naming it: a string holding its path, or a JavaScript import of it, which
+is read as the run-time file read it really is. A data file nothing loads is
+dropped like any other node nothing reaches.
 
 What it cannot see it says so about, on standard error: an ORM builds its
 queries where no string literal exists, and a table name substituted in at run
