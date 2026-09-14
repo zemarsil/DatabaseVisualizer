@@ -68,31 +68,28 @@ const ACTION: Record<string, ReferentialAction> = { a: 'NO ACTION', r: 'RESTRICT
 
 const SYSTEM_SCHEMAS = `n.nspname NOT IN ('pg_catalog', 'information_schema') AND n.nspname NOT LIKE 'pg_toast%' AND n.nspname NOT LIKE 'pg_temp%'`;
 
-export async function introspect(cfg: ConnectionConfig): Promise<IntrospectResponse> {
-  const c = clientFor(cfg);
-  await c.connect();
-  try {
-    const version = String((await c.query('SELECT version() AS v')).rows[0].v);
-
-    const tables = await c.query<{ schema: string; name: string; comment: string | null; relkind: string; view_sql: string | null }>(
-      `SELECT n.nspname AS schema, c.relname AS name, obj_description(c.oid, 'pg_class') AS comment, c.relkind,
+/**
+ * The catalog queries a schema import runs, kept out here so a real PostgreSQL
+ * can be pointed at them: a query is a string until a server reads it, and the
+ * only way to know one is right is to run it (see tests/introspect-sql.test.ts).
+ *
+ * Every aggregated name is cast to text, and that cast is load-bearing.
+ * `array_agg(a.attname)` produces `name[]` (OID 1003), and node-postgres
+ * registers no parser for that OID: the client is handed the array's raw text,
+ * `{id,customer_id}`, where the response says `string[]`. Nothing notices until
+ * the browser does what the type promises and calls .map on a string. Casting to
+ * text makes it `text[]` (OID 1009), which the driver does parse. PGlite parses
+ * `name[]` regardless, so this could only ever be seen against a real server —
+ * which is why the test asserts on the column types, not on the values.
+ */
+export const INTROSPECT_QUERIES = {
+  version: `SELECT version() AS v`,
+  tables: `SELECT n.nspname AS schema, c.relname AS name, obj_description(c.oid, 'pg_class') AS comment, c.relkind,
               CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid, true) ELSE NULL END AS view_sql
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE c.relkind IN ('r', 'p', 'v', 'm') AND ${SYSTEM_SCHEMAS}
        ORDER BY 1, 2`,
-    );
-
-    const columns = await c.query<{
-      schema: string;
-      table: string;
-      name: string;
-      type: string;
-      nullable: boolean;
-      default_value: string | null;
-      is_identity: boolean;
-      comment: string | null;
-    }>(
-      `SELECT n.nspname AS schema, c.relname AS table, a.attname AS name,
+  columns: `SELECT n.nspname AS schema, c.relname AS table, a.attname AS name,
               format_type(a.atttypid, a.atttypmod) AS type,
               NOT a.attnotnull AS nullable,
               pg_get_expr(d.adbin, d.adrelid) AS default_value,
@@ -104,7 +101,87 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
        LEFT JOIN pg_attrdef d ON d.adrelid = a.attrelid AND d.adnum = a.attnum
        WHERE a.attnum > 0 AND NOT a.attisdropped AND c.relkind IN ('r', 'p', 'v', 'm') AND ${SYSTEM_SCHEMAS}
        ORDER BY n.nspname, c.relname, a.attnum`,
-    );
+  constraints: `SELECT n.nspname AS schema, c.relname AS table, con.conname AS name, con.contype AS type,
+              (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                 FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord)
+                 JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) AS columns,
+              fn.nspname AS ref_schema, fc.relname AS ref_table,
+              (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                 FROM unnest(con.confkey) WITH ORDINALITY AS k(attnum, ord)
+                 JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum) AS ref_columns,
+              con.confdeltype, con.confupdtype
+       FROM pg_constraint con
+       JOIN pg_class c ON c.oid = con.conrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       LEFT JOIN pg_class fc ON fc.oid = con.confrelid
+       LEFT JOIN pg_namespace fn ON fn.oid = fc.relnamespace
+       WHERE con.contype IN ('p', 'u', 'f') AND ${SYSTEM_SCHEMAS}
+       ORDER BY 1, 2, 3`,
+  indexes: `SELECT n.nspname AS schema, c.relname AS table, ic.relname AS name, i.indisunique AS unique,
+              (SELECT array_agg(a.attname::text ORDER BY k.ord)
+                 FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
+                 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum) AS columns
+       FROM pg_index i
+       JOIN pg_class c ON c.oid = i.indrelid
+       JOIN pg_class ic ON ic.oid = i.indexrelid
+       JOIN pg_namespace n ON n.oid = c.relnamespace
+       WHERE NOT i.indisprimary
+         AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid)
+         AND ${SYSTEM_SCHEMAS}
+       ORDER BY 1, 2, 3`,
+  enums: `SELECT n.nspname AS schema, t.typname AS name, array_agg(e.enumlabel::text ORDER BY e.enumsortorder) AS values
+       FROM pg_type t
+       JOIN pg_enum e ON e.enumtypid = t.oid
+       JOIN pg_namespace n ON n.oid = t.typnamespace
+       WHERE ${SYSTEM_SCHEMAS}
+       GROUP BY 1, 2 ORDER BY 1, 2`,
+} as const;
+
+/**
+ * An array column as an array, whatever the driver made of it.
+ *
+ * The queries above ask for text[] so that node-postgres parses it, and this is
+ * the promise kept on the way out: a driver that hands back the raw literal
+ * still leaves this module returning the `string[]` its response type declares,
+ * rather than a string that only fails later, somewhere else, in the browser.
+ *
+ * The literal is read with the driver's own text[] parser rather than by
+ * splitting on commas, because an element containing a comma is quoted and an
+ * element containing a quote is escaped, and that is a format worth reading
+ * with the code that already knows it.
+ */
+// 1009 is text[]. The driver's typings only name a handful of OIDs, so the
+// lookup is cast rather than the parser written out again here.
+const getTypeParser = pg.types.getTypeParser as unknown as (oid: number, format: 'text') => (raw: string) => (string | null)[];
+const parseTextArray = getTypeParser(1009, 'text');
+
+export function textArray(v: string[] | string | null | undefined): string[] {
+  if (Array.isArray(v)) return v;
+  if (typeof v !== 'string') return [];
+  const raw = v.trim();
+  if (!raw) return [];
+  if (!raw.startsWith('{')) return [raw];
+  return parseTextArray(raw).filter((x): x is string => x !== null);
+}
+
+export async function introspect(cfg: ConnectionConfig): Promise<IntrospectResponse> {
+  const c = clientFor(cfg);
+  await c.connect();
+  try {
+    const version = String((await c.query(INTROSPECT_QUERIES.version)).rows[0].v);
+
+    const tables = await c.query<{ schema: string; name: string; comment: string | null; relkind: string; view_sql: string | null }>(INTROSPECT_QUERIES.tables);
+
+    const columns = await c.query<{
+      schema: string;
+      table: string;
+      name: string;
+      type: string;
+      nullable: boolean;
+      default_value: string | null;
+      is_identity: boolean;
+      comment: string | null;
+    }>(INTROSPECT_QUERIES.columns);
 
     const constraints = await c.query<{
       schema: string;
@@ -117,52 +194,13 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
       ref_columns: string[] | null;
       confdeltype: string | null;
       confupdtype: string | null;
-    }>(
-      `SELECT n.nspname AS schema, c.relname AS table, con.conname AS name, con.contype AS type,
-              (SELECT array_agg(a.attname ORDER BY k.ord)
-                 FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord)
-                 JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = k.attnum) AS columns,
-              fn.nspname AS ref_schema, fc.relname AS ref_table,
-              (SELECT array_agg(a.attname ORDER BY k.ord)
-                 FROM unnest(con.confkey) WITH ORDINALITY AS k(attnum, ord)
-                 JOIN pg_attribute a ON a.attrelid = con.confrelid AND a.attnum = k.attnum) AS ref_columns,
-              con.confdeltype, con.confupdtype
-       FROM pg_constraint con
-       JOIN pg_class c ON c.oid = con.conrelid
-       JOIN pg_namespace n ON n.oid = c.relnamespace
-       LEFT JOIN pg_class fc ON fc.oid = con.confrelid
-       LEFT JOIN pg_namespace fn ON fn.oid = fc.relnamespace
-       WHERE con.contype IN ('p', 'u', 'f') AND ${SYSTEM_SCHEMAS}
-       ORDER BY 1, 2, 3`,
-    );
+    }>(INTROSPECT_QUERIES.constraints);
 
-    const indexes = await c.query<{ schema: string; table: string; name: string; unique: boolean; columns: string[] | null }>(
-      `SELECT n.nspname AS schema, c.relname AS table, ic.relname AS name, i.indisunique AS unique,
-              (SELECT array_agg(a.attname ORDER BY k.ord)
-                 FROM unnest(i.indkey::int2[]) WITH ORDINALITY AS k(attnum, ord)
-                 JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = k.attnum) AS columns
-       FROM pg_index i
-       JOIN pg_class c ON c.oid = i.indrelid
-       JOIN pg_class ic ON ic.oid = i.indexrelid
-       JOIN pg_namespace n ON n.oid = c.relnamespace
-       WHERE NOT i.indisprimary
-         AND NOT EXISTS (SELECT 1 FROM pg_constraint con WHERE con.conindid = i.indexrelid)
-         AND ${SYSTEM_SCHEMAS}
-       ORDER BY 1, 2, 3`,
-    );
+    const indexes = await c.query<{ schema: string; table: string; name: string; unique: boolean; columns: string[] | null }>(INTROSPECT_QUERIES.indexes);
 
-    const extensions = await c.query<{ name: string; schema: string; version: string }>(
-      EXTENSION_QUERIES.forImport,
-    );
+    const extensions = await c.query<{ name: string; schema: string; version: string }>(EXTENSION_QUERIES.forImport);
 
-    const enums = await c.query<{ schema: string; name: string; values: string[] }>(
-      `SELECT n.nspname AS schema, t.typname AS name, array_agg(e.enumlabel ORDER BY e.enumsortorder) AS values
-       FROM pg_type t
-       JOIN pg_enum e ON e.enumtypid = t.oid
-       JOIN pg_namespace n ON n.oid = t.typnamespace
-       WHERE ${SYSTEM_SCHEMAS}
-       GROUP BY 1, 2 ORDER BY 1, 2`,
-    );
+    const enums = await c.query<{ schema: string; name: string; values: string[] }>(INTROSPECT_QUERIES.enums);
 
     const byKey = new Map<string, IntrospectedTable>();
     for (const t of tables.rows) {
@@ -197,15 +235,16 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
     for (const con of constraints.rows) {
       const t = byKey.get(`${con.schema}.${con.table}`);
       if (!t || !con.columns) continue;
-      if (con.type === 'p') t.primaryKey = con.columns;
-      else if (con.type === 'u') t.uniques.push({ name: con.name, columns: con.columns });
+      const cols = textArray(con.columns);
+      if (con.type === 'p') t.primaryKey = cols;
+      else if (con.type === 'u') t.uniques.push({ name: con.name, columns: cols });
       else if (con.type === 'f' && con.ref_table && con.ref_columns) {
         t.foreignKeys.push({
           name: con.name,
-          columns: con.columns,
+          columns: cols,
           refSchema: con.ref_schema,
           refTable: con.ref_table,
-          refColumns: con.ref_columns,
+          refColumns: textArray(con.ref_columns),
           onDelete: ACTION[con.confdeltype ?? 'a'] ?? 'NO ACTION',
           onUpdate: ACTION[con.confupdtype ?? 'a'] ?? 'NO ACTION',
         });
@@ -213,13 +252,14 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
     }
     for (const ix of indexes.rows) {
       const t = byKey.get(`${ix.schema}.${ix.table}`);
-      if (!t || !ix.columns || ix.columns.length === 0) continue; // expression indexes are skipped
-      t.indexes.push({ name: ix.name, columns: ix.columns, unique: ix.unique });
+      const cols = textArray(ix.columns);
+      if (!t || cols.length === 0) continue; // expression indexes are skipped
+      t.indexes.push({ name: ix.name, columns: cols, unique: ix.unique });
     }
     return {
       serverVersion: version,
       tables: [...byKey.values()],
-      enums: enums.rows.map((e) => ({ schema: e.schema, name: e.name, values: e.values ?? [] })),
+      enums: enums.rows.map((e) => ({ schema: e.schema, name: e.name, values: textArray(e.values) })),
       // plpgsql is in every database already, so listing it would only add noise.
       extensions: extensions.rows.map((e) => ({ name: e.name, schema: e.schema === 'public' ? undefined : e.schema, version: e.version })),
     };
@@ -246,7 +286,7 @@ export const EXTENSION_QUERIES = {
    * version has to be joined back in — pg_available_extension_versions has no
    * default_version column of its own.
    */
-  requires: `SELECT v.name, v.requires
+  requires: `SELECT v.name, v.requires::text[] AS requires
          FROM pg_available_extension_versions v
          JOIN pg_available_extensions a ON a.name = v.name AND a.default_version = v.version
         ORDER BY v.name`,
@@ -257,13 +297,13 @@ export const EXTENSION_QUERIES = {
    * the function list is capped because PostGIS alone has thousands.
    */
   installed: `SELECT e.extname AS name, e.extversion AS version, n.nspname AS schema,
-              (SELECT array_agg(DISTINCT t.typname ORDER BY t.typname)
+              (SELECT array_agg(DISTINCT t.typname::text ORDER BY t.typname::text)
                  FROM pg_depend d JOIN pg_type t ON t.oid = d.objid
                 WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
                   AND d.classid = 'pg_type'::regclass AND d.deptype = 'e'
                   AND t.typtype IN ('b', 'e', 'r', 'd', 'm')
                   AND t.typname NOT LIKE '\\_%') AS types,
-              (SELECT (array_agg(DISTINCT p.proname ORDER BY p.proname))[1:${MAX_LISTED_FUNCTIONS}]
+              (SELECT (array_agg(DISTINCT p.proname::text ORDER BY p.proname::text))[1:${MAX_LISTED_FUNCTIONS}]
                  FROM pg_depend d JOIN pg_proc p ON p.oid = d.objid
                 WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
                   AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e') AS functions,
@@ -271,12 +311,12 @@ export const EXTENSION_QUERIES = {
                  FROM pg_depend d JOIN pg_proc p ON p.oid = d.objid
                 WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
                   AND d.classid = 'pg_proc'::regclass AND d.deptype = 'e') AS function_count,
-              (SELECT array_agg(DISTINCT am.amname ORDER BY am.amname)
+              (SELECT array_agg(DISTINCT am.amname::text ORDER BY am.amname::text)
                  FROM pg_depend d JOIN pg_am am ON am.oid = d.objid
                 WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
                   AND d.classid = 'pg_am'::regclass AND d.deptype = 'e'
                   AND am.amtype = 'i') AS index_methods,
-              (SELECT array_agg(DISTINCT oc.opcname ORDER BY oc.opcname)
+              (SELECT array_agg(DISTINCT oc.opcname::text ORDER BY oc.opcname::text)
                  FROM pg_depend d JOIN pg_opclass oc ON oc.oid = d.objid
                 WHERE d.refclassid = 'pg_extension'::regclass AND d.refobjid = e.oid
                   AND d.classid = 'pg_opclass'::regclass AND d.deptype = 'e') AS operator_classes
@@ -315,7 +355,7 @@ export async function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsR
     const requires = await c.query<{ name: string; requires: string[] | null }>(
       EXTENSION_QUERIES.requires,
     );
-    const requiresByName = new Map(requires.rows.map((r) => [r.name, r.requires ?? []]));
+    const requiresByName = new Map(requires.rows.map((r) => [r.name, textArray(r.requires)]));
 
     const installed = await c.query<{
       name: string;
@@ -345,11 +385,11 @@ export async function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsR
         comment: row.comment ?? undefined,
         requires: requiresByName.get(row.name)?.length ? requiresByName.get(row.name) : undefined,
         schema: live?.schema,
-        types: live?.types ?? undefined,
-        functions: live?.functions ?? undefined,
+        types: live?.types ? textArray(live.types) : undefined,
+        functions: live?.functions ? textArray(live.functions) : undefined,
         functionCount: count || undefined,
-        indexMethods: live?.index_methods ?? undefined,
-        operatorClasses: live?.operator_classes ?? undefined,
+        indexMethods: live?.index_methods ? textArray(live.index_methods) : undefined,
+        operatorClasses: live?.operator_classes ? textArray(live.operator_classes) : undefined,
       };
     });
 
@@ -362,11 +402,11 @@ export async function listExtensions(cfg: ConnectionConfig): Promise<ExtensionsR
         installed: true,
         installedVersion: live.version,
         schema: live.schema,
-        types: live.types ?? undefined,
-        functions: live.functions ?? undefined,
+        types: live.types ? textArray(live.types) : undefined,
+        functions: live.functions ? textArray(live.functions) : undefined,
         functionCount: Number(live.function_count) || undefined,
-        indexMethods: live.index_methods ?? undefined,
-        operatorClasses: live.operator_classes ?? undefined,
+        indexMethods: live.index_methods ? textArray(live.index_methods) : undefined,
+        operatorClasses: live.operator_classes ? textArray(live.operator_classes) : undefined,
       });
     }
     extensions.sort((a, b) => a.name.localeCompare(b.name));
