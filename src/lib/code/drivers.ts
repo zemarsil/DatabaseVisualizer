@@ -14,6 +14,23 @@
  */
 import type { Dialect, ProgramLanguage } from '@shared/types';
 
+/**
+ * Which client-side shape the generated file takes.
+ *
+ * The package is not enough to write code with: sqlx and duckdb-rs are both
+ * Rust and share nothing, and node-postgres, node:sqlite and DuckDB's Node API
+ * disagree about what running a statement even returns. So each pairing names
+ * its shape, and the emitter writes that shape's calls.
+ */
+export type DriverShape =
+  | 'psycopg' | 'mariadb-py' | 'sqlite3-py' | 'duckdb-py'
+  | 'sqlx' | 'duckdb-rs'
+  | 'database-sql'
+  | 'jdbc'
+  | 'pg' | 'mariadb-node' | 'node-sqlite' | 'duckdb-node'
+  | 'libpq' | 'mysql-c' | 'sqlite3-c' | 'duckdb-c'
+  | 'libpqxx' | 'mariadb-cpp' | 'sqlitecpp' | 'duckdb-cpp';
+
 export interface Driver {
   /** The package as a reader would search for it. */
   label: string;
@@ -27,6 +44,8 @@ export interface Driver {
   dsn: string;
   /** The nth (1-based) bound parameter, as this driver spells it. */
   placeholder: (n: number) => string;
+  /** Which set of calls the emitter writes around the SQL. */
+  shape: DriverShape;
 }
 
 const numbered = (n: number) => `$${n}`;
@@ -43,6 +62,7 @@ const PYTHON: Table = {
     connect: 'psycopg.connect(DSN)',
     dsn: 'postgresql://postgres@localhost:5432/postgres',
     placeholder: percentS,
+    shape: 'psycopg',
   },
   mariadb: {
     label: 'MariaDB Connector/Python',
@@ -51,6 +71,7 @@ const PYTHON: Table = {
     connect: 'mariadb.connect(host="localhost", port=3306, user="root", database=DSN)',
     dsn: 'mysql',
     placeholder: question,
+    shape: 'mariadb-py',
   },
   sqlite: {
     label: 'sqlite3 (standard library)',
@@ -59,6 +80,7 @@ const PYTHON: Table = {
     connect: 'sqlite3.connect(DSN)',
     dsn: './database.db',
     placeholder: question,
+    shape: 'sqlite3-py',
   },
   duckdb: {
     label: 'duckdb',
@@ -67,6 +89,7 @@ const PYTHON: Table = {
     connect: 'duckdb.connect(DSN)',
     dsn: './database.duckdb',
     placeholder: question,
+    shape: 'duckdb-py',
   },
 };
 
@@ -76,6 +99,7 @@ const RUST: Table = {
     install: 'cargo add sqlx --features runtime-tokio,postgres && cargo add tokio --features full',
     imports: ['use sqlx::postgres::PgPoolOptions;', 'use sqlx::Row;'],
     connect: 'PgPoolOptions::new().max_connections(5).connect(&dsn).await?',
+    shape: 'sqlx',
     dsn: 'postgresql://postgres@localhost:5432/postgres',
     placeholder: numbered,
   },
@@ -84,6 +108,7 @@ const RUST: Table = {
     install: 'cargo add sqlx --features runtime-tokio,mysql && cargo add tokio --features full',
     imports: ['use sqlx::mysql::MySqlPoolOptions;', 'use sqlx::Row;'],
     connect: 'MySqlPoolOptions::new().max_connections(5).connect(&dsn).await?',
+    shape: 'sqlx',
     dsn: 'mysql://root@localhost:3306/mysql',
     placeholder: question,
   },
@@ -92,6 +117,7 @@ const RUST: Table = {
     install: 'cargo add sqlx --features runtime-tokio,sqlite && cargo add tokio --features full',
     imports: ['use sqlx::sqlite::SqlitePoolOptions;', 'use sqlx::Row;'],
     connect: 'SqlitePoolOptions::new().connect(&dsn).await?',
+    shape: 'sqlx',
     dsn: 'sqlite://database.db',
     placeholder: question,
   },
@@ -102,6 +128,7 @@ const RUST: Table = {
     connect: 'Connection::open(&dsn)?',
     dsn: './database.duckdb',
     placeholder: question,
+    shape: 'duckdb-rs',
   },
 };
 
@@ -111,6 +138,7 @@ const GO: Table = {
     install: 'go get github.com/jackc/pgx/v5',
     imports: ['"database/sql"', '_ "github.com/jackc/pgx/v5/stdlib"'],
     connect: 'sql.Open("pgx", dsn)',
+    shape: 'database-sql',
     dsn: 'postgresql://postgres@localhost:5432/postgres',
     placeholder: numbered,
   },
@@ -119,6 +147,7 @@ const GO: Table = {
     install: 'go get github.com/go-sql-driver/mysql',
     imports: ['"database/sql"', '_ "github.com/go-sql-driver/mysql"'],
     connect: 'sql.Open("mysql", dsn)',
+    shape: 'database-sql',
     dsn: 'root@tcp(localhost:3306)/mysql',
     placeholder: question,
   },
@@ -127,6 +156,7 @@ const GO: Table = {
     install: 'go get modernc.org/sqlite',
     imports: ['"database/sql"', '_ "modernc.org/sqlite"'],
     connect: 'sql.Open("sqlite", dsn)',
+    shape: 'database-sql',
     dsn: './database.db',
     placeholder: question,
   },
@@ -135,17 +165,19 @@ const GO: Table = {
     install: 'go get github.com/marcboeker/go-duckdb',
     imports: ['"database/sql"', '_ "github.com/marcboeker/go-duckdb"'],
     connect: 'sql.Open("duckdb", dsn)',
+    shape: 'database-sql',
     dsn: './database.duckdb',
     placeholder: question,
   },
 };
 
-const C_LIKE: Table = {
+const C: Table = {
   postgresql: {
     label: 'libpq',
     install: 'apt install libpq-dev / brew install libpq, then link with -lpq',
     imports: ['#include <libpq-fe.h>'],
     connect: 'PQconnectdb(dsn)',
+    shape: 'libpq',
     dsn: 'postgresql://postgres@localhost:5432/postgres',
     placeholder: numbered,
   },
@@ -154,6 +186,7 @@ const C_LIKE: Table = {
     install: 'apt install libmariadb-dev / brew install mariadb-connector-c, then link with -lmariadb',
     imports: ['#include <mysql.h>'],
     connect: 'mysql_real_connect(conn, "localhost", "root", "", "mysql", 3306, NULL, 0)',
+    shape: 'mysql-c',
     dsn: 'mysql',
     placeholder: question,
   },
@@ -162,6 +195,7 @@ const C_LIKE: Table = {
     install: 'apt install libsqlite3-dev / brew install sqlite, then link with -lsqlite3',
     imports: ['#include <sqlite3.h>'],
     connect: 'sqlite3_open(dsn, &db)',
+    shape: 'sqlite3-c',
     dsn: './database.db',
     placeholder: question,
   },
@@ -170,6 +204,54 @@ const C_LIKE: Table = {
     install: 'download libduckdb from duckdb.org, then link with -lduckdb',
     imports: ['#include <duckdb.h>'],
     connect: 'duckdb_open(dsn, &db)',
+    shape: 'duckdb-c',
+    dsn: './database.duckdb',
+    placeholder: question,
+  },
+};
+
+/**
+ * C++ is not C with a different extension.
+ *
+ * Writing libpq into a .cpp file would compile, and would also be the wrong
+ * advice: a C++ reader reaches for the library that owns its own handles and
+ * throws on failure, because that is the half of the work the generated file
+ * would otherwise be silently leaving to them.
+ */
+const CPP: Table = {
+  postgresql: {
+    label: 'libpqxx',
+    install: 'apt install libpqxx-dev / brew install libpqxx, then link with -lpqxx -lpq',
+    imports: ['#include <pqxx/pqxx>'],
+    connect: 'pqxx::connection{dsn}',
+    shape: 'libpqxx',
+    dsn: 'postgresql://postgres@localhost:5432/postgres',
+    placeholder: numbered,
+  },
+  mariadb: {
+    label: 'MariaDB Connector/C++',
+    install: 'build mariadb-connector-cpp from mariadb.com, then link with -lmariadbcpp',
+    imports: ['#include <mariadb/conncpp.hpp>'],
+    connect: 'sql::mariadb::get_driver_instance()->connect(dsn, "root", "")',
+    shape: 'mariadb-cpp',
+    dsn: 'jdbc:mariadb://localhost:3306/mysql',
+    placeholder: question,
+  },
+  sqlite: {
+    label: 'SQLiteCpp',
+    install: 'add SQLiteCpp with FetchContent or vcpkg, then link with SQLiteCpp sqlite3',
+    imports: ['#include <SQLiteCpp/SQLiteCpp.h>'],
+    connect: 'SQLite::Database{dsn, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE}',
+    shape: 'sqlitecpp',
+    dsn: './database.db',
+    placeholder: question,
+  },
+  duckdb: {
+    label: 'DuckDB C++ API',
+    install: 'download libduckdb from duckdb.org, then link with -lduckdb',
+    imports: ['#include <duckdb.hpp>'],
+    connect: 'duckdb::DuckDB{dsn}',
+    shape: 'duckdb-cpp',
     dsn: './database.duckdb',
     placeholder: question,
   },
@@ -181,6 +263,7 @@ const JAVA: Table = {
     install: 'org.postgresql:postgresql',
     imports: ['import java.sql.*;'],
     connect: 'DriverManager.getConnection(DSN)',
+    shape: 'jdbc',
     dsn: 'jdbc:postgresql://localhost:5432/postgres?user=postgres',
     placeholder: question,
   },
@@ -189,6 +272,7 @@ const JAVA: Table = {
     install: 'org.mariadb.jdbc:mariadb-java-client',
     imports: ['import java.sql.*;'],
     connect: 'DriverManager.getConnection(DSN)',
+    shape: 'jdbc',
     dsn: 'jdbc:mariadb://localhost:3306/mysql?user=root',
     placeholder: question,
   },
@@ -197,6 +281,7 @@ const JAVA: Table = {
     install: 'org.xerial:sqlite-jdbc',
     imports: ['import java.sql.*;'],
     connect: 'DriverManager.getConnection(DSN)',
+    shape: 'jdbc',
     dsn: 'jdbc:sqlite:database.db',
     placeholder: question,
   },
@@ -205,6 +290,7 @@ const JAVA: Table = {
     install: 'org.duckdb:duckdb_jdbc',
     imports: ['import java.sql.*;'],
     connect: 'DriverManager.getConnection(DSN)',
+    shape: 'jdbc',
     dsn: 'jdbc:duckdb:database.duckdb',
     placeholder: question,
   },
@@ -216,6 +302,7 @@ const NODE: Table = {
     install: 'npm install pg',
     imports: ["import pg from 'pg';"],
     connect: 'new pg.Pool({ connectionString: DSN })',
+    shape: 'pg',
     dsn: 'postgresql://postgres@localhost:5432/postgres',
     placeholder: numbered,
   },
@@ -224,6 +311,7 @@ const NODE: Table = {
     install: 'npm install mariadb',
     imports: ["import mariadb from 'mariadb';"],
     connect: "mariadb.createPool({ host: 'localhost', port: 3306, user: 'root', database: 'mysql' })",
+    shape: 'mariadb-node',
     dsn: 'mysql',
     placeholder: question,
   },
@@ -232,6 +320,7 @@ const NODE: Table = {
     install: 'nothing to install: node:sqlite ships with Node 22 and newer',
     imports: ["import { DatabaseSync } from 'node:sqlite';"],
     connect: 'new DatabaseSync(DSN)',
+    shape: 'node-sqlite',
     dsn: './database.db',
     placeholder: question,
   },
@@ -240,6 +329,7 @@ const NODE: Table = {
     install: 'npm install @duckdb/node-api',
     imports: ["import { DuckDBInstance } from '@duckdb/node-api';"],
     connect: 'await (await DuckDBInstance.create(DSN)).connect()',
+    shape: 'duckdb-node',
     dsn: './database.duckdb',
     placeholder: question,
   },
@@ -249,8 +339,8 @@ const DRIVERS: Partial<Record<ProgramLanguage, Table>> = {
   python: PYTHON,
   rust: RUST,
   go: GO,
-  c: C_LIKE,
-  cpp: C_LIKE,
+  c: C,
+  cpp: CPP,
   java: JAVA,
   javascript: NODE,
   typescript: NODE,

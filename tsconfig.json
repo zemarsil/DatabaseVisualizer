@@ -21,5 +21,7 @@
       "@shared/*": ["src/shared/*"]
     }
   },
-  "include": ["src", "tests", "vite.config.ts"]
+  "include": ["src", "tests", "vite.config.ts"],
+  "//": "tests/fixtures holds services written to be scanned, not to be built: they name types that do not exist because the scanner never looks anything up.",
+  "exclude": ["tests/fixtures"]
 }

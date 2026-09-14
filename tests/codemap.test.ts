@@ -675,9 +675,10 @@ describe('the starter a container writes', () => {
     const ts = generateProgramCode(d, { ...ordersPy, language: 'typescript' });
     expect(ts).toContain('class OrderService {');
     expect(ts).toContain('  async placeOrder(db: Db): Promise<void> {');
-    // C has nowhere to nest, so it flattens and says where each came from.
+    // C has nowhere to nest, so it flattens and says where each came from —
+    // and is handed the connection, since it is not the one that opened it.
     const c = generateProgramCode(d, { ...ordersPy, language: 'c' });
-    expect(c).toContain('static int order_service_place_order(void) {');
+    expect(c).toContain('static int order_service_place_order(PGconn *conn) {');
     // And a language with no template still walks the tree in comments.
     const csharp = generateProgramCode(d, { ...ordersPy, language: 'csharp' });
     expect(csharp).toContain('// OrderService/place_order —');

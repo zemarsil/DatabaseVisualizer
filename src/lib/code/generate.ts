@@ -58,7 +58,7 @@ import {
 import { quoteIdent, quoteQualified } from '../sql/dialect';
 import { describeProgram } from '../programs';
 import { codeChildren } from '../codemap';
-import { driverFor, hasDriver, type Driver } from './drivers';
+import { driverFor, hasDriver, type Driver, type DriverShape } from './drivers';
 
 /** One step with everything the emitters need already resolved. */
 export interface ProgramCodeStep {
@@ -787,26 +787,60 @@ function emitPython(d: Diagram, root: CodeUnit, driver: Driver): string {
 /* Rust                                                                */
 /* ------------------------------------------------------------------ */
 
-function rustStep(s: ProgramCodeStep, ctx: StepContext): string[] {
-  const lines = [`// ${stepCaption(s)}`];
-  if (s.stub) lines.push(`${s.slug}(${ctx.inLoop ? '&row' : ''})?;`);
-  else if (s.op === 'read') lines.push(`let ${ctx.first ? 'rows' : `${s.slug}_rows`} = sqlx::query(${upperSnake(s.slug)}).fetch_all(&pool).await?;`);
-  else {
-    const binds = s.params.length ? s.params.map((n) => `    .bind(${n})`) : ['    // bind what this statement needs'];
-    lines.push(`sqlx::query(${upperSnake(s.slug)})`, ...binds, '    .execute(&pool)', '    .await?;');
-  }
-  return lines;
+/**
+ * sqlx and duckdb-rs are both Rust and share nothing.
+ *
+ * One hands back a Vec and is awaited; the other holds the statement while the
+ * rows are read and is synchronous. Writing sqlx's calls against a
+ * `duckdb::Connection` compiles into nothing at all, so the driver decides.
+ */
+const RUST_SQLX = 'sqlx';
+
+function rustHandle(driver: Driver): string {
+  return driver.shape === RUST_SQLX ? 'pool' : 'conn';
 }
 
-/** A unit's steps, after whatever it takes to have a pool called `pool`. */
+function rustAsync(driver: Driver): string {
+  return driver.shape === RUST_SQLX ? 'async ' : '';
+}
+
+function rustLoop(driver: Driver, pad: string): BodyShape {
+  return driver.shape === RUST_SQLX
+    ? { base: pad, step: '    ', loopOpen: 'for row in rows {', loopClose: '}' }
+    : { base: pad, step: '    ', loopOpen: 'while let Some(row) = rows.next()? {', loopClose: '}' };
+}
+
+function rustStep(driver: Driver): (s: ProgramCodeStep, ctx: StepContext) => string[] {
+  return (s, ctx) => {
+    const lines = [`// ${stepCaption(s)}`];
+    const rows = ctx.first ? 'rows' : `${s.slug}_rows`;
+    if (s.stub) lines.push(`${s.slug}(${ctx.inLoop ? '&row' : ''})?;`);
+    else if (driver.shape === RUST_SQLX && s.op === 'read') {
+      lines.push(`let ${rows} = sqlx::query(${upperSnake(s.slug)}).fetch_all(&pool).await?;`);
+    } else if (driver.shape === RUST_SQLX) {
+      const binds = s.params.length ? s.params.map((n) => `    .bind(${n})`) : ['    // bind what this statement needs'];
+      lines.push(`sqlx::query(${upperSnake(s.slug)})`, ...binds, '    .execute(&pool)', '    .await?;');
+    } else if (s.op === 'read') {
+      // duckdb-rs holds the statement while the rows are read, so it has to
+      // outlive the loop; sqlx hands back a Vec and does not.
+      lines.push(`let mut ${s.slug} = conn.prepare(${upperSnake(s.slug)})?;`, `let mut ${rows} = ${s.slug}.query([])?;`);
+    } else {
+      if (!s.params.length) lines.push('// bind what this statement needs');
+      lines.push(`conn.execute(${upperSnake(s.slug)}, params![${s.params.join(', ')}])?;`);
+    }
+    return lines;
+  };
+}
+
+/** A unit's steps, after whatever it takes to have a connection in scope. */
 function rustBody(u: CodeUnit, driver: Driver, pad: string, handed: boolean): string[] {
   const out: string[] = [];
   if (!handed && needsConnection(u)) {
     out.push(`${pad}let dsn = std::env::var("DATABASE_URL").unwrap_or_else(|_| ${JSON.stringify(driver.dsn)}.into());`);
-    out.push(`${pad}let pool = ${driver.connect};`);
+    out.push(`${pad}let ${rustHandle(driver)} = ${driver.connect};`);
     out.push('');
   }
-  if (u.body.length) out.push(buildBody(u.body, rustStep, { base: pad, step: '    ', loopOpen: 'for row in rows {', loopClose: '}' }));
+  if (u.body.length) out.push(buildBody(u.body, rustStep(driver), rustLoop(driver, pad)));
   return out;
 }
 
@@ -848,9 +882,9 @@ function rustDefinitions(d: Diagram, root: CodeUnit, driver: Driver): string[][]
 function rustFunction(d: Diagram, u: CodeUnit, driver: Driver, pad: string, method: boolean, name?: string, doc?: string[]): string[] {
   const declared = name ? undefined : declaredSignature(u, 'rust');
   const params = [method ? '&self' : ''].filter(Boolean).join(', ');
-  const head = declared ? `${declared} {` : `pub async fn ${name ?? snake(u.node.name)}(${params}) -> anyhow::Result<()> {`;
+  const head = declared ? `${declared} {` : `pub ${rustAsync(driver)}fn ${name ?? snake(u.node.name)}(${params}) -> anyhow::Result<()> {`;
   const out = [...indentAll(commentBlock(doc ?? unitDoc(d, u, !declared), '///').split('\n'), pad), `${pad}${head}`];
-  out.push(...rustBody(u, driver, `${pad}    `, takesHandle(declared, 'pool')));
+  out.push(...rustBody(u, driver, `${pad}    `, takesHandle(declared, rustHandle(driver))));
   gap(out, 0);
   out.push(`${pad}    Ok(())`);
   out.push(`${pad}}`);
@@ -877,7 +911,8 @@ function emitRust(d: Diagram, root: CodeUnit, driver: Driver): string {
     // Generic over the row type so the stub compiles whichever sqlx driver the
     // dialect picked, rather than naming PgRow and breaking on MySQL.
     const inLoop = inRowLoop(unit, step);
-    out.push(`fn ${step.slug}${inLoop ? '<R: sqlx::Row>(row: &R)' : '()'} -> anyhow::Result<()> {`);
+    const takes = driver.shape === RUST_SQLX ? '<R: sqlx::Row>(row: &R)' : '(row: &duckdb::Row)';
+    out.push(`fn ${step.slug}${inLoop ? takes : '()'} -> anyhow::Result<()> {`);
     out.push('    todo!("the work this program exists to do")');
     out.push('}');
   }
@@ -889,12 +924,13 @@ function emitRust(d: Diagram, root: CodeUnit, driver: Driver): string {
 
   if (needsMain(root)) {
     gap(out, 1);
-    out.push('#[tokio::main]');
-    out.push('async fn main() -> anyhow::Result<()> {');
+    // duckdb-rs is synchronous, so there is no runtime to start.
+    if (driver.shape === RUST_SQLX) out.push('#[tokio::main]');
+    out.push(`${rustAsync(driver)}fn main() -> anyhow::Result<()> {`);
     out.push(`    let dsn = std::env::var("DATABASE_URL").unwrap_or_else(|_| ${JSON.stringify(driver.dsn)}.into());`);
-    out.push(`    let pool = ${driver.connect};`);
+    out.push(`    let ${rustHandle(driver)} = ${driver.connect};`);
     out.push('');
-    if (root.body.length) out.push(buildBody(root.body, rustStep, { base: '    ', step: '    ', loopOpen: 'for row in rows {', loopClose: '}' }));
+    if (root.body.length) out.push(buildBody(root.body, rustStep(driver), rustLoop(driver, '    ')));
     gap(out, 1);
     out.push('    Ok(())');
     out.push('}');
@@ -1148,24 +1184,60 @@ function emitJava(d: Diagram, root: CodeUnit, driver: Driver): string {
 
 const JS = '  ';
 
-function jsStep(s: ProgramCodeStep, ctx: StepContext): string[] {
-  const lines = [`// ${stepCaption(s)}`];
-  if (s.stub) lines.push(`${camel(s.slug)}(${ctx.inLoop ? 'row' : ''});`);
-  else if (s.op === 'read') lines.push(`const { rows${ctx.first ? '' : `: ${camel(s.slug)}Rows`} } = await db.query(${camel(s.slug)}Sql);`);
-  else {
-    if (!s.params.length) lines.push('// bind what this statement needs');
-    lines.push(`await db.query(${camel(s.slug)}Sql, [${s.params.join(', ')}]);`);
-  }
-  return lines;
+/**
+ * How each Node driver spells "run this and give me the rows" and "run this".
+ *
+ * They disagree about all of it: node-postgres answers with a result object,
+ * the MariaDB connector with the rows themselves, `node:sqlite` with a
+ * statement to prepare first and no promise at all, and DuckDB wants the
+ * result read before there are rows to walk. One `db.query` for the four of
+ * them was right for one of them.
+ */
+const NODE_CALLS: Partial<Record<DriverShape, { rows: (sql: string, into: string) => string; exec: (sql: string, args: string) => string }>> = {
+  pg: {
+    rows: (sql, into) => `const { rows${into === 'rows' ? '' : `: ${into}`} } = await db.query(${sql});`,
+    exec: (sql, args) => `await db.query(${sql}, [${args}]);`,
+  },
+  'mariadb-node': {
+    rows: (sql, into) => `const ${into} = await db.query(${sql});`,
+    exec: (sql, args) => `await db.query(${sql}, [${args}]);`,
+  },
+  'node-sqlite': {
+    rows: (sql, into) => `const ${into} = db.prepare(${sql}).all();`,
+    exec: (sql, args) => `db.prepare(${sql}).run(${args});`,
+  },
+  'duckdb-node': {
+    rows: (sql, into) => `const ${into} = await (await db.runAndReadAll(${sql})).getRowObjects();`,
+    exec: (sql, args) => `await db.run(${sql}, [${args}]);`,
+  },
+};
+
+function nodeCalls(driver: Driver) {
+  return NODE_CALLS[driver.shape] ?? NODE_CALLS.pg!;
 }
 
-function jsBody(u: CodeUnit, pad: string, handed: boolean, opener: string): string[] {
+function jsStep(driver: Driver): (s: ProgramCodeStep, ctx: StepContext) => string[] {
+  const calls = nodeCalls(driver);
+  return (s, ctx) => {
+    const lines = [`// ${stepCaption(s)}`];
+    const sql = `${camel(s.slug)}Sql`;
+    if (s.stub) lines.push(`${camel(s.slug)}(${ctx.inLoop ? 'row' : ''});`);
+    else if (s.op === 'read') lines.push(calls.rows(sql, ctx.first ? 'rows' : `${camel(s.slug)}Rows`));
+    else {
+      if (!s.params.length) lines.push('// bind what this statement needs');
+      lines.push(calls.exec(sql, s.params.join(', ')));
+    }
+    return lines;
+  };
+}
+
+function jsBody(u: CodeUnit, driver: Driver, pad: string, handed: boolean, opener: string): string[] {
   const out: string[] = [];
   if (!handed && needsConnection(u)) {
     out.push(`${pad}const db = ${opener};`);
     out.push('');
   }
-  if (u.body.length) out.push(buildBody(u.body, jsStep, { base: pad, step: JS, loopOpen: 'for (const row of rows) {', loopClose: '}' }));
+  if (u.body.length) out.push(buildBody(u.body, jsStep(driver), { base: pad, step: JS, loopOpen: 'for (const row of rows) {', loopClose: '}' }));
   return out;
 }
 
@@ -1173,7 +1245,7 @@ function jsDoc(lines: string[], pad: string): string[] {
   return [`${pad}/**`, ...lines.map((l) => (l ? `${pad} * ${l}` : `${pad} *`)), `${pad} */`];
 }
 
-function jsFunction(d: Diagram, u: CodeUnit, depth: number, typed: boolean, method: boolean, name?: string, doc?: string[]): string[] {
+function jsFunction(d: Diagram, u: CodeUnit, driver: Driver, depth: number, typed: boolean, method: boolean, name?: string, doc?: string[]): string[] {
   const pad = JS.repeat(depth);
   const declared = name ? undefined : declaredSignature(u, typed ? 'typescript' : 'javascript');
   const params = needsConnection(u) ? `db${typed ? ': Db' : ''}` : '';
@@ -1181,7 +1253,7 @@ function jsFunction(d: Diagram, u: CodeUnit, depth: number, typed: boolean, meth
     ? `${declared} {`
     : `async ${method ? '' : 'function '}${camel(snake(name ?? u.node.name))}(${params})${typed ? ': Promise<void>' : ''} {`;
   const out = [...jsDoc(doc ?? unitDoc(d, u, !declared), pad), `${pad}${head}`];
-  out.push(...jsBody(u, pad + JS, takesHandle(declared, 'db') || (!declared && needsConnection(u)), 'await openDb()'));
+  out.push(...jsBody(u, driver, pad + JS, takesHandle(declared, 'db') || (!declared && needsConnection(u)), 'await openDb()'));
   gap(out, 0);
   out.push(`${pad}}`);
   return out;
@@ -1192,21 +1264,21 @@ function jsFunction(d: Diagram, u: CodeUnit, depth: number, typed: boolean, meth
  * inside a class is written beside it instead, at the top level where the
  * language can take it. Its doc comment says where it sits.
  */
-function jsDefinitions(d: Diagram, root: CodeUnit, typed: boolean): string[][] {
+function jsDefinitions(d: Diagram, root: CodeUnit, driver: Driver, typed: boolean): string[][] {
   const out: string[][] = [];
   for (const u of flatUnits(root)) {
     if (u.kind === 'function') {
       if (u === root || (u.parent && u.parent.kind === 'class')) continue;
-      out.push(jsFunction(d, u, 0, typed, false));
+      out.push(jsFunction(d, u, driver, 0, typed, false));
       continue;
     }
     if (u.kind !== 'class') continue;
     const extend = u.bases.length ? ` extends ${typeName(u.bases[0])}` : '';
     const inner: string[] = [];
-    if (u.body.length) inner.push(...jsFunction(d, u, 1, typed, true, ownStepsName(u), [`The steps drawn on ${u.node.name} itself.`]));
+    if (u.body.length) inner.push(...jsFunction(d, u, driver, 1, typed, true, ownStepsName(u), [`The steps drawn on ${u.node.name} itself.`]));
     for (const m of u.members.filter((x) => x.kind === 'function')) {
       gap(inner, 1);
-      inner.push(...jsFunction(d, m, 1, typed, true));
+      inner.push(...jsFunction(d, m, driver, 1, typed, true));
     }
     out.push([...jsDoc(unitDoc(d, u, true, true), ''), `class ${typeName(u.node.name)}${extend} {`, ...inner, '}']);
   }
@@ -1254,7 +1326,7 @@ function emitNode(d: Diagram, root: CodeUnit, driver: Driver, typed: boolean): s
     out.push('}');
   }
 
-  for (const block of jsDefinitions(d, root, typed)) {
+  for (const block of jsDefinitions(d, root, driver, typed)) {
     gap(out, 1);
     out.push(...block);
   }
@@ -1264,7 +1336,7 @@ function emitNode(d: Diagram, root: CodeUnit, driver: Driver, typed: boolean): s
     out.push(`async function main()${typed ? ': Promise<void>' : ''} {`);
     out.push(`  const db = ${shared ? 'await openDb()' : driver.connect};`);
     out.push('');
-    if (root.body.length) out.push(buildBody(root.body, jsStep, { base: JS, step: JS, loopOpen: 'for (const row of rows) {', loopClose: '}' }));
+    if (root.body.length) out.push(buildBody(root.body, jsStep(driver), { base: JS, step: JS, loopOpen: 'for (const row of rows) {', loopClose: '}' }));
     out.push('}');
     gap(out, 1);
     out.push('await main();');
@@ -1277,22 +1349,276 @@ function emitNode(d: Diagram, root: CodeUnit, driver: Driver, typed: boolean): s
 /* ------------------------------------------------------------------ */
 
 /**
- * C has no classes and the C++ template shares this emitter, so the map is
- * flattened into functions named for the path that reached them:
- * `order_service_place_order`. The comment above each says where it came from,
- * which is the part a reader needs to put it back.
+ * What talking to one engine looks like in C or C++.
+ *
+ * These two languages have no common database interface — no DB-API, no
+ * database/sql, no JDBC — so every pairing is its own conversation: prepare and
+ * step for SQLite, exec and tuple counts for libpq, a transaction object for
+ * libpqxx. Writing that conversation out is the whole value of a starter here;
+ * a comment saying "run READ_JOBS" is worth nothing to anybody.
  */
-function cFunctions(d: Diagram, root: CodeUnit): string[][] {
+interface NativeShape {
+  /** Headers the file needs beyond the driver's own. */
+  extras: string[];
+  /** Opening the connection, with `dsn` in scope, ending with `handle` bound. */
+  open: string[];
+  /** What a function that issues SQL is handed, and what `main` passes for it. */
+  handle: { type: string; name: string };
+  /** Issuing a read, into the named variable. */
+  read: (s: ProgramCodeStep, into: string) => string[];
+  /** Issuing a write. */
+  write: (s: ProgramCodeStep) => string[];
+  loopOpen: string;
+  loopClose: string;
+  /** Letting go of everything, in the order a reader would. */
+  close: string[];
+  /** How a compute stub is declared, and how it is called. */
+  stub: (slug: string, caption: string, inLoop: boolean) => string[];
+  call: (slug: string, inLoop: boolean) => string;
+  /** Wrapping for `main`, where the language would rather throw than check. */
+  guard?: { open: string; close: string[] };
+}
+
+const BIND = '/* bind what this statement needs */';
+
+const C_SHAPES: Partial<Record<DriverShape, NativeShape>> = {
+  libpq: {
+    extras: ['#include <stdio.h>', '#include <stdlib.h>'],
+    open: [
+      'PGconn *conn = PQconnectdb(dsn);',
+      'if (PQstatus(conn) != CONNECTION_OK) {',
+      '    fprintf(stderr, "%s", PQerrorMessage(conn));',
+      '    return 1;',
+      '}',
+    ],
+    handle: { type: 'PGconn *', name: 'conn' },
+    read: (s, into) => [`PGresult *${into} = PQexec(conn, ${upperSnake(s.slug)});`],
+    write: (s) => [
+      s.params.length
+        ? `const char *${s.slug}_values[${s.params.length}] = {${s.params.map((n) => `/* ${n} */ NULL`).join(', ')}};`
+        : BIND,
+      `PQclear(PQexecParams(conn, ${upperSnake(s.slug)}, ${s.params.length}, NULL, ${s.params.length ? `${s.slug}_values` : 'NULL'}, NULL, NULL, 0));`,
+    ],
+    loopOpen: 'for (int row = 0; row < PQntuples(rows); row++) {',
+    loopClose: '}',
+    close: ['PQfinish(conn);'],
+    stub: (slug, caption, inLoop) => [
+      `/* ${caption} */`,
+      `static void ${slug}(${inLoop ? 'PGresult *rows, int row' : 'void'}) {`,
+      '    fprintf(stderr, "not implemented\\n");',
+      '}',
+    ],
+    call: (slug, inLoop) => `${slug}(${inLoop ? 'rows, row' : ''});`,
+  },
+  'mysql-c': {
+    extras: ['#include <stdio.h>', '#include <stdlib.h>'],
+    open: [
+      'MYSQL *conn = mysql_init(NULL);',
+      'if (!mysql_real_connect(conn, "localhost", "root", "", dsn, 3306, NULL, 0)) {',
+      '    fprintf(stderr, "%s", mysql_error(conn));',
+      '    return 1;',
+      '}',
+    ],
+    handle: { type: 'MYSQL *', name: 'conn' },
+    read: (s, into) => [
+      `mysql_query(conn, ${upperSnake(s.slug)});`,
+      `MYSQL_RES *${into}_result = mysql_store_result(conn);`,
+      `MYSQL_ROW ${into};`,
+    ],
+    write: (s) => [
+      s.params.length ? `/* bind ${s.params.join(', ')} with mysql_stmt_bind_param */` : BIND,
+      `mysql_query(conn, ${upperSnake(s.slug)});`,
+    ],
+    loopOpen: 'while ((rows = mysql_fetch_row(rows_result))) {',
+    loopClose: '}',
+    close: ['mysql_close(conn);'],
+    stub: (slug, caption, inLoop) => [
+      `/* ${caption} */`,
+      `static void ${slug}(${inLoop ? 'MYSQL_ROW row' : 'void'}) {`,
+      '    fprintf(stderr, "not implemented\\n");',
+      '}',
+    ],
+    call: (slug, inLoop) => `${slug}(${inLoop ? 'rows' : ''});`,
+  },
+  'sqlite3-c': {
+    extras: ['#include <stdio.h>', '#include <stdlib.h>'],
+    open: [
+      'sqlite3 *db;',
+      'if (sqlite3_open(dsn, &db) != SQLITE_OK) {',
+      '    fprintf(stderr, "%s", sqlite3_errmsg(db));',
+      '    return 1;',
+      '}',
+    ],
+    handle: { type: 'sqlite3 *', name: 'db' },
+    read: (s, into) => [`sqlite3_stmt *${into};`, `sqlite3_prepare_v2(db, ${upperSnake(s.slug)}, -1, &${into}, NULL);`],
+    write: (s) => [
+      `sqlite3_stmt *${s.slug};`,
+      `sqlite3_prepare_v2(db, ${upperSnake(s.slug)}, -1, &${s.slug}, NULL);`,
+      ...(s.params.length ? s.params.map((n, i) => `/* sqlite3_bind_* (${s.slug}, ${i + 1}, ${n}); */`) : [BIND]),
+      `sqlite3_step(${s.slug});`,
+      `sqlite3_finalize(${s.slug});`,
+    ],
+    loopOpen: 'while (sqlite3_step(rows) == SQLITE_ROW) {',
+    loopClose: '}',
+    close: ['sqlite3_close(db);'],
+    stub: (slug, caption, inLoop) => [
+      `/* ${caption} */`,
+      `static void ${slug}(${inLoop ? 'sqlite3_stmt *row' : 'void'}) {`,
+      '    fprintf(stderr, "not implemented\\n");',
+      '}',
+    ],
+    call: (slug, inLoop) => `${slug}(${inLoop ? 'rows' : ''});`,
+  },
+  'duckdb-c': {
+    extras: ['#include <stdio.h>', '#include <stdlib.h>'],
+    open: [
+      'duckdb_database database;',
+      'duckdb_connection conn;',
+      'if (duckdb_open(dsn, &database) == DuckDBError || duckdb_connect(database, &conn) == DuckDBError) {',
+      '    fprintf(stderr, "could not open %s\\n", dsn);',
+      '    return 1;',
+      '}',
+    ],
+    handle: { type: 'duckdb_connection', name: 'conn' },
+    read: (s, into) => [`duckdb_result ${into};`, `duckdb_query(conn, ${upperSnake(s.slug)}, &${into});`],
+    write: (s) => [
+      s.params.length ? `/* bind ${s.params.join(', ')} with duckdb_prepare and duckdb_bind_* */` : BIND,
+      `duckdb_query(conn, ${upperSnake(s.slug)}, NULL);`,
+    ],
+    loopOpen: 'for (idx_t row = 0; row < duckdb_row_count(&rows); row++) {',
+    loopClose: '}',
+    close: ['duckdb_disconnect(&conn);', 'duckdb_close(&database);'],
+    stub: (slug, caption, inLoop) => [
+      `/* ${caption} */`,
+      `static void ${slug}(${inLoop ? 'duckdb_result *rows, idx_t row' : 'void'}) {`,
+      '    fprintf(stderr, "not implemented\\n");',
+      '}',
+    ],
+    call: (slug, inLoop) => `${slug}(${inLoop ? '&rows, row' : ''});`,
+  },
+};
+
+const CPP_SHAPES: Partial<Record<DriverShape, NativeShape>> = {
+  libpqxx: {
+    extras: ['#include <cstdlib>', '#include <iostream>', '#include <stdexcept>', '#include <string>'],
+    open: ['pqxx::connection connection{dsn};', 'pqxx::work tx{connection};'],
+    handle: { type: 'pqxx::work &', name: 'tx' },
+    read: (s, into) => [`pqxx::result ${into} = tx.exec(${upperSnake(s.slug)});`],
+    write: (s) =>
+      s.params.length
+        ? [`tx.exec_params(${upperSnake(s.slug)}, ${s.params.join(', ')});`]
+        : ['// bind what this statement needs', `tx.exec_params(${upperSnake(s.slug)});`],
+    loopOpen: 'for (const auto &row : rows) {',
+    loopClose: '}',
+    close: ['tx.commit();'],
+    stub: (slug, caption, inLoop) => [
+      `/// ${caption}`,
+      `static void ${slug}(${inLoop ? 'const pqxx::row &row' : ''}) {`,
+      '    throw std::logic_error("the work this program exists to do");',
+      '}',
+    ],
+    call: (slug, inLoop) => `${slug}(${inLoop ? 'row' : ''});`,
+    guard: { open: 'try {', close: ['} catch (const std::exception &e) {', '    std::cerr << e.what() << "\\n";', '    return 1;', '}'] },
+  },
+  'mariadb-cpp': {
+    extras: ['#include <cstdlib>', '#include <iostream>', '#include <memory>', '#include <stdexcept>'],
+    open: [
+      'std::unique_ptr<sql::Connection> connection{sql::mariadb::get_driver_instance()->connect(dsn, "root", "")};',
+      'sql::Connection &conn = *connection;',
+    ],
+    handle: { type: 'sql::Connection &', name: 'conn' },
+    read: (s, into) => [
+      `std::unique_ptr<sql::PreparedStatement> ${s.slug}{conn.prepareStatement(${upperSnake(s.slug)})};`,
+      `std::unique_ptr<sql::ResultSet> ${into}{${s.slug}->executeQuery()};`,
+    ],
+    write: (s) => [
+      `std::unique_ptr<sql::PreparedStatement> ${s.slug}{conn.prepareStatement(${upperSnake(s.slug)})};`,
+      ...(s.params.length ? s.params.map((n, i) => `${s.slug}->setString(${i + 1}, ${n});`) : ['// bind what this statement needs']),
+      `${s.slug}->executeUpdate();`,
+    ],
+    loopOpen: 'while (rows->next()) {',
+    loopClose: '}',
+    close: ['conn.close();'],
+    stub: (slug, caption, inLoop) => [
+      `/// ${caption}`,
+      `static void ${slug}(${inLoop ? 'sql::ResultSet &row' : ''}) {`,
+      '    throw std::logic_error("the work this program exists to do");',
+      '}',
+    ],
+    call: (slug, inLoop) => `${slug}(${inLoop ? '*rows' : ''});`,
+    guard: { open: 'try {', close: ['} catch (const sql::SQLException &e) {', '    std::cerr << e.what() << "\\n";', '    return 1;', '}'] },
+  },
+  sqlitecpp: {
+    extras: ['#include <cstdlib>', '#include <iostream>', '#include <stdexcept>'],
+    open: ['SQLite::Database db{dsn, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE};'],
+    handle: { type: 'SQLite::Database &', name: 'db' },
+    read: (s, into) => [`SQLite::Statement ${into}{db, ${upperSnake(s.slug)}};`],
+    write: (s) => [
+      `SQLite::Statement ${s.slug}{db, ${upperSnake(s.slug)}};`,
+      ...(s.params.length ? s.params.map((n, i) => `${s.slug}.bind(${i + 1}, ${n});`) : ['// bind what this statement needs']),
+      `${s.slug}.exec();`,
+    ],
+    loopOpen: 'while (rows.executeStep()) {',
+    loopClose: '}',
+    close: [],
+    stub: (slug, caption, inLoop) => [
+      `/// ${caption}`,
+      `static void ${slug}(${inLoop ? 'SQLite::Statement &row' : ''}) {`,
+      '    throw std::logic_error("the work this program exists to do");',
+      '}',
+    ],
+    call: (slug, inLoop) => `${slug}(${inLoop ? 'rows' : ''});`,
+    guard: { open: 'try {', close: ['} catch (const std::exception &e) {', '    std::cerr << e.what() << "\\n";', '    return 1;', '}'] },
+  },
+  'duckdb-cpp': {
+    extras: ['#include <cstdlib>', '#include <iostream>', '#include <memory>', '#include <stdexcept>'],
+    open: ['duckdb::DuckDB database{dsn};', 'duckdb::Connection conn{database};'],
+    handle: { type: 'duckdb::Connection &', name: 'conn' },
+    read: (s, into) => [`auto ${into} = conn.Query(${upperSnake(s.slug)});`],
+    write: (s) =>
+      s.params.length
+        ? [`conn.Query(${upperSnake(s.slug)}, ${s.params.join(', ')});`]
+        : ['// bind what this statement needs', `conn.Query(${upperSnake(s.slug)});`],
+    loopOpen: 'for (idx_t row = 0; row < rows->RowCount(); row++) {',
+    loopClose: '}',
+    close: [],
+    stub: (slug, caption, inLoop) => [
+      `/// ${caption}`,
+      `static void ${slug}(${inLoop ? 'duckdb::MaterializedQueryResult &rows, idx_t row' : ''}) {`,
+      '    throw std::logic_error("the work this program exists to do");',
+      '}',
+    ],
+    call: (slug, inLoop) => `${slug}(${inLoop ? '*rows, row' : ''});`,
+    guard: { open: 'try {', close: ['} catch (const std::exception &e) {', '    std::cerr << e.what() << "\\n";', '    return 1;', '}'] },
+  },
+};
+
+function cStep(shape: NativeShape): (s: ProgramCodeStep, ctx: StepContext) => string[] {
+  return (s, ctx) => {
+    const lines = [`// ${stepCaption(s)}`];
+    if (s.stub) lines.push(shape.call(s.slug, ctx.inLoop));
+    else if (s.op === 'read') lines.push(...shape.read(s, ctx.first ? 'rows' : `${s.slug}_rows`));
+    else lines.push(...shape.write(s));
+    return lines;
+  };
+}
+
+/**
+ * C has no classes and C++ has them in a header, so the map is flattened into
+ * functions named for the path that reached them: `order_service_place_order`.
+ * The comment above each says where it came from, which is the part a reader
+ * needs to put it back, and each is handed the connection rather than opening
+ * one of its own.
+ */
+function cFunctions(d: Diagram, root: CodeUnit, shape: NativeShape): string[][] {
   const out: string[][] = [];
   for (const u of flatUnits(root)) {
     if (u === root || !u.body.length) continue;
     const name = u.path.map(snake).join('_');
-    const block = [...commentBlock(unitDoc(d, u, true, true), '//').split('\n'), `static int ${name}(void) {`];
-    for (const s of u.body) {
-      block.push(`    // ${stepCaption(s)}`);
-      if (s.stub) block.push(`    ${s.slug}();`);
-      else block.push(`    // run ${upperSnake(s.slug)}${s.params.length ? ` binding ${s.params.join(', ')}` : ''}`);
-    }
+    const takes = needsConnection(u) ? `${shape.handle.type}${shape.handle.name}` : 'void';
+    const block = [...commentBlock(unitDoc(d, u, true, true), '//').split('\n'), `static int ${name}(${takes}) {`];
+    block.push(buildBody(u.body, cStep(shape), { base: '    ', step: '    ', loopOpen: shape.loopOpen, loopClose: shape.loopClose }));
+    block.push('');
     block.push('    return 0;');
     block.push('}');
     out.push(block);
@@ -1301,12 +1627,14 @@ function cFunctions(d: Diagram, root: CodeUnit): string[][] {
 }
 
 function emitC(d: Diagram, root: CodeUnit, driver: Driver, cpp: boolean): string {
+  const shape = (cpp ? CPP_SHAPES : C_SHAPES)[driver.shape];
+  if (!shape) return emitOutline(d, root);
   const out: string[] = [];
   out.push(commentBlock(headerLines(d, root, driver), '//'));
   out.push('//');
   out.push(`// ${driver.install}`);
   gap(out, 1);
-  out.push(cpp ? '#include <iostream>\n#include <string>' : '#include <stdio.h>\n#include <stdlib.h>');
+  out.push(...shape.extras);
   out.push(...driver.imports, ...importLines(d, root, cpp ? 'cpp' : 'c'));
 
   for (const s of fileSql(root)) {
@@ -1321,35 +1649,41 @@ function emitC(d: Diagram, root: CodeUnit, driver: Driver, cpp: boolean): string
     out.push(`static const char *${upperSnake(s.slug)} =\n${literal};`);
   }
 
-  for (const { step } of fileStubs(root)) {
+  for (const { unit, step } of fileStubs(root)) {
     gap(out, 1);
-    out.push(`// ${stepCaption(step)}`);
-    out.push(`static void ${step.slug}(void) {`);
-    out.push(`    ${cpp ? 'std::cerr << "not implemented\\n";' : 'fprintf(stderr, "not implemented\\n");'}`);
-    out.push('}');
+    out.push(...shape.stub(step.slug, stepCaption(step), inRowLoop(unit, step)));
   }
 
-  for (const block of cFunctions(d, root)) {
+  for (const block of cFunctions(d, root, shape)) {
     gap(out, 1);
     out.push(...block);
   }
 
+  const called = flatUnits(root).filter((u) => u !== root && u.body.length);
+  const guard = shape.guard;
+  const pad = guard ? '        ' : '    ';
   gap(out, 1);
-  out.push('int main(void) {');
+  // C spells an empty parameter list `(void)` and C++ does not, and a reader
+  // of either notices the other one's.
+  out.push(cpp ? 'int main() {' : 'int main(void) {');
   out.push('    const char *dsn = getenv("DATABASE_URL");');
   out.push(`    if (!dsn) dsn = ${JSON.stringify(driver.dsn)};`);
-  out.push(`    // Connect: ${driver.connect}`);
-  out.push('');
-  for (const s of root.body) {
-    out.push(`    // ${stepCaption(s)}`);
-    if (s.stub) out.push(`    ${s.slug}();`);
-    else out.push(`    // run ${upperSnake(s.slug)}${s.params.length ? ` binding ${s.params.join(', ')}` : ''}`);
+  if (guard) out.push(`    ${guard.open}`);
+  out.push(indent(shape.open.join('\n'), pad));
+  if (root.body.length) {
+    out.push('');
+    out.push(buildBody(root.body, cStep(shape), { base: pad, step: '    ', loopOpen: shape.loopOpen, loopClose: shape.loopClose }));
   }
-  for (const u of flatUnits(root)) {
-    if (u === root || !u.body.length) continue;
-    out.push(`    // ${u.path.join('/')}`);
-    out.push(`    ${u.path.map(snake).join('_')}();`);
+  for (const u of called) {
+    out.push('');
+    out.push(`${pad}// ${u.path.join('/')}`);
+    out.push(`${pad}${u.path.map(snake).join('_')}(${needsConnection(u) ? shape.handle.name : ''});`);
   }
+  if (shape.close.length) {
+    out.push('');
+    out.push(indent(shape.close.join('\n'), pad));
+  }
+  if (guard) out.push(...guard.close.map((l) => `    ${l}`));
   out.push('');
   out.push('    return 0;');
   out.push('}');

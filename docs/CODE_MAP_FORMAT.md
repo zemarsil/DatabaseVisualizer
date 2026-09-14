@@ -11,8 +11,9 @@ This document is the file format for that half of the diagram. It is written
 for someone producing a `.dbviz.json` by hand or from a script — an advisor
 agent, a person with a text editor, a scanner over a repository — and it is the
 companion to [`ADVISOR_OUTPUT_FORMAT.md`](ADVISOR_OUTPUT_FORMAT.md), which
-documents everything else in the file. For Python there is a scanner in the
-box: [`scripts/scan_python.py`](#scanning-a-python-codebase). The walkthrough that builds one by hand
+documents everything else in the file. There is a scanner in the box:
+[`scripts/scan_code.py`](#scanning-a-codebase), which reads Python, Rust, Go, C,
+C++, Java, JavaScript and TypeScript. The walkthrough that builds a map by hand
 is [`walkthroughs/16-map-the-code-that-talks-to-it.md`](walkthroughs/16-map-the-code-that-talks-to-it.md).
 
 ## One node family, four kinds
@@ -278,21 +279,45 @@ The program rules still apply to every kind: a `write` to a column a data flow
 already computes, a write to a view or to a table marked as living in another
 database, a step naming a table that is gone.
 
-## Scanning a Python codebase
+## Scanning a codebase
 
 Drawing a map by hand is the right way to design a service. Drawing one by hand
-for a service that already exists is an afternoon of grep, so for Python there
-is a scanner:
+for a service that already exists is an afternoon of grep, so there is a
+scanner:
 
 ```bash
-python3 scripts/scan_python.py services/api --into bookshop.dbviz.json -o mapped.dbviz.json
+python3 scripts/scan_code.py services/api --into bookshop.dbviz.json -o mapped.dbviz.json
 ```
 
-It needs nothing but Python 3.9 or newer — it reads the code with the standard
-library's own `ast`, so a `def` inside a string is not a function and a
-commented-out query is not a step — and it writes the whole file back out with
-the map in it, leaving everything else in the diagram alone. Without `--into`
-it writes a new diagram whose tables are the ones the queries implied.
+It needs nothing but Python 3.9 or newer, whatever the code it is pointed at is
+written in, and it writes the whole file back out with the map in it, leaving
+everything else in the diagram alone. Without `--into` it writes a new diagram
+whose tables are the ones the queries implied.
+
+### The languages it reads
+
+| Language | Files | Read with |
+| --- | --- | --- |
+| Python | `.py` | the standard library's own `ast` |
+| Rust | `.rs` | the tolerant lexer |
+| Go | `.go` | the tolerant lexer |
+| Java | `.java` | the tolerant lexer |
+| TypeScript | `.ts` `.tsx` `.mts` `.cts` | the tolerant lexer |
+| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | the tolerant lexer |
+| C++ | `.cpp` `.cc` `.cxx` `.hpp` `.hh` `.hxx` | the tolerant lexer |
+| C | `.c` `.h` | the tolerant lexer |
+
+Everything in one tree is read at once, so a service whose API is TypeScript
+and whose workers are Go arrives as one program with both in it; `--lang`
+narrows it to one, and also settles whether a `.h` is C or C++.
+
+Python is parsed, which is why a `def` inside a string is not a function and a
+commented-out query is not a step. The other seven get a lexer instead — it
+knows comments, strings, numbers, words and punctuation, and works out
+declarations from where the braces are. That is less than a parser and more
+than a regex, and the difference from a regex is the point: a `SELECT` inside a
+comment is a comment, a brace inside a string is not a brace, and `"INSERT INTO
+" + table` is one string with a hole in it.
 
 ### What it reads
 
@@ -300,14 +325,21 @@ it writes a new diagram whose tables are the ones the queries implied.
   module, a file becomes a module inside that, and a package's `__init__.py` is
   the package rather than a file in it. Classes and functions are nodes; a
   function inside a function is not, because a function is the leaf of the map —
-  its queries and calls belong to the function that holds it.
+  its queries and calls belong to the function that holds it. Each language's
+  own way of spelling the same thing is followed: a Go method hangs off the type
+  in its receiver, every `impl Foo` in Rust adds methods to the one `Foo`, a C++
+  `namespace` is a module, and a C or C++ header is read into the same node as
+  the source file beside it rather than drawn as a second copy of every
+  function in it.
 - **The queries.** String literals that *begin* with `SELECT`, `INSERT`,
   `UPDATE`, `DELETE`, `REPLACE`, `MERGE`, `TRUNCATE` or `WITH` and go on to have
   the shape of one — an `UPDATE` has a `SET`, a `DELETE` has a `FROM` — which is
   what keeps "Update the stock count whenever an order is placed" a sentence
-  rather than a write arrow. Literals
-  concatenated with `+` are folded first; an f-string keeps its holes as
-  `{expr}`. A statement's tables come off its `FROM`, `JOIN`, `INTO` and
+  rather than a write arrow. However the language writes a long one: a Rust
+  `r#"…"#`, a C++ `R"sql(…)sql"`, a Java text block, a Go or JavaScript
+  backtick. Literals concatenated with `+` are folded first, as are the adjacent
+  literals C uses for the same job; an f-string, a template literal and a value
+  glued in with `+` all keep their holes as `{expr}`. A statement's tables come off its `FROM`, `JOIN`, `INTO` and
   `UPDATE` clauses at any depth, so a subquery in a `WHERE` is the read it is.
   A query parked in a module-level or class-level constant is a step on
   *whatever names it*, not on the file that holds it.
@@ -319,19 +351,26 @@ it writes a new diagram whose tables are the ones the queries implied.
   `book_id` to `order_items`. `SELECT *` is the whole row, which the format
   writes as no columns at all.
 - **The links.** A call becomes a `call` step, an import of another scanned
-  module an `import` step, a base class an `extends` step. Names are resolved
-  the way Python resolves them: `self` first, then what the file imported, then
-  what it defines. A name none of that explains falls back to the format's own
-  rule for reading a path — a bare name will do where exactly one node in the
-  map carries it — which `--strict-calls` turns off.
-- **The prose.** A node's `comment` is its docstring's first paragraph, because
-  Python already has the field the format wants. A function carrying a
-  decorator that is not `@staticmethod` and friends gets a sentence saying so:
-  *Reached through `@app.post('/orders')`* is the answer to "nothing calls this
-  function".
+  module an `import` step, a base class an `extends` step — `extends Base`,
+  `implements Runnable`, `class Foo : public Bar`, `impl Restocker for
+  WarehouseDesk`. Names are resolved the way the language resolves them:
+  whatever the receiver is called, first — `self`, `this`, `Self`, or the `r` in
+  `func (r *Repo)` — then what the file imported, then what it defines. Import
+  paths are matched from their tail, so `"github.com/acme/api/store"` finds the
+  `store` package and `#include "store/orders.h"` finds `orders`. A name none of
+  that explains falls back to the format's own rule for reading a path — a bare
+  name will do where exactly one node in the map carries it — which
+  `--strict-calls` turns off.
+- **The prose.** A node's `comment` is the first paragraph of its docstring, or
+  of the comment block written immediately above it: a `///`, a `/** … */`, the
+  `// ReserveStock locks the row` a Go reader expects. A function carrying a
+  decorator, an annotation or an attribute that is not `@staticmethod`,
+  `@Override`, `#[derive]` and friends gets a sentence saying so: *Reached
+  through `@app.post('/orders')`* — or `@PostMapping("/orders")`, or
+  `#[post("/orders")]` — is the answer to "nothing calls this function".
 - **The entrypoint.** A module's path, a class's declaration, a function's
-  signature — reconstructed from the syntax rather than copied out of the
-  source, so a signature split over six lines arrives as one.
+  signature, as the source wrote it with the newlines taken out, so a signature
+  split over six lines arrives as one.
 
 ### What it keeps
 
@@ -361,21 +400,33 @@ write, so that reference dangles either way.
 
 Everything that is not in the syntax:
 
-- **ORMs.** `session.query(Order)`, `Order.objects.filter(...)`, a SQLAlchemy
-  select over mapped classes: the table name is in the mapping, not the call.
-  Those functions come out as plain calls with no read or write, and the tables
-  they touch have to be added by hand.
+- **ORMs and query builders.** `session.query(Order)`, `Order.objects.filter(…)`,
+  a SQLAlchemy select over mapped classes, GORM, Diesel, Hibernate, Knex: the
+  table name is in the mapping, not in any string. Those functions come out as
+  plain calls with no read or write, and the tables they touch have to be added
+  by hand. A query in an annotation the scanner can see — JPA's `@Query("SELECT
+  …")` — is read, because that one *is* a string literal.
 - **Queries assembled at run time** — a table name substituted into an
   f-string, a `WHERE` clause built by appending to a list, SQL read from a file.
   A statement with a hole in it is still read and still drawn, holes and all;
   one whose *table* is the hole draws nothing, and is counted in the report so
   you know to add the step yourself.
 - **Dynamic dispatch.** A handler looked up in a registry, a callback passed in,
-  a method on an object whose type the scanner cannot know. Where the name is
-  unique in the map it is guessed; otherwise the call is not drawn.
+  a function pointer, a call through an interface whose implementation is chosen
+  at run time, a method on an object whose type the scanner cannot know. Where
+  the name is unique in the map it is guessed; otherwise the call is not drawn.
+- **What a macro or a generated file invented.** A name that exists only after
+  `cgo`, `bindgen`, a Rust `macro_rules!` or a C `#define` expands is not in the
+  syntax the scanner reads.
 - **`compute` steps.** Whether the work between a read and a write is worth a
   step is a judgement about what matters, and the scanner has no way to make
   it. Add those by hand; they are usually the most interesting line on the node.
+
+One shape is worth knowing about because it is so common: in JavaScript and
+TypeScript a route body written as an arrow function — `app.post('/orders',
+async (req, res) => { … })` — is not a node, because there is no name to give
+it. Its queries and calls belong to the file instead, which is where a reader
+would look for them. Naming the handler makes it a node.
 
 None of this is a reason not to scan — it is the reason the output is a first
 draft to correct, the same as an imported schema. What the scanner is good at
@@ -402,7 +453,8 @@ to use it.
 | `--sheet NAME` | which diagram of a workspace file to write into. |
 | `--name NAME`, `--role ROLE` | what to call the program, and whether it is a service, job, script or etl. |
 | `--all`, `--callers N` | keep everything; or keep N call hops out from the database (default 1). |
-| `--exclude GLOB`, `--include-tests` | on top of the defaults, which skip `.*`, `__pycache__`, `node_modules`, virtualenvs, build output, `migrations`, `alembic` and `tests`. |
+| `--lang LANG` | read only this language, instead of every one found; also settles whether a `.h` file is C or C++. |
+| `--exclude GLOB`, `--include-tests` | on top of the defaults, which skip `.*`, `__pycache__`, `node_modules`, `vendor`, `target`, virtualenvs, build output, `migrations`, `alembic`, `tests` and each language's own test-file convention (`*_test.go`, `*.test.ts`, `test_*.py`). |
 | `--no-stub-tables` | never invent a table; leave the reference dangling. |
 | `--collapse KIND` | fold every container of that kind, which is how a big map opens readable. |
 | `--relayout` | lay every node out afresh, discarding where an earlier scan or a person put it. |

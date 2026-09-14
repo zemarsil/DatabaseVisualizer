@@ -19,6 +19,7 @@ import {
   programRoleMeta,
   type Diagram,
   type Program,
+  type ProgramLanguage,
   type ProgramStep,
   type ProgramStepOp,
   type Table,
@@ -185,6 +186,28 @@ export function describeProgram(d: Diagram, p: Program): string {
   const members = d.programs.filter((x) => x.parentId === p.id).length;
   if (members) return `${p.name}, ${article} ${kind}, holds ${members} node${members === 1 ? '' : 's'}.`;
   return `${p.name}, ${article} ${kind}, does not touch the schema yet.`;
+}
+
+/**
+ * What a new node is written in when nothing else says.
+ *
+ * A member takes its container's language, which `addProgram` handles; this is
+ * for the nodes that have no container. A diagram whose code map is nine Go
+ * files should not offer Python for the tenth, so the answer is whatever most
+ * of the map already is, and Python only where there is nothing to go on.
+ */
+export function prevailingLanguage(d: Diagram): ProgramLanguage {
+  const counts = new Map<ProgramLanguage, number>();
+  for (const p of d.programs) counts.set(p.language, (counts.get(p.language) ?? 0) + 1);
+  let best: ProgramLanguage = 'python';
+  let most = 0;
+  for (const [language, n] of counts) {
+    if (n > most) {
+      best = language;
+      most = n;
+    }
+  }
+  return best;
 }
 
 /** A free spot for a new top-level program or module, below everything already placed. */

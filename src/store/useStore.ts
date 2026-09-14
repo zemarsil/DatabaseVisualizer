@@ -5,6 +5,7 @@ import {
   codeKindMeta,
   codeKindOf,
   normalizeVerb,
+  programLanguageMeta,
   programStepOpMeta,
   type CodeKind,
   type Column,
@@ -54,7 +55,7 @@ import {
   uniqueTableName,
 } from '@/lib/model';
 import { nextGroupPosition } from '@/lib/groups';
-import { nextProgramPosition } from '@/lib/programs';
+import { nextProgramPosition, prevailingLanguage } from '@/lib/programs';
 import { placementSizes, type SizeMap } from '@/lib/geometry';
 import { PALETTE } from '@/lib/palette';
 import { translateType } from '@/lib/sql/dialect';
@@ -1243,15 +1244,24 @@ export const useStore = create<Store>()(
         const kind = opts.kind ?? 'program';
         const parent = opts.parentId ? d.programs.find((p) => p.id === opts.parentId) : undefined;
         const parentId = parent && canContain(codeKindOf(parent), kind) ? parent.id : undefined;
-        const fallbackName = kind === 'program' ? 'new_program' : kind === 'module' ? 'new_module.py' : kind === 'class' ? 'NewClass' : 'new_function';
+        // A member speaks its container's language; a node with no container
+        // speaks whatever most of the map already does.
+        const language = opts.language ?? parent?.language ?? prevailingLanguage(d);
+        const fallbackName =
+          kind === 'program'
+            ? 'new_program'
+            : kind === 'module'
+              ? `new_module.${programLanguageMeta(language).extension}`
+              : kind === 'class'
+                ? 'NewClass'
+                : 'new_function';
         const name = uniqueProgramName(d, opts.name ?? fallbackName, parentId);
         const prg = createProgram({
           name,
           ...(kind !== 'program' ? { kind } : {}),
           ...(parentId ? { parentId } : {}),
           position: opts.position ?? nextCodePosition(d, parentId, nextProgramPosition(d), get().placementSizes()),
-          // A member speaks its container's language unless told otherwise.
-          ...(opts.language ? { language: opts.language } : parent ? { language: parent.language } : {}),
+          language,
         });
         mutate((dd) => {
           dd.programs.push(prg);

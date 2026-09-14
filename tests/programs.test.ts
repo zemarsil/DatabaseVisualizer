@@ -10,7 +10,15 @@ import {
   pruneRelationships,
   uniqueProgramName,
 } from '../src/lib/model';
-import { describeProgram, describeStep, programLinks, programRoundTrips, programTableIds, programsForTable } from '../src/lib/programs';
+import {
+  describeProgram,
+  describeStep,
+  prevailingLanguage,
+  programLinks,
+  programRoundTrips,
+  programTableIds,
+  programsForTable,
+} from '../src/lib/programs';
 import { generateProgramCode, resolveSteps } from '../src/lib/code/generate';
 import { layoutDiagram } from '../src/lib/layout';
 import { decodeDiagramFromUrl, encodeDiagramForUrl } from '../src/lib/share';
@@ -81,6 +89,18 @@ describe('the program model', () => {
     const step = createProgramStep({ op: 'compute', tableId: 'tbl_x', columnIds: ['c1', 'c2'] });
     expect(step.tableId).toBeUndefined();
     expect(step.columnIds).toEqual([]);
+  });
+
+  it('offers the language the map is already written in, not always Python', () => {
+    const d = emptyDiagram();
+    // Nothing to go on: Python, which is what a blank diagram has always meant.
+    expect(prevailingLanguage(d)).toBe('python');
+    d.programs = [
+      createProgram({ name: 'api', language: 'go' }),
+      createProgram({ name: 'worker', language: 'go' }),
+      createProgram({ name: 'tool', language: 'rust' }),
+    ];
+    expect(prevailingLanguage(d)).toBe('go');
   });
 
   it('names a second program rather than letting two share one name', () => {
@@ -302,6 +322,75 @@ describe('the generated starter', () => {
     expect([...paths].sort((a, b) => a.localeCompare(b))).toEqual(paths);
   });
 
+  it('writes C that issues the driver\u2019s own calls, not a comment about them', () => {
+    const { d, program } = jobRunner();
+    const code = generateProgramCode(d, { ...program, language: 'c' });
+    // libpq, doing the whole round trip: connect, exec, walk the tuples, clean up.
+    expect(code).toContain('PGconn *conn = PQconnectdb(dsn);');
+    expect(code).toContain('PGresult *rows = PQexec(conn, READ_JOBS);');
+    expect(code).toContain('for (int row = 0; row < PQntuples(rows); row++) {');
+    expect(code).toContain('PQexecParams(conn, WRITE_RESULTS, 2,');
+    expect(code).toContain('PQfinish(conn);');
+    // A C string has no raw form, so the SQL arrives as adjacent literals.
+    expect(code).toContain('"SELECT id, payload "');
+  });
+
+  it('writes C++ against a C++ library rather than C++ against libpq', () => {
+    const { d, program } = jobRunner();
+    const code = generateProgramCode(d, { ...program, language: 'cpp' });
+    expect(code).toContain('#include <pqxx/pqxx>');
+    expect(code).toContain('pqxx::work tx{connection};');
+    expect(code).toContain('for (const auto &row : rows) {');
+    expect(code).toContain('tx.commit();');
+    // It owns its handles and throws, so the generated main catches.
+    expect(code).toContain('} catch (const std::exception &e) {');
+    expect(code).toContain('int main() {');
+    expect(code).not.toContain('PQconnectdb');
+  });
+
+  it('changes the C++ library with the engine, the way the Python one changes', () => {
+    const { d, program } = jobRunner('sqlite');
+    const code = generateProgramCode(d, { ...program, language: 'cpp' });
+    expect(code).toContain('SQLite::Database db{dsn');
+    expect(code).toContain('while (rows.executeStep()) {');
+    expect(code).toContain('write_results.bind(1, job_id);');
+    expect(code).not.toContain('pqxx');
+  });
+
+  it('writes DuckDB Rust against duckdb, not against sqlx', () => {
+    const { d, program } = jobRunner('duckdb');
+    const code = generateProgramCode(d, { ...program, language: 'rust' });
+    expect(code).toContain('let conn = Connection::open(&dsn)?;');
+    expect(code).toContain('while let Some(row) = rows.next()? {');
+    expect(code).toContain('conn.execute(WRITE_RESULTS, params![job_id, score])?;');
+    // duckdb-rs is synchronous, so there is no runtime to start.
+    expect(code).not.toContain('sqlx::');
+    expect(code).not.toContain('#[tokio::main]');
+    // Postgres still gets sqlx, and still gets the runtime.
+    const postgres = jobRunner();
+    const pg = generateProgramCode(postgres.d, { ...postgres.program, language: 'rust' });
+    expect(pg).toContain('#[tokio::main]');
+    expect(pg).toContain('sqlx::query(READ_JOBS)');
+  });
+
+  it('asks each Node driver for its rows the way that driver hands them over', () => {
+    const shapes = (['postgresql', 'mariadb', 'sqlite', 'duckdb'] as const).map((dialect) => {
+      const { d, program } = jobRunner(dialect);
+      return generateProgramCode(d, { ...program, language: 'typescript' });
+    });
+    const [pg, maria, sqlite, duck] = shapes;
+    expect(pg).toContain('const { rows } = await db.query(readJobsSql);');
+    // The MariaDB connector hands back the rows themselves…
+    expect(maria).toContain('const rows = await db.query(readJobsSql);');
+    // …node:sqlite prepares first and is synchronous…
+    expect(sqlite).toContain('const rows = db.prepare(readJobsSql).all();');
+    expect(sqlite).toContain('db.prepare(writeResultsSql).run(job_id, score);');
+    // …and DuckDB reads the whole result before there are rows to walk.
+    expect(duck).toContain('const rows = await (await db.runAndReadAll(readJobsSql)).getRowObjects();');
+    // None of them may be given node-postgres's answer by accident.
+    for (const code of shapes.slice(1)) expect(code).not.toContain('const { rows } = await db.query');
+  });
+
   it('falls back to the plan in comments when no driver template exists', () => {
     const { d, program } = jobRunner();
     expect(hasDriver('csharp', 'postgresql')).toBe(false);
@@ -315,6 +404,23 @@ describe('the generated starter', () => {
     const { d, program } = jobRunner();
     const steps = resolveSteps(d, program, driverFor('python', 'postgresql'));
     expect(new Set(steps.map((s) => s.slug)).size).toBe(steps.length);
+  });
+
+  it('gives every language and engine a starter that names its own driver', () => {
+    const languages = ['python', 'rust', 'go', 'java', 'javascript', 'typescript', 'c', 'cpp'] as const;
+    for (const dialect of ['postgresql', 'mariadb', 'sqlite', 'duckdb'] as const) {
+      const { d, program } = jobRunner(dialect);
+      for (const language of languages) {
+        const driver = driverFor(language, dialect)!;
+        expect(driver, `${language} on ${dialect}`).toBeDefined();
+        const code = generateProgramCode(d, { ...program, language });
+        // The install line names the package, and the file is more than a plan.
+        expect(code, `${language} on ${dialect}`).toContain(driver.install);
+        expect(code, `${language} on ${dialect}`).not.toContain('No driver template exists');
+        const bare = code.split('\n').filter((l) => l.trim() && !/^\s*(\/\/|#|\*)/.test(l));
+        expect(bare.length, `${language} on ${dialect} writes code, not comments`).toBeGreaterThan(8);
+      }
+    }
   });
 
   it('survives a program with no steps at all', () => {

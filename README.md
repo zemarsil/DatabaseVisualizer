@@ -267,9 +267,9 @@ src/components/SheetTabs.tsx  the diagram tabs above the canvas
 src/store/useSimulation.ts  simulation mode: target, sample options, playback, recompute on edit
 src/components/          React UI (canvas, inspector, drawer panels, command palette)
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
-scripts/                 scan_python.py (a Python codebase -> a code map), validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
+scripts/                 scan_code.py + dbviz_scan/ (a codebase -> a code map), validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
 docs/                    ADVISOR_OUTPUT_FORMAT.md, CODE_MAP_FORMAT.md, EXTENSION_PACK_FORMAT.md, examples, and walkthroughs/
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, column lineage, layout, file format, the simulation, extensions, code maps, the Python scanner (against the service in tests/fixtures), the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, column lineage, layout, file format, the simulation, extensions, code maps, the scanner (against the same service written in each of the eight languages it reads, under tests/fixtures), the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
 ```
 
 ```bash
@@ -345,9 +345,19 @@ usually wants:
 | Python | psycopg 3 | MariaDB Connector/Python | `sqlite3` | duckdb |
 | Rust | sqlx (postgres) | sqlx (mysql) | sqlx (sqlite) | duckdb |
 | Go | pgx | go-sql-driver/mysql | modernc.org/sqlite | go-duckdb |
-| C / C++ | libpq | MariaDB Connector/C | SQLite | DuckDB C API |
 | Java | PostgreSQL JDBC | MariaDB JDBC | SQLite JDBC | DuckDB JDBC |
 | JavaScript / TypeScript | node-postgres | mariadb | `node:sqlite` | @duckdb/node-api |
+| C | libpq | MariaDB Connector/C | SQLite | DuckDB C API |
+| C++ | libpqxx | MariaDB Connector/C++ | SQLiteCpp | DuckDB C++ API |
+
+Each of those is a different conversation, not one conversation with the names
+changed, and the starter writes the one its driver actually has: `PQntuples`
+and a tuple index for libpq, `sqlite3_prepare_v2` and `sqlite3_step` for SQLite,
+a `pqxx::work` that commits and a `catch` that reports for libpqxx, `db.prepare(…).all()`
+for `node:sqlite` against `const { rows } = await db.query(…)` for node-postgres,
+`while let Some(row) = rows.next()?` for duckdb-rs against sqlx's `fetch_all`.
+C++ gets C++ libraries rather than C ones, because a reader of a `.cpp` file
+reaches for the library that owns its own handles.
 
 It is a starting point and says so: compute steps come out as stubs that raise,
 because the work outside the database is exactly what the diagram cannot know.
@@ -432,32 +442,43 @@ format, the annotation block and the derived-versus-stored rules are in
 [`docs/CODE_MAP_FORMAT.md`](docs/CODE_MAP_FORMAT.md); walkthrough
 [16](docs/walkthroughs/16-map-the-code-that-talks-to-it.md) builds one by hand.
 
-### Scanning a Python codebase into one
+### Scanning a codebase into one
 
 Drawing the map by hand is the right way to design a service. For one that
 already exists, point the scanner at it:
 
 ```bash
-python3 scripts/scan_python.py services/api --into bookshop.dbviz.json -o mapped.dbviz.json
+python3 scripts/scan_code.py services/api --into bookshop.dbviz.json -o mapped.dbviz.json
 ```
 
-It reads the code with Python's own `ast` — nothing to install — and writes the
-files, classes and functions, the queries each one runs (with the tables and
-columns they touch, matched by name against the diagram you point it at), and
-the calls, imports and inheritance between them. Docstrings become the nodes'
-comments; a route decorator becomes the sentence saying how a function nobody
-calls is reached. By default it keeps only the code that reaches the database
-and the functions that call it, because that is what the map is for; `--all`
-keeps the rest. A table the code names that your diagram has not got is drawn
-as a stub saying where it came from, which is either a table you forgot or a
-query that is out of date.
+It reads **Python, Rust, Go, C, C++, Java, JavaScript and TypeScript** — one
+tree at a time, all of them at once if a service is written in more than one —
+and writes the files, classes and functions, the queries each one runs (with
+the tables and columns they touch, matched by name against the diagram you
+point it at), and the calls, imports and inheritance between them. Doc comments
+become the nodes' comments; a route decorator, annotation or attribute —
+`@app.post('/orders')`, `@PostMapping("/orders")`, `#[post("/orders")]` —
+becomes the sentence saying how a function nobody calls is reached. By default
+it keeps only the code that reaches the database and the functions that call
+it, because that is what the map is for; `--all` keeps the rest. A table the
+code names that your diagram has not got is drawn as a stub saying where it
+came from, which is either a table you forgot or a query that is out of date.
+
+Nothing to install: Python 3.9 and the standard library, whatever the code
+being scanned is written in. Python is read with Python's own `ast`; the other
+seven get a tolerant lexer, which knows enough that a `SELECT` in a comment is
+a comment, a brace in a string is not a brace, and a query spread over a Rust
+`r#"…"#`, a Java text block, a Go backtick or four adjacent C literals is one
+query. Each language's own shapes are followed: a Go method belongs to the type
+in its receiver, every `impl Foo` adds to the one `Foo`, a C header and the
+source beside it are one module.
 
 What it cannot see it says so about, on standard error: an ORM builds its
 queries where no string literal exists, and a table name substituted in at run
 time is a hole. Treat the output the way you would an imported schema — a first
 draft to correct. Running it again updates the map in place rather than growing
 a second copy, keeping where you dragged each node and what you renamed.
-[`docs/CODE_MAP_FORMAT.md`](docs/CODE_MAP_FORMAT.md#scanning-a-python-codebase)
+[`docs/CODE_MAP_FORMAT.md`](docs/CODE_MAP_FORMAT.md#scanning-a-codebase)
 has the flags and the full list of what it reads and what it cannot.
 
 The scanner and the starter are the same road in both directions: one reads a
