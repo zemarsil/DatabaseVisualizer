@@ -8,10 +8,11 @@ table"* is one arrow in one picture, and *"what breaks if I drop this column"*
 is a **Trace** rather than a grep.
 
 This document is the file format for that half of the diagram. It is written
-for someone producing a `.dbviz.json` by hand or from a script — a scanner over
-a repository, an advisor agent, a person with a text editor — and it is the
+for someone producing a `.dbviz.json` by hand or from a script — an advisor
+agent, a person with a text editor, a scanner over a repository — and it is the
 companion to [`ADVISOR_OUTPUT_FORMAT.md`](ADVISOR_OUTPUT_FORMAT.md), which
-documents everything else in the file. The walkthrough that builds one by hand
+documents everything else in the file. For Python there is a scanner in the
+box: [`scripts/scan_python.py`](#scanning-a-python-codebase). The walkthrough that builds one by hand
 is [`walkthroughs/16-map-the-code-that-talks-to-it.md`](walkthroughs/16-map-the-code-that-talks-to-it.md).
 
 ## One node family, four kinds
@@ -276,6 +277,140 @@ that is missing does. Nothing is silently dropped.
 The program rules still apply to every kind: a `write` to a column a data flow
 already computes, a write to a view or to a table marked as living in another
 database, a step naming a table that is gone.
+
+## Scanning a Python codebase
+
+Drawing a map by hand is the right way to design a service. Drawing one by hand
+for a service that already exists is an afternoon of grep, so for Python there
+is a scanner:
+
+```bash
+python3 scripts/scan_python.py services/api --into bookshop.dbviz.json -o mapped.dbviz.json
+```
+
+It needs nothing but Python 3.9 or newer — it reads the code with the standard
+library's own `ast`, so a `def` inside a string is not a function and a
+commented-out query is not a step — and it writes the whole file back out with
+the map in it, leaving everything else in the diagram alone. Without `--into`
+it writes a new diagram whose tables are the ones the queries implied.
+
+### What it reads
+
+- **The shape.** One program per source you give it; a directory becomes a
+  module, a file becomes a module inside that, and a package's `__init__.py` is
+  the package rather than a file in it. Classes and functions are nodes; a
+  function inside a function is not, because a function is the leaf of the map —
+  its queries and calls belong to the function that holds it.
+- **The queries.** String literals that *begin* with `SELECT`, `INSERT`,
+  `UPDATE`, `DELETE`, `REPLACE`, `MERGE`, `TRUNCATE` or `WITH` and go on to have
+  the shape of one — an `UPDATE` has a `SET`, a `DELETE` has a `FROM` — which is
+  what keeps "Update the stock count whenever an order is placed" a sentence
+  rather than a write arrow. Literals
+  concatenated with `+` are folded first; an f-string keeps its holes as
+  `{expr}`. A statement's tables come off its `FROM`, `JOIN`, `INTO` and
+  `UPDATE` clauses at any depth, so a subquery in a `WHERE` is the read it is.
+  A query parked in a module-level or class-level constant is a step on
+  *whatever names it*, not on the file that holds it.
+- **The columns.** What a write names as its target — the `INSERT` column list,
+  the `SET` assignments — is what the write touches. Every other column the
+  statement mentions belongs to the tables it reads, attributed by alias where
+  it is qualified and by scope where it is not, so `SELECT title FROM books
+  WHERE id IN (SELECT book_id FROM order_items …)` gives `title` to `books` and
+  `book_id` to `order_items`. `SELECT *` is the whole row, which the format
+  writes as no columns at all.
+- **The links.** A call becomes a `call` step, an import of another scanned
+  module an `import` step, a base class an `extends` step. Names are resolved
+  the way Python resolves them: `self` first, then what the file imported, then
+  what it defines. A name none of that explains falls back to the format's own
+  rule for reading a path — a bare name will do where exactly one node in the
+  map carries it — which `--strict-calls` turns off.
+- **The prose.** A node's `comment` is its docstring's first paragraph, because
+  Python already has the field the format wants. A function carrying a
+  decorator that is not `@staticmethod` and friends gets a sentence saying so:
+  *Reached through `@app.post('/orders')`* is the answer to "nothing calls this
+  function".
+- **The entrypoint.** A module's path, a class's declaration, a function's
+  signature — reconstructed from the syntax rather than copied out of the
+  source, so a signature split over six lines arrives as one.
+
+### What it keeps
+
+A repository of any size has thousands of functions and a handful that run a
+query, and the code map exists to point at tables. So by default what survives
+is the functions that touch the database, the ones that call those (`--callers
+N` hops, one by default), and the containers they sit in. `--all` keeps
+everything. A call or an `extends` whose other end did not survive loses its
+arrow with it — which means a base class whose methods never touch the database
+is not drawn, and one whose methods do is kept by the same rule as everything
+else.
+
+### Tables, and tables it has never heard of
+
+Steps point at the tables of the diagram named by `--into`, matched by name and
+then by `schema.name`. A table the code names that the diagram has not got is
+**invented**: a stub carrying the columns its queries named, a `slate` colour
+and a comment saying where it came from. That is the lesser evil — a step
+pointing at nothing draws no arrow and fails the validator below — and it is
+also a useful signal, because a stub is either a table you forgot to draw or a
+query naming one that is gone. `--no-stub-tables` leaves the reference dangling
+instead, for **Problems** to report with its one-click fix. When the queries
+named no columns at all (`DELETE FROM x` and nothing else) there is no stub to
+write, so that reference dangles either way.
+
+### What it cannot read
+
+Everything that is not in the syntax:
+
+- **ORMs.** `session.query(Order)`, `Order.objects.filter(...)`, a SQLAlchemy
+  select over mapped classes: the table name is in the mapping, not the call.
+  Those functions come out as plain calls with no read or write, and the tables
+  they touch have to be added by hand.
+- **Queries assembled at run time** — a table name substituted into an
+  f-string, a `WHERE` clause built by appending to a list, SQL read from a file.
+  A statement with a hole in it is still read and still drawn, holes and all;
+  one whose *table* is the hole draws nothing, and is counted in the report so
+  you know to add the step yourself.
+- **Dynamic dispatch.** A handler looked up in a registry, a callback passed in,
+  a method on an object whose type the scanner cannot know. Where the name is
+  unique in the map it is guessed; otherwise the call is not drawn.
+- **`compute` steps.** Whether the work between a read and a write is worth a
+  step is a judgement about what matters, and the scanner has no way to make
+  it. Add those by hand; they are usually the most interesting line on the node.
+
+None of this is a reason not to scan — it is the reason the output is a first
+draft to correct, the same as an imported schema. What the scanner is good at
+is the tedious half: finding every query in forty files and getting the column
+lists right.
+
+### Scanning again
+
+Ids are derived from the path of the node, so a second scan updates the map
+rather than growing a second copy of it: the scan owns the program node it
+writes and everything under it, and replaces exactly that. What it cannot work
+out for itself comes back on the node with the same id — where you dragged it,
+what colour you gave it, a comment you wrote where the code had no docstring —
+unless you pass `--relayout`. Everything else in the diagram is untouched, so
+pointing the scanner at `--into` the file it wrote last week is the normal way
+to use it.
+
+### The flags
+
+| Flag | Does |
+| --- | --- |
+| `--into FILE` | the diagram to write into; its tables are what the steps point at. |
+| `-o, --out FILE` | where to write (default: standard output). Pass the `--into` file to update it in place. |
+| `--sheet NAME` | which diagram of a workspace file to write into. |
+| `--name NAME`, `--role ROLE` | what to call the program, and whether it is a service, job, script or etl. |
+| `--all`, `--callers N` | keep everything; or keep N call hops out from the database (default 1). |
+| `--exclude GLOB`, `--include-tests` | on top of the defaults, which skip `.*`, `__pycache__`, `node_modules`, virtualenvs, build output, `migrations`, `alembic` and `tests`. |
+| `--no-stub-tables` | never invent a table; leave the reference dangling. |
+| `--collapse KIND` | fold every container of that kind, which is how a big map opens readable. |
+| `--relayout` | lay every node out afresh, discarding where an earlier scan or a person put it. |
+| `--strict-calls` | only draw a call the code names unambiguously. |
+
+Whatever it could not work out — a file that would not parse, a table the
+diagram has not got, a column a query names that its table has not — goes to
+standard error, so the diagram on standard output stays a diagram.
 
 ## Checking a file
 

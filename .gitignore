@@ -7,5 +7,9 @@ dist-server/
 coverage/
 *.local
 
+# Python bytecode, from running scripts/scan_python.py out of the tree.
+__pycache__/
+*.pyc
+
 # Scratch tests agents use to print generated SQL while writing a walkthrough.
 tests/__scratch-*.test.ts
