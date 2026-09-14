@@ -267,9 +267,9 @@ src/components/SheetTabs.tsx  the diagram tabs above the canvas
 src/store/useSimulation.ts  simulation mode: target, sample options, playback, recompute on edit
 src/components/          React UI (canvas, inspector, drawer panels, command palette)
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
-scripts/                 validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
+scripts/                 scan_python.py (a Python codebase -> a code map), validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
 docs/                    ADVISOR_OUTPUT_FORMAT.md, CODE_MAP_FORMAT.md, EXTENSION_PACK_FORMAT.md, examples, and walkthroughs/
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, column lineage, layout, file format, the simulation, extensions, code maps, the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, column lineage, layout, file format, the simulation, extensions, code maps, the Python scanner (against the service in tests/fixtures), the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
 ```
 
 ```bash
@@ -410,6 +410,34 @@ the fix is one click), a function nothing calls, a circular import. The file
 format, the annotation block and the derived-versus-stored rules are in
 [`docs/CODE_MAP_FORMAT.md`](docs/CODE_MAP_FORMAT.md); walkthrough
 [16](docs/walkthroughs/16-map-the-code-that-talks-to-it.md) builds one by hand.
+
+### Scanning a Python codebase into one
+
+Drawing the map by hand is the right way to design a service. For one that
+already exists, point the scanner at it:
+
+```bash
+python3 scripts/scan_python.py services/api --into bookshop.dbviz.json -o mapped.dbviz.json
+```
+
+It reads the code with Python's own `ast` — nothing to install — and writes the
+files, classes and functions, the queries each one runs (with the tables and
+columns they touch, matched by name against the diagram you point it at), and
+the calls, imports and inheritance between them. Docstrings become the nodes'
+comments; a route decorator becomes the sentence saying how a function nobody
+calls is reached. By default it keeps only the code that reaches the database
+and the functions that call it, because that is what the map is for; `--all`
+keeps the rest. A table the code names that your diagram has not got is drawn
+as a stub saying where it came from, which is either a table you forgot or a
+query that is out of date.
+
+What it cannot see it says so about, on standard error: an ORM builds its
+queries where no string literal exists, and a table name substituted in at run
+time is a hole. Treat the output the way you would an imported schema — a first
+draft to correct. Running it again updates the map in place rather than growing
+a second copy, keeping where you dragged each node and what you renamed.
+[`docs/CODE_MAP_FORMAT.md`](docs/CODE_MAP_FORMAT.md#scanning-a-python-codebase)
+has the flags and the full list of what it reads and what it cannot.
 
 ## Several diagrams in one workspace
 
