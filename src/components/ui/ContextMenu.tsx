@@ -9,6 +9,7 @@ import { Check } from 'lucide-react';
 import { PALETTE } from '@/lib/palette';
 import { useStore } from '@/store/useStore';
 import { buildContextMenu, describeElements, hasActions, type ContextTarget, type MenuEnv, type MenuNode } from './contextMenuItems';
+import { codeSubtreeIds } from '@/lib/codemap';
 import { copyTextToClipboard, pasteFromClipboard } from '@/lib/canvasActions';
 import { addSheet, closeSheetWithConfirm, renameSheetWithPrompt } from '@/lib/sheets';
 import { confirmDialog, promptDialog } from './Modal';
@@ -99,23 +100,31 @@ function ContextMenuView({ menu }: { menu: OpenMenu }) {
           danger: true,
         }).then((ok) => ok && s.deleteGroup(groupId, true));
       },
-      remove: ({ tableIds = [], noteIds = [] }) => {
+      remove: ({ tableIds = [], noteIds = [], programIds = [] }) => {
         const touched = s.diagram.relationships.filter((r) => tableIds.includes(r.sourceTableId) || tableIds.includes(r.targetTableId)).length;
-        if (!touched) {
-          s.removeElements({ tableIds, noteIds });
+        // A container takes everything inside it along, which is worth a question.
+        const inside = programIds.length ? codeSubtreeIds(s.diagram, programIds).length - programIds.length : 0;
+        if (!touched && !inside) {
+          s.removeElements({ tableIds, noteIds, programIds });
           return;
         }
-        const count = tableIds.length + noteIds.length;
+        const count = tableIds.length + noteIds.length + programIds.length;
         const what =
-          tableIds.length === 1 && !noteIds.length
+          tableIds.length === 1 && !noteIds.length && !programIds.length
             ? `"${s.diagram.tables.find((t) => t.id === tableIds[0])?.name ?? 'this table'}"`
-            : describeElements({ tableIds, noteIds });
+            : programIds.length === 1 && !tableIds.length && !noteIds.length
+              ? `"${s.diagram.programs.find((p) => p.id === programIds[0])?.name ?? 'this code'}"`
+              : describeElements({ tableIds, noteIds, programIds });
+        const parts = [
+          touched ? `${touched} connection${touched === 1 ? '' : 's'} touching ${count === 1 ? 'it' : 'them'} will be removed too.` : '',
+          inside ? `The ${inside} node${inside === 1 ? '' : 's'} inside will go with it; steps elsewhere that call them keep their code.` : '',
+        ].filter(Boolean);
         void confirmDialog({
           title: `Delete ${what}?`,
-          message: `${touched} connection${touched === 1 ? '' : 's'} touching ${count === 1 ? 'it' : 'them'} will be removed too.`,
+          message: parts.join(' '),
           confirmLabel: 'Delete',
           danger: true,
-        }).then((ok) => ok && s.removeElements({ tableIds, noteIds }));
+        }).then((ok) => ok && s.removeElements({ tableIds, noteIds, programIds }));
       },
     };
   }, [store]);

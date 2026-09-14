@@ -738,8 +738,18 @@ export function programRoleMeta(id: ProgramRole): ProgramRoleMeta {
  *            justifies the whole node: a rollup that could have been SQL does
  *            not need a program, and a fit, a render, a model call or a request
  *            to somebody else's API cannot be SQL at all.
+ * call    -> it hands control (or data) to another code node: a function it
+ *            calls, a class it constructs, a service it sends work to.
+ * import  -> it depends on another module or the names inside one. Drawn
+ *            separately from a call because "this file needs that file" is a
+ *            fact about the build, not about what happens at run time.
+ * extends -> the class this one inherits from.
+ *
+ * The last three name a code node rather than a table, and they are what turns
+ * a program into a map of a codebase: a function body is a list of the things
+ * it does, and a call is a row that names another function.
  */
-export type ProgramStepOp = 'read' | 'write' | 'compute';
+export type ProgramStepOp = 'read' | 'write' | 'compute' | 'call' | 'import' | 'extends';
 
 export interface ProgramStepOpMeta {
   id: ProgramStepOp;
@@ -747,15 +757,27 @@ export interface ProgramStepOpMeta {
   /** Compact tag for the canvas and chip lists. */
   short: string;
   hint: string;
-  /** The step names a table; false only for 'compute'. */
+  /** The step names a table. */
   touchesDatabase: boolean;
+  /** The step names another code node. Never true together with touchesDatabase. */
+  namesCode: boolean;
 }
 
 export const PROGRAM_STEP_OPS: ProgramStepOpMeta[] = [
-  { id: 'read', label: 'Read', short: 'read', hint: 'A SELECT: rows leave the table and arrive in the program.', touchesDatabase: true },
-  { id: 'write', label: 'Write', short: 'write', hint: 'An INSERT, UPDATE or DELETE: the program puts rows back.', touchesDatabase: true },
-  { id: 'compute', label: 'Compute', short: 'compute', hint: 'Work the database never sees, and the reason the program exists.', touchesDatabase: false },
+  { id: 'read', label: 'Read', short: 'read', hint: 'A SELECT: rows leave the table and arrive in the program.', touchesDatabase: true, namesCode: false },
+  { id: 'write', label: 'Write', short: 'write', hint: 'An INSERT, UPDATE or DELETE: the program puts rows back.', touchesDatabase: true, namesCode: false },
+  { id: 'compute', label: 'Compute', short: 'compute', hint: 'Work the database never sees, and the reason the program exists.', touchesDatabase: false, namesCode: false },
+  { id: 'call', label: 'Call', short: 'call', hint: 'Hands control or data to another function, class or program.', touchesDatabase: false, namesCode: true },
+  { id: 'import', label: 'Import', short: 'import', hint: 'Depends on another module, or on a name defined in one.', touchesDatabase: false, namesCode: true },
+  { id: 'extends', label: 'Extends', short: 'extends', hint: 'Inherits from another class.', touchesDatabase: false, namesCode: true },
 ];
+
+/** The ops that name a code node rather than a table. */
+export const CODE_STEP_OPS: ProgramStepOp[] = ['call', 'import', 'extends'];
+
+export function isCodeStepOp(op: ProgramStepOp): op is 'call' | 'import' | 'extends' {
+  return op === 'call' || op === 'import' || op === 'extends';
+}
 
 export function isProgramStepOp(v: unknown): v is ProgramStepOp {
   return typeof v === 'string' && PROGRAM_STEP_OPS.some((o) => o.id === v);
@@ -779,8 +801,9 @@ export interface ProgramStep {
   op: ProgramStepOp;
   /**
    * Table this step reads or writes. Always absent for a compute step, which
-   * by definition does not touch the database; a step whose table was deleted
-   * keeps its prose and its code and is reported by the linter.
+   * by definition does not touch the database, and for the steps that name
+   * code; a step whose table was deleted keeps its prose and its code and is
+   * reported by the linter.
    */
   tableId?: string;
   /**
@@ -788,6 +811,12 @@ export interface ProgramStep {
    * is both the honest default and what `SELECT *` deserves to be called.
    */
   columnIds: string[];
+  /**
+   * The code node a call, import or extends step names. Only ever set on
+   * those ops. Like `tableId` it is allowed to dangle: the node it pointed at
+   * may be deleted, and the step's code and note survive it.
+   */
+  codeId?: string;
   /** The statement the program issues, as SQL. Meaningless on a compute step. */
   sql?: string;
   /** Host-language code for this step, in the program's language. */
@@ -797,23 +826,96 @@ export interface ProgramStep {
 }
 
 /**
- * A program that talks to the database from outside it.
+ * What a code node is: a runnable program, or one of the things a program is
+ * made of.
  *
- * Everything else on the canvas is something the database contains. A program
- * is the opposite: it is the caller, and the diagram holds it because where a
- * computation happens is a design decision worth drawing. The edges to its
- * tables are not stored — they are derived from `steps`, the same way a group's
- * rectangle is derived from its member tables — so a program can never carry an
- * edge that means nothing, and reordering a step moves its arrow with it.
+ * The four kinds are the four levels a person drawing a codebase by hand
+ * reaches for — files as the big boxes, classes inside them, functions as the
+ * nodes — plus the program that runs it all as the root. Anything finer
+ * (a method is a function inside a class; a package is a module inside a
+ * module) is nesting, not a new kind, which keeps the vocabulary short enough
+ * to read off a badge.
+ */
+export type CodeKind = 'program' | 'module' | 'class' | 'function';
+
+export interface CodeKindMeta {
+  id: CodeKind;
+  label: string;
+  /** Plural, for counts and headings. */
+  plural: string;
+  hint: string;
+  /** Can hold other code nodes. A function is the leaf of the map on purpose. */
+  container: boolean;
+  /** Kinds this one may sit inside. Empty means it is only ever a root. */
+  parents: CodeKind[];
+}
+
+export const CODE_KINDS: CodeKindMeta[] = [
+  { id: 'program', label: 'Program', plural: 'programs', hint: 'Something that runs: a service, a job, a script. The root of a code map.', container: true, parents: [] },
+  { id: 'module', label: 'Module', plural: 'modules', hint: 'A file or a package: the big box the classes and functions live in.', container: true, parents: ['program', 'module'] },
+  { id: 'class', label: 'Class', plural: 'classes', hint: 'A class, a struct, a type with methods.', container: true, parents: ['program', 'module', 'class'] },
+  { id: 'function', label: 'Function', plural: 'functions', hint: 'A function or a method: the node whose steps say what it does.', container: false, parents: ['program', 'module', 'class'] },
+];
+
+export function isCodeKind(v: unknown): v is CodeKind {
+  return typeof v === 'string' && CODE_KINDS.some((k) => k.id === v);
+}
+
+export function codeKindMeta(kind: CodeKind): CodeKindMeta {
+  return CODE_KINDS.find((k) => k.id === kind) ?? CODE_KINDS[0];
+}
+
+/** The kind of a code node, which every file written before code maps existed left unsaid. */
+export function codeKindOf(p: Pick<Program, 'kind'>): CodeKind {
+  return p.kind ?? 'program';
+}
+
+/** Whether a node of `child` kind may sit inside one of `parent` kind. */
+export function canContain(parent: CodeKind, child: CodeKind): boolean {
+  return codeKindMeta(parent).container && codeKindMeta(child).parents.includes(parent);
+}
+
+/**
+ * A program that talks to the database from outside it — and, since code maps,
+ * every other piece of code on the canvas: the modules a program is made of,
+ * the classes in them, the functions in those.
+ *
+ * Everything else on the canvas is something the database contains. Code is the
+ * opposite: it is the caller, and the diagram holds it because where a
+ * computation happens is a design decision worth drawing. The edges from a node
+ * are not stored — they are derived from `steps`, the same way a group's
+ * rectangle is derived from its member tables — so a node can never carry an
+ * edge that means nothing, and reordering a step moves its arrow with it. A
+ * step naming a table is the arrow that only this app can draw: the function
+ * and the table it reads, in one picture.
+ *
+ * Containment is a pointer on the child (`parentId`), never a list on the
+ * parent, for the same reason membership of a group lives on the table: the
+ * region drawn around a module is derived from where its members sit, so the
+ * two can never disagree about who is inside.
  */
 export interface Program {
   id: string;
   name: string;
+  /** Absent means 'program', which is what every file written before code maps existed means. */
+  kind?: CodeKind;
+  /** The container this node sits inside. Absent means it stands at the top level. */
+  parentId?: string;
+  /**
+   * Drawn as one node with its members hidden, every arrow that touched a
+   * member gathered onto it. Saved with the diagram, like a table's collapsed
+   * display, because it is part of how a big map is read.
+   */
+  collapsed?: boolean;
   language: ProgramLanguage;
-  /** Absent means unspecified; the node then shows the language alone. */
+  /** Absent means unspecified; the node then shows the language alone. Programs only. */
   role?: ProgramRole;
-  /** Where the code lives: a path, a module, a binary, a container. */
+  /** Where the code lives: a path, a module, a binary, a container; for a function, a signature if you like. */
   entrypoint?: string;
+  /**
+   * Where the node sits. For an expanded container this is only the anchor the
+   * region falls back to while it has no members; the region itself is derived.
+   */
   position: { x: number; y: number };
   /** Key into the palette in src/lib/palette.ts. */
   color: string;
@@ -834,9 +936,12 @@ export interface Diagram {
   /** Engine extensions this schema depends on. Empty for files written before extensions existed. */
   extensions: DiagramExtension[];
   /**
-   * Programs that talk to this schema from outside it. Empty for files written
-   * before programs existed, which is why nothing may assume the array is there
-   * without going through the loader in src/lib/io.ts.
+   * The code side of the diagram: programs that talk to this schema from
+   * outside it, and the modules, classes and functions inside them. The key
+   * predates code maps and was kept, because renaming a shipped key buys
+   * nothing a `kind` field does not. Empty for files written before programs
+   * existed, which is why nothing may assume the array is there without going
+   * through the loader in src/lib/io.ts.
    */
   programs: Program[];
   /** Saved viewport, purely cosmetic. */

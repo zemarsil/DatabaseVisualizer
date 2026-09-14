@@ -21,7 +21,18 @@ const DIALECTS = ['postgresql', 'mariadb', 'sqlite', 'duckdb'];
 const KINDS = ['fk', 'flow', 'embed', 'dependency'];
 const LANGUAGES = ['python', 'rust', 'go', 'cpp', 'c', 'java', 'javascript', 'typescript', 'csharp', 'ruby', 'shell', 'other'];
 const PROGRAM_ROLES = ['service', 'job', 'script', 'etl'];
-const STEP_OPS = ['read', 'write', 'compute'];
+const STEP_OPS = ['read', 'write', 'compute', 'call', 'import', 'extends'];
+/** Steps that name a table (and may carry sql) rather than another code node. */
+const TABLE_STEP_OPS = ['read', 'write'];
+/** Steps that name another code node through "codeId". */
+const CODE_STEP_OPS = ['call', 'import', 'extends'];
+/** Code node kind -> the kinds it may sit inside. A parent of the wrong kind is dropped on load. */
+const CODE_KINDS = {
+  program: [],
+  module: ['program', 'module'],
+  class: ['program', 'module', 'class'],
+  function: ['program', 'module', 'class'],
+};
 const AGGREGATES = ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX'];
 const WINDOW_FUNCTIONS = ['DIFF', 'LAG', 'LEAD', 'RUNNING_SUM', 'RUNNING_AVG', 'ROW_NUMBER', 'RANK'];
 const WINDOWS_WITHOUT_EXPRESSION = ['ROW_NUMBER', 'RANK'];
@@ -355,6 +366,11 @@ function validate(doc) {
     }
   }
 
+  // Code nodes are checked in two passes: first every node claims its id and
+  // kind, then parents and step targets are resolved against that full set, so a
+  // function may name a module written after it.
+  const programs = (Array.isArray(doc.programs) ? doc.programs : []).filter((prg) => prg && typeof prg === 'object');
+  const codeKindOf = new Map();
   for (const [pi, prg] of (Array.isArray(doc.programs) ? doc.programs : []).entries()) {
     const pw = `programs[${pi}]${prg && typeof prg.name === 'string' ? ` "${prg.name}"` : ''}`;
     if (!prg || typeof prg !== 'object') {
@@ -362,14 +378,59 @@ function validate(doc) {
       continue;
     }
     claim(prg.id, pw);
+    if (prg.kind !== undefined && !(prg.kind in CODE_KINDS)) {
+      err(`${pw}: kind "${prg.kind}" is not one of ${Object.keys(CODE_KINDS).join(', ')}; it loads as a program.`);
+    }
+    if (typeof prg.id === 'string') codeKindOf.set(prg.id, prg.kind in CODE_KINDS ? prg.kind : 'program');
+  }
+  const codeById = new Map(programs.filter((prg) => typeof prg.id === 'string').map((prg) => [prg.id, prg]));
+  for (const [pi, prg] of (Array.isArray(doc.programs) ? doc.programs : []).entries()) {
+    if (!prg || typeof prg !== 'object') continue;
+    const pw = `programs[${pi}]${typeof prg.name === 'string' ? ` "${prg.name}"` : ''}`;
+    const kind = codeKindOf.get(prg.id) ?? 'program';
+    const noun = kind === 'program' ? 'program' : kind;
     if (typeof prg.name !== 'string' || !prg.name.trim()) err(`${pw} has no name, so nothing can refer to it.`);
     if (prg.language !== undefined && !LANGUAGES.includes(prg.language)) {
       warn(`${pw}: language "${prg.language}" is not one of ${LANGUAGES.join(', ')}; it loads as "other" and gets no generated starter.`);
     }
     if (prg.role !== undefined && !PROGRAM_ROLES.includes(prg.role)) warn(`${pw}: role "${prg.role}" is not one of ${PROGRAM_ROLES.join(', ')}; it is dropped on load.`);
+    if (prg.role !== undefined && kind !== 'program') warn(`${pw} is a ${kind} with a role; only programs have roles, so it is dropped on load.`);
     if (prg.color !== undefined && !COLORS.includes(prg.color)) warn(`${pw}: colour "${prg.color}" is not in the palette.`);
+    if (prg.collapsed !== undefined && prg.collapsed !== true && prg.collapsed !== false) warn(`${pw}: "collapsed" must be true or false; anything else loads as expanded.`);
+    if (prg.collapsed === true && kind === 'function') warn(`${pw} is a collapsed function; a function holds nothing, so there is nothing to fold away.`);
+
+    // Containment. The loader drops a parent it cannot honour rather than
+    // refusing the file, so each of these is an error here: the node would
+    // silently land at the top level.
+    if (prg.parentId !== undefined) {
+      if (typeof prg.parentId !== 'string' || !prg.parentId) {
+        err(`${pw}: "parentId" must be the id of another code node.`);
+      } else if (prg.parentId === prg.id) {
+        err(`${pw} names itself as its parent; the pointer is dropped on load.`);
+      } else if (!codeById.has(prg.parentId)) {
+        err(`${pw}: parentId "${prg.parentId}" is not a code node in this file; the pointer is dropped on load.`);
+      } else {
+        const parentKind = codeKindOf.get(prg.parentId);
+        if (!CODE_KINDS[kind].includes(parentKind)) {
+          err(`${pw} is a ${noun} inside a ${parentKind}; a ${noun} can only sit inside ${CODE_KINDS[kind].length ? CODE_KINDS[kind].join(' or ') : 'nothing'}. The pointer is dropped on load.`);
+        }
+        // Walk up: meeting this node again means the parents form a loop.
+        const seen = new Set([prg.id]);
+        let cur = codeById.get(prg.parentId);
+        while (cur) {
+          if (seen.has(cur.id)) {
+            err(`${pw}: its parents loop back to itself; the pointer is dropped on load.`);
+            break;
+          }
+          seen.add(cur.id);
+          cur = typeof cur.parentId === 'string' ? codeById.get(cur.parentId) : undefined;
+        }
+      }
+    }
+
     const steps = Array.isArray(prg.steps) ? prg.steps : [];
-    if (!steps.length) warn(`${pw} has no steps, so the diagram does not say what it touches.`);
+    const container = kind !== 'function' && programs.some((other) => other.parentId === prg.id);
+    if (!steps.length && !container) warn(`${pw} has no steps, so the diagram does not say what it touches or calls.`);
     for (const [si, s] of steps.entries()) {
       const sw = `${pw} step ${si + 1}`;
       if (!s || typeof s !== 'object') {
@@ -381,11 +442,27 @@ function validate(doc) {
         err(`${sw}: op "${s.op}" is not one of ${STEP_OPS.join(', ')}; it loads as "read".`);
         continue;
       }
-      if (s.op === 'compute') {
-        // A compute step is defined by not touching the database, so anything
-        // pointing at one is stripped on load rather than honoured.
-        if (s.tableId) warn(`${sw} is a compute step with a tableId; it is dropped on load, because a compute step touches no table.`);
-        if (s.sql) warn(`${sw} is a compute step with sql; it is dropped on load. Put the statement on a read or write step.`);
+      if (!TABLE_STEP_OPS.includes(s.op)) {
+        // Only a read or a write touches the database, so anything pointing at
+        // a table from another kind of step is stripped on load rather than honoured.
+        if (s.tableId) warn(`${sw} is a ${s.op} step with a tableId; it is dropped on load, because a ${s.op} step touches no table.`);
+        if (s.sql) warn(`${sw} is a ${s.op} step with sql; it is dropped on load. Put the statement on a read or write step.`);
+      }
+      if (!CODE_STEP_OPS.includes(s.op) && s.codeId) warn(`${sw} is a ${s.op} step with a codeId; it is dropped on load, because only call, import and extends name code.`);
+      if (s.op === 'compute') continue;
+      if (CODE_STEP_OPS.includes(s.op)) {
+        if (typeof s.codeId !== 'string' || !s.codeId) {
+          err(`${sw} is a ${s.op} but names no code node ("codeId"), so it draws nothing.`);
+        } else if (!codeById.has(s.codeId)) {
+          err(`${sw}: codeId "${s.codeId}" is not a code node in this file.`);
+        } else if (s.codeId === prg.id && s.op === 'call') {
+          // Recursion is real code; the app keeps the step and draws no arrow for it.
+          warn(`${sw} calls the node it belongs to; a recursive call draws no arrow, so it is only worth keeping for its note or code.`);
+        } else if (s.codeId === prg.id) {
+          err(`${sw} ${s.op}s the node it belongs to, which cannot be what was meant.`);
+        } else if (s.op === 'extends' && codeKindOf.get(s.codeId) !== 'class') {
+          warn(`${sw} extends a ${codeKindOf.get(s.codeId)}; "extends" is meant for a class inheriting from a class.`);
+        }
         continue;
       }
       if (typeof s.tableId !== 'string' || !s.tableId) {

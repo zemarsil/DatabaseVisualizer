@@ -1,4 +1,16 @@
-import { describeRelationship, type CustomType, type Derivation, type Diagram, type DiagramExtension, type Dialect, type Program, type Relationship, type Table } from '@shared/types';
+import {
+  describeRelationship,
+  programStepOpMeta,
+  type CustomType,
+  type Derivation,
+  type Diagram,
+  type DiagramExtension,
+  type Dialect,
+  type Program,
+  type ProgramStep,
+  type Relationship,
+  type Table,
+} from '@shared/types';
 import { createColumn, createCustomTypeField, createDerivation, createExtension, createIndex, createProgram, createProgramStep, createRelationship, createTable } from '../model';
 import { newId } from '../ids';
 import { readAnnotations, type AnnotatedConnection, type AnnotatedProgram, type SqlAnnotations } from './annotations';
@@ -293,25 +305,35 @@ function applyAnnotations(
 }
 
 /**
- * Put back the programs a generated script carries in its annotation block.
+ * Put back the programs a generated script carries in its annotation block,
+ * and the code inside them.
  *
  * A step naming a table the script does not define and the diagram does not
  * have keeps everything except the pointer: its op, its SQL, its code and its
  * note all survive, and the linter reports the missing table afterwards. That
  * is the opposite of how a connection is handled, on purpose — a connection
  * with a missing end describes nothing, while a step with a missing table is
- * still the code somebody wrote.
+ * still the code somebody wrote. A call whose target the block never listed is
+ * kept on the same terms.
+ *
+ * Containment and call targets are written as paths, so they are resolved in a
+ * second pass once every node has an id: the block lists nodes in diagram
+ * order, and a member may well come before the module it sits in.
  */
 function restorePrograms(annotated: AnnotatedProgram[], lookup: (name: string) => Table | undefined, warnings: string[]): Program[] {
   const out: Program[] = [];
+  const byPath = new Map<string, Program>();
+  const pending: { node: Program; parent?: string; targets: { step: ProgramStep; target?: string }[] }[] = [];
   for (const a of annotated) {
+    const targets: { step: ProgramStep; target?: string }[] = [];
     const steps = a.steps.map((s) => {
-      const table = s.op === 'compute' || !s.table ? undefined : lookup(s.table);
-      if (s.table && !table && s.op !== 'compute') {
+      const meta = programStepOpMeta(s.op);
+      const table = meta.touchesDatabase && s.table ? lookup(s.table) : undefined;
+      if (meta.touchesDatabase && s.table && !table) {
         warnings.push(`Step "${s.op} ${s.table}" of the program ${a.name} kept its SQL and code, but ${s.table} is neither in this script nor in the diagram.`);
       }
       const columnIds = table ? (s.columns ?? []).map((n) => table.columns.find((c) => c.name.toLowerCase() === n.toLowerCase())?.id).filter((x): x is string => Boolean(x)) : [];
-      return createProgramStep({
+      const step = createProgramStep({
         op: s.op,
         ...(table ? { tableId: table.id } : {}),
         columnIds,
@@ -319,17 +341,40 @@ function restorePrograms(annotated: AnnotatedProgram[], lookup: (name: string) =
         ...(s.code ? { code: s.code } : {}),
         ...(s.note ? { note: s.note } : {}),
       });
+      if (meta.namesCode) targets.push({ step, target: s.target });
+      return step;
     });
-    out.push(
-      createProgram({
-        name: a.name,
-        language: a.language,
-        ...(a.role ? { role: a.role } : {}),
-        ...(a.entrypoint ? { entrypoint: a.entrypoint } : {}),
-        ...(a.comment ? { comment: a.comment } : {}),
-        steps,
-      }),
-    );
+    const node = createProgram({
+      name: a.name,
+      ...(a.kind ? { kind: a.kind } : {}),
+      ...(a.collapsed ? { collapsed: true } : {}),
+      language: a.language,
+      ...(a.role ? { role: a.role } : {}),
+      ...(a.entrypoint ? { entrypoint: a.entrypoint } : {}),
+      ...(a.comment ? { comment: a.comment } : {}),
+      steps,
+    });
+    byPath.set((a.parent ? `${a.parent}/${a.name}` : a.name).toLowerCase(), node);
+    pending.push({ node, parent: a.parent, targets });
+    out.push(node);
+  }
+  const find = (path: string | undefined): Program | undefined => {
+    if (!path) return undefined;
+    const exact = byPath.get(path.toLowerCase());
+    if (exact) return exact;
+    const tail = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
+    const byName = out.filter((p) => p.name.toLowerCase() === tail);
+    return byName.length === 1 ? byName[0] : undefined;
+  };
+  for (const { node, parent, targets } of pending) {
+    const container = find(parent);
+    if (container && container !== node) node.parentId = container.id;
+    else if (parent) warnings.push(`${node.name} was inside ${parent}, which this script does not describe, so it stands at the top level.`);
+    for (const { step, target } of targets) {
+      const hit = find(target);
+      if (hit) step.codeId = hit.id;
+      else if (target) warnings.push(`Step "${step.op} ${target}" of ${node.name} kept its code, but ${target} is not in this script.`);
+    }
   }
   return out;
 }

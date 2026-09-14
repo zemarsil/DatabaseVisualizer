@@ -14,6 +14,7 @@
  */
 import { describeRelationship, type Diagram, type Relationship } from '@shared/types';
 import { encodeClipboard } from './clipboard';
+import { codeSubtreeIds } from './codemap';
 import { generateMarkdown } from './markdownExport';
 import { markdownToHtml } from './markdownToHtml';
 import { customTypesUsedBy, emptyDiagram } from './model';
@@ -27,14 +28,20 @@ export interface SelectionSlice {
   omitted: Relationship[];
 }
 
-/** Cut `tableIds` out of `d` as a diagram of its own, in the diagram's own table order. */
-export function sliceSelection(d: Diagram, tableIds: string[]): SelectionSlice {
+/**
+ * Cut `tableIds` (and `programIds`, with everything inside them) out of `d` as
+ * a diagram of its own, in the diagram's own order. A code node's steps are
+ * kept whole, pointers and all: what they name may not have come along, and
+ * the renderings say so the same way they say a connection was left out.
+ */
+export function sliceSelection(d: Diagram, tableIds: string[], programIds: string[] = []): SelectionSlice {
   const wanted = new Set(tableIds);
   const tables = d.tables.filter((t) => wanted.has(t.id));
   const kept = new Set(tables.map((t) => t.id));
   const inside = (r: Relationship) => kept.has(r.sourceTableId) && kept.has(r.targetTableId);
   const straddles = (r: Relationship) => kept.has(r.sourceTableId) !== kept.has(r.targetTableId);
   const groupIds = new Set(tables.map((t) => t.groupId).filter((id): id is string => Boolean(id)));
+  const codeIds = new Set(codeSubtreeIds(d, programIds));
   return {
     diagram: {
       ...emptyDiagram(d.dialect, d.name),
@@ -43,6 +50,7 @@ export function sliceSelection(d: Diagram, tableIds: string[]): SelectionSlice {
       groups: d.groups.filter((g) => groupIds.has(g.id)),
       customTypes: customTypesUsedBy(d, tables),
       extensions: extensionsUsedBy(d, tables),
+      programs: d.programs.filter((p) => codeIds.has(p.id)),
     },
     omitted: d.relationships.filter(straddles),
   };
@@ -79,9 +87,9 @@ interface Rendered {
   warnings: string[];
 }
 
-function render(d: Diagram, tableIds: string[]): Rendered | null {
-  const slice = sliceSelection(d, tableIds);
-  if (slice.diagram.tables.length === 0) return null;
+function render(d: Diagram, tableIds: string[], programIds: string[] = []): Rendered | null {
+  const slice = sliceSelection(d, tableIds, programIds);
+  if (slice.diagram.tables.length === 0 && slice.diagram.programs.length === 0) return null;
   const out = generateSchema(slice.diagram);
   const kept = new Set(slice.diagram.tables.map((t) => t.id));
   const omitted = slice.omitted.slice(0, MAX_OMITTED_LINES).map((r) => describeOmitted(d, r, kept));
@@ -117,8 +125,8 @@ export interface SelectionSql {
 }
 
 /** The CREATE statements for the selected tables, with a blank line between them. */
-export function selectionSql(d: Diagram, tableIds: string[]): SelectionSql {
-  const rendered = render(d, tableIds);
+export function selectionSql(d: Diagram, tableIds: string[], programIds: string[] = []): SelectionSql {
+  const rendered = render(d, tableIds, programIds);
   if (!rendered) return { text: '', warnings: [] };
   const notes = sqlNotes(rendered);
   return { text: [rendered.script, ...(notes ? [notes] : [])].join('\n\n') + '\n', warnings: rendered.warnings };
@@ -135,15 +143,15 @@ function renderMarkdown(rendered: Rendered, opts: SelectionMarkdownOptions): str
   return parts.join('\n\n') + '\n';
 }
 
-/** The selected tables as a Markdown fragment: one section per table, then the connections. */
-export function selectionMarkdown(d: Diagram, tableIds: string[], opts: SelectionMarkdownOptions = {}): string {
-  const rendered = render(d, tableIds);
+/** The selected tables as a Markdown fragment: one section per table, then the connections, then the code. */
+export function selectionMarkdown(d: Diagram, tableIds: string[], opts: SelectionMarkdownOptions = {}, programIds: string[] = []): string {
+  const rendered = render(d, tableIds, programIds);
   return rendered ? renderMarkdown(rendered, opts) : '';
 }
 
 /** The Markdown rendering as HTML, for paste targets that read `text/html`. */
-export function selectionHtml(d: Diagram, tableIds: string[], opts: SelectionMarkdownOptions = {}): string {
-  const rendered = render(d, tableIds);
+export function selectionHtml(d: Diagram, tableIds: string[], opts: SelectionMarkdownOptions = {}, programIds: string[] = []): string {
+  const rendered = render(d, tableIds, programIds);
   return rendered ? markdownToHtml(renderMarkdown(rendered, opts)) : '';
 }
 
@@ -156,23 +164,26 @@ export interface ClipboardFlavors {
   html: string;
   /** How many tables actually came along, for the toast. */
   tableCount: number;
+  /** How many code nodes came along, members included. */
+  codeCount: number;
 }
 
 /**
- * Every rendering of `tableIds` at once, or null when none of them is a table
- * in this diagram. One slice, one generated script, shared by all three — this
- * runs inside the synchronous `copy` handler.
+ * Every rendering of `tableIds` and `programIds` at once, or null when none of
+ * them is in this diagram. One slice, one generated script, shared by all three
+ * — this runs inside the synchronous `copy` handler.
  */
-export function selectionFlavors(d: Diagram, tableIds: string[]): ClipboardFlavors | null {
-  if (!tableIds.length) return null;
-  const rendered = render(d, tableIds);
+export function selectionFlavors(d: Diagram, tableIds: string[], programIds: string[] = []): ClipboardFlavors | null {
+  if (!tableIds.length && !programIds.length) return null;
+  const rendered = render(d, tableIds, programIds);
   if (!rendered) return null;
   const notes = sqlNotes(rendered);
   const markdown = renderMarkdown(rendered, { includeSql: true });
   return {
-    json: encodeClipboard(d, tableIds),
+    json: encodeClipboard(d, tableIds, programIds),
     text: [rendered.script, ...(notes ? [notes] : [])].join('\n\n') + '\n',
     html: markdownToHtml(markdown),
     tableCount: rendered.slice.diagram.tables.length,
+    codeCount: rendered.slice.diagram.programs.length,
   };
 }

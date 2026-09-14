@@ -1,7 +1,12 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import {
+  canContain,
+  codeKindMeta,
+  codeKindOf,
   normalizeVerb,
+  programStepOpMeta,
+  type CodeKind,
   type Column,
   type CustomType,
   type DiagramExtension,
@@ -19,7 +24,9 @@ import {
   type Workspace,
 } from '@shared/types';
 import { layoutDiagram, type LayoutDirection } from '@/lib/layout';
+import { canBeParentOf, codeBounds, codeChildren, codeDescendantIds, codeSubtreeIds, codeVisibility, defaultCodeOp, nextCodePosition, wouldNestInItself, type CodeLinkOp } from '@/lib/codemap';
 import {
+  clonePrograms,
   cloneTables,
   createColumn,
   createCustomType,
@@ -234,8 +241,19 @@ interface Actions {
   /** partial.kind === 'view' creates a view (no default id column). */
   addTable: (position?: { x: number; y: number }, partial?: Partial<Omit<Table, 'id' | 'position'>>) => string;
   updateTable: (id: string, patch: Partial<Omit<Table, 'id' | 'columns' | 'indexes'>>) => void;
-  /** Paste copies of tables (from the clipboard or another diagram): fresh ids, unique names, offset positions. Returns the new table ids. */
-  pasteTables: (tables: Table[], relationships: Relationship[], customTypes?: CustomType[], offset?: { x: number; y: number }, extensions?: DiagramExtension[]) => string[];
+  /**
+   * Paste copies of tables (from the clipboard or another diagram): fresh ids,
+   * unique names, offset positions. Code nodes that came along are pasted too,
+   * their steps re-pointed at the pasted tables. Returns the new table ids.
+   */
+  pasteTables: (
+    tables: Table[],
+    relationships: Relationship[],
+    customTypes?: CustomType[],
+    offset?: { x: number; y: number },
+    extensions?: DiagramExtension[],
+    programs?: Program[],
+  ) => string[];
   setTableDisplay: (ids: string[], collapsed: TableDisplay | undefined) => void;
   /** Recolour a group of tables and/or notes in one history step. */
   colorElements: (ids: { tableIds?: string[]; noteIds?: string[]; programIds?: string[] }, color: string) => void;
@@ -297,11 +315,26 @@ interface Actions {
   duplicateNote: (id: string) => void;
   deleteNote: (id: string) => void;
 
-  // programs
-  addProgram: (opts?: { name?: string; position?: { x: number; y: number }; language?: Program['language'] }) => string;
+  // programs, and the code inside them
+  /** A code node of any kind; the default is a top-level program, which is what it always was. */
+  addProgram: (opts?: { name?: string; position?: { x: number; y: number }; language?: Program['language']; kind?: CodeKind; parentId?: string }) => string;
   updateProgram: (id: string, patch: Partial<Omit<Program, 'id' | 'steps'>>) => void;
+  /** Copies the node and everything inside it, calls between the copies re-pointed at each other. */
   duplicateProgram: (id: string) => void;
+  /** Deletes the node and everything inside it. Steps elsewhere that named them keep their code and dangle. */
   deleteProgram: (id: string) => void;
+  /** Move nodes into a container, or to the top level with null. Refuses a move that would put a node inside itself. */
+  setCodeParent: (ids: string[], parentId: string | null) => void;
+  /** Fold containers to one node each, or unfold them. */
+  setCodeCollapsed: (ids: string[], collapsed: boolean) => void;
+  /** Remove a container but keep what is in it, moved up one level. */
+  dissolveCodeNode: (id: string) => void;
+  /** Drag a container's region: its members move with it, in one history step. */
+  moveCodeContainer: (id: string, moves: { id: string; position: { x: number; y: number } }[], anchor: { x: number; y: number }) => void;
+  /** A call, import or extends step on `fromId` naming `toId`. Returns the step id, or null when that step already exists. */
+  connectCode: (fromId: string, toId: string, op?: CodeLinkOp) => string | null;
+  /** A read or write step on a code node naming a table. Returns the step id, or null when that step already exists. */
+  connectCodeToTable: (codeId: string, tableId: string, op: 'read' | 'write', columnIds?: string[]) => string | null;
   /** Appends a step. `at` inserts before that index instead, so a step can be added mid-sequence. */
   addProgramStep: (programId: string, partial?: Partial<ProgramStep>, at?: number) => string;
   updateProgramStep: (programId: string, stepId: string, patch: Partial<Omit<ProgramStep, 'id'>>) => void;
@@ -507,7 +540,7 @@ export const useStore = create<Store>()(
     const leaveSheetUi = () => {
       const ui = useUi.getState();
       ui.setFocus(null);
-      ui.setRenamingTableId(null);
+      ui.setRenamingNodeId(null);
     };
 
     /**
@@ -528,7 +561,9 @@ export const useStore = create<Store>()(
     const removeElements: Actions['removeElements'] = ({ tableIds = [], noteIds = [], programIds = [], relationshipIds = [] }) => {
       const tables = new Set(tableIds);
       const notes = new Set(noteIds);
-      const programs = new Set(programIds);
+      // A container goes with everything inside it: a module's functions have
+      // nowhere to be once the module is gone.
+      const programs = new Set(programIds.length ? codeSubtreeIds(get().diagram, programIds) : []);
       const rels = new Set(relationshipIds);
       if (!tables.size && !notes.size && !programs.size && !rels.size) return;
       mutate((d) => {
@@ -787,10 +822,11 @@ export const useStore = create<Store>()(
           },
           { coalesce: textPatchKey(`table:${id}`, patch) },
         ),
-      pasteTables: (tables, relationships, customTypes, offset, extensions) => {
+      pasteTables: (tables, relationships, customTypes, offset, extensions, programs) => {
         const d = get().diagram;
-        const { tables: copies, relationships: rels } = cloneTables(tables, relationships, d, offset);
-        if (copies.length === 0) return [];
+        const { tables: copies, relationships: rels, tableIdMap, columnIdMap } = cloneTables(tables, relationships, d, offset);
+        const codeCopies = programs?.length ? clonePrograms(programs, tableIdMap, d, offset, columnIdMap) : [];
+        if (copies.length === 0 && codeCopies.length === 0) return [];
         const existingTypes = new Set(d.customTypes.map((t) => t.name.toLowerCase()));
         const newTypes = (customTypes ?? [])
           .filter((ct) => !existingTypes.has(ct.name.toLowerCase()))
@@ -806,9 +842,10 @@ export const useStore = create<Store>()(
           dd.relationships.push(...rels);
           if (newTypes.length) dd.customTypes.push(...newTypes);
           if (newExtensions.length) dd.extensions.push(...newExtensions);
+          if (codeCopies.length) dd.programs.push(...codeCopies);
         });
         set((s) => {
-          s.selection = { ...emptySelection(), tableIds: copies.map((t) => t.id) };
+          s.selection = { ...emptySelection(), tableIds: copies.map((t) => t.id), programIds: codeCopies.map((p) => p.id) };
           invalidateTrace(s);
         });
         return copies.map((t) => t.id);
@@ -1200,16 +1237,24 @@ export const useStore = create<Store>()(
       },
       deleteNote: (id) => removeElements({ noteIds: [id] }),
 
-      /* ---------------- programs ---------------- */
+      /* ---------------- programs, and the code inside them ---------------- */
       addProgram: (opts = {}) => {
-        const name = uniqueProgramName(get().diagram, opts.name ?? 'new_program');
+        const d = get().diagram;
+        const kind = opts.kind ?? 'program';
+        const parent = opts.parentId ? d.programs.find((p) => p.id === opts.parentId) : undefined;
+        const parentId = parent && canContain(codeKindOf(parent), kind) ? parent.id : undefined;
+        const fallbackName = kind === 'program' ? 'new_program' : kind === 'module' ? 'new_module.py' : kind === 'class' ? 'NewClass' : 'new_function';
+        const name = uniqueProgramName(d, opts.name ?? fallbackName, parentId);
         const prg = createProgram({
           name,
-          position: opts.position ?? nextProgramPosition(get().diagram),
-          ...(opts.language ? { language: opts.language } : {}),
+          ...(kind !== 'program' ? { kind } : {}),
+          ...(parentId ? { parentId } : {}),
+          position: opts.position ?? nextCodePosition(d, parentId, nextProgramPosition(d), get().placementSizes()),
+          // A member speaks its container's language unless told otherwise.
+          ...(opts.language ? { language: opts.language } : parent ? { language: parent.language } : {}),
         });
-        mutate((d) => {
-          d.programs.push(prg);
+        mutate((dd) => {
+          dd.programs.push(prg);
         });
         set((s) => {
           s.selection = { ...emptySelection(), programIds: [prg.id] };
@@ -1220,30 +1265,142 @@ export const useStore = create<Store>()(
         mutate(
           (d) => {
             const p = d.programs.find((x) => x.id === id);
-            if (p) Object.assign(p, patch);
+            if (!p) return;
+            // A parent that would put the node inside itself is refused here
+            // rather than drawn as a loop nothing could lay out.
+            const { parentId, ...rest } = patch;
+            Object.assign(p, rest);
+            if (parentId !== undefined) {
+              if (!parentId) delete p.parentId;
+              else if (!wouldNestInItself(d as Diagram, id, parentId) && d.programs.some((x) => x.id === parentId)) p.parentId = parentId;
+            }
+            if (codeKindOf(p) !== 'program') delete p.role;
           },
           { coalesce: textPatchKey(`program:${id}`, patch) },
         ),
       duplicateProgram: (id) => {
-        const src = get().diagram.programs.find((p) => p.id === id);
+        const d = get().diagram;
+        const src = d.programs.find((p) => p.id === id);
         if (!src) return;
-        const copy = createProgram({
-          ...src,
-          id: undefined,
-          name: uniqueProgramName(get().diagram, src.name),
-          position: { x: src.position.x + 28, y: src.position.y + 28 },
-          // Steps are copied with fresh ids: they are the program's own, and two
-          // programs sharing a step id would confuse every edge keyed on it.
-          steps: src.steps.map((s) => createProgramStep({ ...s, id: undefined, columnIds: [...s.columnIds] })),
-        });
-        mutate((d) => {
-          d.programs.push(copy);
+        const subtree = codeSubtreeIds(d, [id]);
+        const originals = d.programs.filter((p) => subtree.includes(p.id));
+        const copies = clonePrograms(originals, new Map(), d, { x: 28, y: 28 });
+        const root = copies[0];
+        if (!root) return;
+        root.name = uniqueProgramName(d, src.name, src.parentId);
+        if (src.parentId) root.parentId = src.parentId;
+        mutate((dd) => {
+          dd.programs.push(...copies);
         });
         set((s) => {
-          s.selection = { ...emptySelection(), programIds: [copy.id] };
+          s.selection = { ...emptySelection(), programIds: [root.id] };
         });
       },
       deleteProgram: (id) => removeElements({ programIds: [id] }),
+      setCodeParent: (ids, parentId) => {
+        const d = get().diagram;
+        const parent = parentId ? d.programs.find((p) => p.id === parentId) : undefined;
+        if (parentId && !parent) return;
+        const moved = ids.filter((id) => {
+          const node = d.programs.find((p) => p.id === id);
+          if (!node) return false;
+          if (!parent) return Boolean(node.parentId);
+          return node.parentId !== parent.id && canBeParentOf(d, parent, node);
+        });
+        if (!moved.length) return;
+        const chosen = new Set(moved);
+        mutate((dd) => {
+          for (const p of dd.programs) {
+            if (!chosen.has(p.id)) continue;
+            if (parent) p.parentId = parent.id;
+            else delete p.parentId;
+          }
+        });
+      },
+      setCodeCollapsed: (ids, collapsed) => {
+        const d = get().diagram;
+        const vis = codeVisibility(d);
+        const bounds = codeBounds(d, { sizes: get().placementSizes() }, vis);
+        const chosen = new Set(ids);
+        mutate((dd) => {
+          for (const p of dd.programs) {
+            if (!chosen.has(p.id) || !codeKindMeta(codeKindOf(p)).container) continue;
+            if (Boolean(p.collapsed) === collapsed) continue;
+            if (collapsed) {
+              // The folded node takes the place the region had, so nothing
+              // jumps; expanding later derives the region from the members
+              // again, exactly where they were left.
+              const box = bounds[p.id];
+              if (box) p.position = { x: Math.round(box.x), y: Math.round(box.y) };
+              p.collapsed = true;
+            } else {
+              delete p.collapsed;
+            }
+          }
+        });
+        set((s) => {
+          if (useUi.getState().activeProgramStepId) useUi.getState().setActiveProgramStepId(null);
+          invalidateTrace(s);
+        });
+      },
+      dissolveCodeNode: (id) => {
+        const d = get().diagram;
+        const node = d.programs.find((p) => p.id === id);
+        if (!node) return;
+        mutate((dd) => {
+          for (const p of dd.programs) {
+            if (p.parentId !== id) continue;
+            if (node.parentId) p.parentId = node.parentId;
+            else delete p.parentId;
+          }
+          dd.programs = dd.programs.filter((p) => p.id !== id);
+        });
+        set((s) => {
+          s.selection.programIds = s.selection.programIds.filter((x) => x !== id);
+          invalidateTrace(s);
+        });
+      },
+      moveCodeContainer: (id, moves, anchor) =>
+        mutate(
+          (d) => {
+            const byId = new Map(moves.map((m) => [m.id, m.position]));
+            for (const p of d.programs) {
+              const at = byId.get(p.id);
+              if (at) p.position = at;
+            }
+            const c = d.programs.find((x) => x.id === id);
+            if (c) c.position = anchor;
+          },
+          { history: false },
+        ),
+      connectCode: (fromId, toId, op) => {
+        const d = get().diagram;
+        const from = d.programs.find((p) => p.id === fromId);
+        const to = d.programs.find((p) => p.id === toId);
+        if (!from || !to || from.id === to.id) return null;
+        const chosen = op ?? defaultCodeOp(from, to);
+        if (from.steps.some((s) => s.op === chosen && s.codeId === to.id)) return null;
+        const step = createProgramStep({ op: chosen, codeId: to.id });
+        mutate((dd) => {
+          dd.programs.find((p) => p.id === fromId)?.steps.push(step);
+        });
+        set((s) => invalidateTrace(s));
+        return step.id;
+      },
+      connectCodeToTable: (codeId, tableId, op, columnIds = []) => {
+        const d = get().diagram;
+        const node = d.programs.find((p) => p.id === codeId);
+        const table = d.tables.find((t) => t.id === tableId);
+        if (!node || !table) return null;
+        const cols = columnIds.filter((id) => table.columns.some((c) => c.id === id));
+        if (node.steps.some((s) => s.op === op && s.tableId === tableId && s.columnIds.join(',') === cols.join(','))) return null;
+        const step = createProgramStep({ op, tableId, columnIds: cols });
+        mutate((dd) => {
+          dd.programs.find((p) => p.id === codeId)?.steps.push(step);
+        });
+        set((s) => invalidateTrace(s));
+        return step.id;
+      },
       addProgramStep: (programId, partial = {}, at) => {
         const step = createProgramStep(partial);
         mutate((d) => {
@@ -1260,13 +1417,15 @@ export const useStore = create<Store>()(
             const s = d.programs.find((x) => x.id === programId)?.steps.find((x) => x.id === stepId);
             if (!s) return;
             Object.assign(s, patch);
-            // Switching to compute drops what a compute step cannot have, so the
-            // model never holds a contradiction; switching back starts clean.
-            if (s.op === 'compute') {
+            // Switching op drops what the new op cannot have, so the model never
+            // holds a contradiction; switching back starts clean.
+            const meta = programStepOpMeta(s.op);
+            if (!meta.touchesDatabase) {
               delete s.tableId;
               delete s.sql;
               s.columnIds = [];
             }
+            if (!meta.namesCode) delete s.codeId;
           },
           { coalesce: textPatchKey(`step:${stepId}`, patch) },
         ),
@@ -1302,10 +1461,11 @@ export const useStore = create<Store>()(
         }
       },
       nudgeSelection: (dx, dy) => {
-        const { selection } = get();
+        const { selection, diagram } = get();
         const tableIds = new Set(selection.tableIds);
         const noteIds = new Set(selection.noteIds);
-        const programIds = new Set(selection.programIds);
+        // A container carries what is inside it, whether folded or not.
+        const programIds = new Set(codeSubtreeIds(diagram, selection.programIds));
         if (tableIds.size === 0 && noteIds.size === 0 && programIds.size === 0) return;
         mutate(
           (d) => {
@@ -1319,6 +1479,7 @@ export const useStore = create<Store>()(
       moveItems: (moves) =>
         mutate(
           (d) => {
+            const children = codeChildren(d as Diagram);
             for (const m of moves) {
               const t = d.tables.find((x) => x.id === m.id);
               if (t) {
@@ -1331,7 +1492,18 @@ export const useStore = create<Store>()(
                 continue;
               }
               const pr = d.programs.find((x) => x.id === m.id);
-              if (pr) pr.position = m.position;
+              if (!pr) continue;
+              const dx = m.position.x - pr.position.x;
+              const dy = m.position.y - pr.position.y;
+              pr.position = m.position;
+              // A folded container is one node on the canvas, so its hidden
+              // members travel with it and are still inside it when it opens.
+              if (pr.collapsed && (dx || dy)) {
+                for (const id of codeDescendantIds(d as Diagram, pr.id, children)) {
+                  const member = d.programs.find((x) => x.id === id);
+                  if (member) member.position = { x: member.position.x + dx, y: member.position.y + dy };
+                }
+              }
             }
           },
           { history: false },
@@ -1420,7 +1592,7 @@ export const useStore = create<Store>()(
               d.extensions.push(e);
             }
             for (const prg of importedPrograms) {
-              prg.name = uniqueProgramName(d as Diagram, prg.name);
+              prg.name = uniqueProgramName(d as Diagram, prg.name, prg.parentId);
               d.programs.push(prg);
             }
           }

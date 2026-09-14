@@ -12,6 +12,9 @@
  * several parts of the app want it phrased the same way.
  */
 import {
+  codeKindMeta,
+  codeKindOf,
+  isCodeStepOp,
   programLanguageMeta,
   programRoleMeta,
   type Diagram,
@@ -30,9 +33,15 @@ export const PROGRAM_FOOTER_HEIGHT = 10;
 /** Height of the "no steps yet" line, so an empty node is still a target you can hit. */
 export const PROGRAM_EMPTY_HEIGHT = 30;
 
-export function estimateProgramSize(p: Program): { width: number; height: number } {
+export interface ProgramSizeOptions {
+  /** Members a collapsed container hides; when there are any the node grows a line saying so. */
+  hiddenMembers?: number;
+}
+
+export function estimateProgramSize(p: Program, opts: ProgramSizeOptions = {}): { width: number; height: number } {
   const rows = p.steps.length ? p.steps.length * PROGRAM_STEP_HEIGHT : PROGRAM_EMPTY_HEIGHT;
-  return { width: PROGRAM_WIDTH, height: PROGRAM_HEADER_HEIGHT + rows + PROGRAM_FOOTER_HEIGHT };
+  const folded = opts.hiddenMembers ? PROGRAM_STEP_HEIGHT : 0;
+  return { width: PROGRAM_WIDTH, height: PROGRAM_HEADER_HEIGHT + rows + folded + PROGRAM_FOOTER_HEIGHT };
 }
 
 /** Vertical centre of a step row, relative to the node's top. */
@@ -53,8 +62,8 @@ export interface ProgramLink {
   programId: string;
   stepId: string;
   tableId: string;
-  /** Never 'compute': a compute step touches no table and so draws no arrow. */
-  op: Exclude<ProgramStepOp, 'compute'>;
+  /** Only the ops that name a table: a compute step draws nothing, and a call draws a code link instead. */
+  op: 'read' | 'write';
   /** 1-based index of the step within the program. */
   step: number;
   columnIds: string[];
@@ -65,16 +74,16 @@ export function programLinkId(programId: string, stepId: string): string {
 }
 
 /**
- * Every arrow a program draws. Steps naming a table that is not in the diagram
- * are skipped rather than drawn to nowhere; the linter reports those, so they
- * are neither lost nor silently rendered as a dangling edge.
+ * Every arrow a program draws to a table. Steps naming a table that is not in
+ * the diagram are skipped rather than drawn to nowhere; the linter reports
+ * those, so they are neither lost nor silently rendered as a dangling edge.
  */
 export function programLinks(d: Diagram, tableIds?: ReadonlySet<string>): ProgramLink[] {
   const known = tableIds ?? new Set(d.tables.map((t) => t.id));
   const out: ProgramLink[] = [];
   for (const p of d.programs) {
     p.steps.forEach((s, i) => {
-      if (s.op === 'compute' || !s.tableId || !known.has(s.tableId)) return;
+      if ((s.op !== 'read' && s.op !== 'write') || !s.tableId || !known.has(s.tableId)) return;
       out.push({
         id: programLinkId(p.id, s.id),
         programId: p.id,
@@ -126,22 +135,25 @@ export function programReach(p: Program): Set<string> {
 
 /**
  * One line describing a step, the way the node and the exports both want it:
- * "read orders (id, status)", "compute", "write daily_totals".
+ * "read orders (id, status)", "compute", "write daily_totals", "call parse_order".
+ * `target` is the code node a call, import or extends step names.
  */
-export function describeStep(s: ProgramStep, table: Table | undefined): string {
+export function describeStep(s: ProgramStep, table: Table | undefined, target?: Program): string {
   if (s.op === 'compute') return s.note?.trim() ? `compute — ${s.note.trim()}` : 'compute';
+  if (isCodeStepOp(s.op)) return `${s.op} ${target?.name ?? '(missing code)'}`;
   const name = table?.name ?? '(missing table)';
   const cols = s.columnIds.map((id) => table?.columns.find((c) => c.id === id)?.name).filter(Boolean);
   return `${s.op} ${name}${cols.length ? ` (${cols.join(', ')})` : ''}`;
 }
 
 /**
- * One sentence for the whole program: what it is, and what it does to which
- * tables. Used by the node's tooltip, the Markdown export and the linter's
- * messages, so all three phrase it identically.
+ * One sentence for the whole node: what it is, what it does to which tables,
+ * and what code it reaches. Used by the node's tooltip, the Markdown export and
+ * the linter's messages, so all three phrase it identically.
  */
 export function describeProgram(d: Diagram, p: Program): string {
   const byId = new Map(d.tables.map((t) => [t.id, t]));
+  const codeById = new Map(d.programs.map((x) => [x.id, x]));
   const name = (id: string) => byId.get(id)?.name ?? '?';
   const roundTrips = programRoundTrips(p).map(name);
   const reads: string[] = [];
@@ -152,17 +164,30 @@ export function describeProgram(d: Diagram, p: Program): string {
     if (ops.includes('read')) reads.push(name(id));
     else if (ops.includes('write')) writes.push(name(id));
   }
-  const kind = p.role ? programRoleMeta(p.role).label.toLowerCase() : programLanguageMeta(p.language).label;
+  const kindOf = codeKindOf(p);
+  const kind =
+    kindOf === 'program' ? (p.role ? programRoleMeta(p.role).label.toLowerCase() : `${programLanguageMeta(p.language).label} program`) : `${programLanguageMeta(p.language).label} ${codeKindMeta(kindOf).label.toLowerCase()}`;
   const clauses: string[] = [];
   if (roundTrips.length) clauses.push(`reads and writes ${roundTrips.join(', ')}`);
   if (reads.length) clauses.push(`reads ${reads.join(', ')}`);
   if (writes.length) clauses.push(`writes ${writes.join(', ')}`);
+  const named = (op: ProgramStepOp) => [...new Set(p.steps.filter((s) => s.op === op && s.codeId).map((s) => codeById.get(s.codeId!)?.name ?? '?'))];
+  const calls = named('call');
+  const imports = named('import');
+  const bases = named('extends');
+  if (bases.length) clauses.push(`extends ${bases.join(', ')}`);
+  if (imports.length) clauses.push(`imports ${imports.join(', ')}`);
+  if (calls.length) clauses.push(`calls ${calls.join(', ')}`);
   const computes = p.steps.filter((s) => s.op === 'compute').length;
   if (computes) clauses.push(`${computes} step${computes === 1 ? '' : 's'} of work outside the database`);
-  return clauses.length ? `${p.name}, a ${kind}, ${clauses.join('; ')}.` : `${p.name}, a ${kind}, does not touch the schema yet.`;
+  const article = /^[aeiou]/i.test(kind) ? 'an' : 'a';
+  if (clauses.length) return `${p.name}, ${article} ${kind}, ${clauses.join('; ')}.`;
+  const members = d.programs.filter((x) => x.parentId === p.id).length;
+  if (members) return `${p.name}, ${article} ${kind}, holds ${members} node${members === 1 ? '' : 's'}.`;
+  return `${p.name}, ${article} ${kind}, does not touch the schema yet.`;
 }
 
-/** A free spot for a new program, below everything already placed. */
+/** A free spot for a new top-level program or module, below everything already placed. */
 export function nextProgramPosition(d: Diagram): { x: number; y: number } {
   let minX = Infinity;
   let maxY = -Infinity;

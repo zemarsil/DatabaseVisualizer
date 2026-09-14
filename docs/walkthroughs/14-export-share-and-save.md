@@ -607,13 +607,17 @@ can. Markdown, Mermaid and DBML are still one-way, and so is a PNG.
 
 ## Where to go next
 
-That is the bookshop: fifteen walkthroughs, built once and never restarted. The
+That is the bookshop: sixteen walkthroughs, built once and never restarted. The
 canvas you are looking at is the same one walkthrough 00 opened with two tables
 on it.
 
-- [Add an extension](15-add-an-extension.md) is the coda, and the one thing the
-  bookshop still cannot do: a column type PostgreSQL does not have on its own.
-  It is also the only walkthrough that adds to the canvas after this one.
+- [Add an extension](15-add-an-extension.md) is the one thing the bookshop
+  still cannot do: a column type PostgreSQL does not have on its own. It is the
+  last walkthrough that adds a table.
+- [Map the code that talks to it](16-map-the-code-that-talks-to-it.md) adds no
+  table at all. It draws the checkout service beside the schema — files,
+  a class, functions, and the arrows for what each one reads, writes and calls
+  — so the picture finally says who uses all of this.
 
 Otherwise, where to go from here is your own schema. A few of these are worth
 re-reading with it in front of you rather than the bookshop:

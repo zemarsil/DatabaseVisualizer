@@ -42,7 +42,8 @@ import {
   Undo2,
   type LucideIcon,
 } from 'lucide-react';
-import { DIALECTS, type Dialect } from '@shared/types';
+import { CODE_KINDS, DIALECTS, codeKindMeta, codeKindOf, type Dialect } from '@shared/types';
+import { codePath } from '@/lib/codemap';
 import { sheetDiagram, useStore, type DrawerTab } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
@@ -143,6 +144,19 @@ function buildItems(): PaletteItem[] {
     );
   }
   for (const g of d.groups) act(`group:${g.id}`, 'Go to', `Group: ${g.name}`, () => s.selectGroup(g.id), { icon: Boxes });
+  for (const p of d.programs) {
+    const kind = codeKindMeta(codeKindOf(p));
+    act(
+      `code:${p.id}`,
+      'Go to',
+      `${kind.label}: ${codePath(d, p)}`,
+      () => {
+        s.setSelection({ programIds: [p.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+        s.focusTable(p.id);
+      },
+      { icon: Cpu, keywords: [p.name, kind.label, ...p.steps.map((st) => st.op)] },
+    );
+  }
   if (s.sheetIds.length > 1) {
     for (const id of s.sheetIds) {
       if (id === s.activeSheetId) continue;
@@ -201,6 +215,19 @@ function buildItems(): PaletteItem[] {
     },
     { icon: Cpu },
   );
+  for (const k of CODE_KINDS) {
+    if (k.id === 'program') continue;
+    act(
+      `add-${k.id}`,
+      'Edit',
+      `Add ${k.label.toLowerCase()} (a box in the code map)`,
+      () => {
+        s.addProgram({ kind: k.id, parentId: s.selection.programIds.length === 1 ? s.selection.programIds[0] : undefined });
+        s.setInspectorOpen(true);
+      },
+      { icon: Cpu, keywords: ['code', 'map', k.label] },
+    );
+  }
   act('add-group', 'Edit', selected.length > 1 ? `Group the ${selected.length} selected tables` : 'Add a group region', () => s.addGroup({ tableIds: selected }), { icon: Boxes, hint: 'G' });
   act('add-enum', 'Edit', 'Add enum type', () => {
     s.addCustomType('enum');
@@ -213,7 +240,7 @@ function buildItems(): PaletteItem[] {
   act('undo', 'Edit', 'Undo', () => s.undo(), { icon: Undo2, hint: 'Ctrl+Z' });
   act('redo', 'Edit', 'Redo', () => s.redo(), { icon: Redo2, hint: 'Ctrl+Shift+Z' });
   if (selected.length === 1) act('duplicate', 'Edit', 'Duplicate selected table', () => s.duplicateTable(selected[0]), { icon: Plus });
-  if (selected.length || s.selection.noteIds.length || s.selection.relationshipId || s.selection.groupId) {
+  if (selected.length || s.selection.noteIds.length || s.selection.programIds.length || s.selection.relationshipId || s.selection.groupId) {
     act('delete', 'Edit', 'Delete selection', () => s.deleteSelection(), { icon: Trash2, hint: 'Del' });
   }
 
@@ -223,11 +250,19 @@ function buildItems(): PaletteItem[] {
   act('collapse-all', 'Layout', 'Collapse all tables (keys only)', () => s.setTableDisplay(d.tables.map((t) => t.id), 'keys'), { icon: Rows3 });
   act('headers-all', 'Layout', 'Collapse all tables (header only)', () => s.setTableDisplay(d.tables.map((t) => t.id), 'header'), { icon: Rows3 });
   act('expand-all', 'Layout', 'Show all columns', () => s.setTableDisplay(d.tables.map((t) => t.id), undefined), { icon: Rows3 });
-  if (selected.length === 1) act('focus', 'Layout', 'Focus on the selected table', () => ui.setFocus({ tableId: selected[0], hops: 1 }), { icon: Focus, hint: '.' });
+  if (selected.length === 1) act('focus', 'Layout', 'Focus on the selected table', () => ui.setFocus({ nodeId: selected[0], hops: 1 }), { icon: Focus, hint: '.' });
+  if (!selected.length && s.selection.programIds.length === 1) {
+    const only = s.selection.programIds[0];
+    act('focus-code', 'Layout', 'Focus on the selected code node', () => ui.setFocus({ nodeId: only, hops: 1 }), { icon: Focus, hint: '.' });
+  }
+  const folded = d.programs.filter((p) => p.collapsed).map((p) => p.id);
+  const foldable = d.programs.filter((p) => !p.collapsed && d.programs.some((c) => c.parentId === p.id)).map((p) => p.id);
+  if (foldable.length) act('fold-all', 'Layout', 'Collapse every code container', () => s.setCodeCollapsed(foldable, true), { icon: Cpu, keywords: ['fold', 'module', 'class'] });
+  if (folded.length) act('unfold-all', 'Layout', 'Expand every code container', () => s.setCodeCollapsed(folded, false), { icon: Cpu, keywords: ['unfold', 'module', 'class'] });
   if (ui.focus) act('unfocus', 'Layout', 'Clear focus', () => ui.setFocus(null), { icon: Focus, hint: 'Esc' });
   act('snap', 'Layout', `${ui.snapToGrid ? 'Disable' : 'Enable'} snap to grid`, () => ui.setSnapToGrid(!ui.snapToGrid), { icon: Maximize });
   act('cardinality', 'Layout', `${ui.showCardinality ? 'Hide' : 'Show'} cardinality labels`, () => ui.setShowCardinality(!ui.showCardinality), { icon: Route });
-  act('trace', 'Layout', 'Trace a path between two tables…', () => {
+  act('trace', 'Layout', 'Trace a path between two tables or code nodes…', () => {
     s.openDrawer('trace');
     s.setTracePicking(true);
   }, { icon: Route });

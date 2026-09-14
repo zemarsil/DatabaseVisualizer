@@ -25,9 +25,12 @@ import {
   RELATIONSHIP_VERBS,
   REFERENTIAL_ACTIONS,
   WINDOW_FUNCTIONS,
+  codeKindOf,
+  isCodeKind,
   isWindowFunction,
   relationshipVerb,
   type AggregateFunction,
+  type CodeKind,
   type Column,
   type Derivation,
   type Diagram,
@@ -45,13 +48,17 @@ import {
   createExtension,
   createGroup,
   createIndex,
+  createProgram,
+  createProgramStep,
   createRelationship,
   createTable,
   extensionByName,
   tableById,
 } from '@/lib/model';
+import { findCodeByPath, nextCodePosition } from '@/lib/codemap';
+import { nextProgramPosition } from '@/lib/programs';
 import { importSql } from '@/lib/sql/import';
-import { runWalkthroughCheck } from '@/lib/walkthroughChecks';
+import { findCodeRef, parseCodeRef, runWalkthroughCheck, splitArrow } from '@/lib/walkthroughChecks';
 
 /* ------------------------------------------------------------------ */
 /* Shapes                                                              */
@@ -88,8 +95,10 @@ export interface TourView {
   simulateTargetId: string | null;
   /** Tables on the current trace result, in order, or null when there is none. */
   tracePath: string[] | null;
-  /** Table whose neighbourhood is focused, if any. */
+  /** Table or code node whose neighbourhood is focused, if any. */
   focusTableId: string | null;
+  /** Code nodes picked up on the canvas. */
+  selectedProgramIds: string[];
 }
 
 export const EMPTY_VIEW: TourView = {
@@ -100,6 +109,7 @@ export const EMPTY_VIEW: TourView = {
   simulateTargetId: null,
   tracePath: null,
   focusTableId: null,
+  selectedProgramIds: [],
 };
 
 export interface GoalContext {
@@ -118,6 +128,7 @@ export interface TourViewApi {
   startSimulation: (tableId: string) => void;
   runTrace: (fromId: string, toId: string) => void;
   setFocus: (tableId: string | null) => void;
+  selectCode: (id: string) => void;
 }
 
 type Outcome = { ok: boolean; detail: string };
@@ -357,7 +368,7 @@ const DELEGATED: Record<string, string | null> = {
   'lint clean': null,
   'lint errors': 'the exact number of errors Problems reports',
   simulate: 'a table that must simulate with rows and no warnings',
-  trace: 'two table names as "a -> b" with a path between them',
+  trace: 'two tables or code nodes as "a -> b" with a path between them',
 };
 
 const delegated: Record<string, GoalSpec> = Object.fromEntries(
@@ -856,7 +867,83 @@ export const GOALS: Record<string, GoalSpec> = {
     },
   },
 
+  /* ---- the code map ---- */
+
+  code: {
+    arg: 'a kind and a path, e.g. "function checkout.py/place_order"',
+    check: (arg, ctx) => {
+      const r = runWalkthroughCheck(`code | ${arg}`, ctx.diagram, { ordered: false });
+      return { ok: r.ok, detail: r.detail };
+    },
+    apply: (arg, d) => {
+      const { kind, path } = parseCodeRef(arg);
+      const existing = findCodeByPath(d, path);
+      if (existing) {
+        if (!kind || codeKindOf(existing) === kind) return false;
+        existing.kind = kind === 'program' ? undefined : (kind as CodeKind);
+        return true;
+      }
+      // The node goes inside the container the path names, which has to exist
+      // already: a walkthrough builds a map from the outside in.
+      const cut = path.lastIndexOf('/');
+      const name = cut === -1 ? path : path.slice(cut + 1);
+      const parent = cut === -1 ? undefined : findCodeByPath(d, path.slice(0, cut));
+      if (cut !== -1 && !parent) return false;
+      const chosen: CodeKind = kind && isCodeKind(kind) ? kind : parent ? 'function' : 'program';
+      const position = nextCodePosition(d, parent?.id, nextProgramPosition(d));
+      d.programs.push(
+        createProgram({
+          name,
+          ...(chosen !== 'program' ? { kind: chosen } : {}),
+          ...(parent ? { parentId: parent.id, language: parent.language } : {}),
+          position,
+        }),
+      );
+      return true;
+    },
+  },
+
+  calls: codeLinkSpec('calls', 'call'),
+  imports: codeLinkSpec('imports', 'import'),
+  extends: codeLinkSpec('extends', 'extends'),
+  'reads table': tableStepSpec('reads table', 'read'),
+  'writes table': tableStepSpec('writes table', 'write'),
+
+  'code collapsed': {
+    arg: 'a code path : on or off',
+    check: (arg, { diagram: d }) => {
+      const [ref, want] = splitOn(arg);
+      const found = findCodeRef(d, ref);
+      if (!found.node) return { ok: false, detail: found.detail };
+      const on = Boolean(found.node.collapsed);
+      return on === (want === 'on') ? { ok: true, detail: `${found.node.name} is ${on ? 'collapsed' : 'expanded'}.` } : { ok: false, detail: `${found.node.name} is ${on ? 'collapsed' : 'expanded'}; it should be ${want === 'on' ? 'collapsed' : 'expanded'}.` };
+    },
+    apply: (arg, d) => {
+      const [ref, want] = splitOn(arg);
+      const found = findCodeRef(d, ref);
+      if (!found.node || Boolean(found.node.collapsed) === (want === 'on')) return false;
+      if (want === 'on') found.node.collapsed = true;
+      else delete found.node.collapsed;
+      return true;
+    },
+  },
+
   /* ---- what is on screen ---- */
+
+  'select code': {
+    arg: 'the path of a code node that must be selected',
+    check: (arg, { diagram: d, view }) => {
+      const found = findCodeRef(d, arg);
+      if (!found.node) return { ok: false, detail: found.detail };
+      return view.selectedProgramIds.includes(found.node.id) ? { ok: true, detail: `${found.node.name} is selected.` } : { ok: false, detail: `${found.node.name} is not selected yet.` };
+    },
+    applyView: (arg, ctx, api) => {
+      const found = findCodeRef(ctx.diagram, arg);
+      if (!found.node) return false;
+      api.selectCode(found.node.id);
+      return true;
+    },
+  },
 
   open: {
     arg: 'a drawer tab id, e.g. sql or problems',
@@ -926,18 +1013,19 @@ export const GOALS: Record<string, GoalSpec> = {
   traced: {
     arg: 'from -> to, the two ends of a trace that must have run',
     check: (arg, { diagram: d, view }) => {
+      // Either end may be a code node: a trace walks calls as well as keys.
       const [from, to] = arrow(arg);
-      const a = findTable(d, from);
-      const b = findTable(d, to);
-      if (!a || !b) return { ok: false, detail: `there is no table called ${!a ? from : to}.` };
+      const a = findTable(d, from) ?? findCodeByPath(d, from);
+      const b = findTable(d, to) ?? findCodeByPath(d, to);
+      if (!a || !b) return { ok: false, detail: `there is no table or code node called ${!a ? from : to}.` };
       const path = view.tracePath ?? [];
       const hit = path.length >= 2 && ((path[0] === a.id && path[path.length - 1] === b.id) || (path[0] === b.id && path[path.length - 1] === a.id));
       return hit ? { ok: true, detail: `Trace is showing ${from} → ${to}.` } : { ok: false, detail: `no trace between ${from} and ${to} is on screen yet.` };
     },
     applyView: (arg, ctx, api) => {
       const [from, to] = arrow(arg);
-      const a = findTable(ctx.diagram, from);
-      const b = findTable(ctx.diagram, to);
+      const a = findTable(ctx.diagram, from) ?? findCodeByPath(ctx.diagram, from);
+      const b = findTable(ctx.diagram, to) ?? findCodeByPath(ctx.diagram, to);
       if (!a || !b) return false;
       api.runTrace(a.id, b.id);
       return true;
@@ -945,20 +1033,64 @@ export const GOALS: Record<string, GoalSpec> = {
   },
 
   focus: {
-    arg: 'the table whose neighbourhood must be focused, or "none"',
+    arg: 'the table or code node whose neighbourhood must be focused, or "none"',
     check: (arg, { diagram: d, view }) => {
       if (arg === 'none') return view.focusTableId ? { ok: false, detail: 'focus mode is still on.' } : { ok: true, detail: 'focus mode is off.' };
-      const t = findTable(d, arg);
-      if (!t) return { ok: false, detail: `there is no table called ${arg}.` };
+      const t = findTable(d, arg) ?? findCodeByPath(d, arg);
+      if (!t) return { ok: false, detail: `there is no table or code node called ${arg}.` };
       return view.focusTableId === t.id ? { ok: true, detail: `the canvas is focused on ${arg}.` } : { ok: false, detail: `the canvas is not focused on ${arg} yet.` };
     },
     applyView: (arg, ctx, api) => {
-      const t = arg === 'none' ? undefined : findTable(ctx.diagram, arg);
+      const t = arg === 'none' ? undefined : (findTable(ctx.diagram, arg) ?? findCodeByPath(ctx.diagram, arg));
       api.setFocus(t?.id ?? null);
       return true;
     },
   },
 };
+
+/* ------------------------------------------------------------------ */
+/* Code-map spec builders                                              */
+/* ------------------------------------------------------------------ */
+
+/** `calls | a -> b`, `imports | a -> b`, `extends | a -> b`: a step on a naming b. */
+function codeLinkSpec(verb: 'calls' | 'imports' | 'extends', op: 'call' | 'import' | 'extends'): GoalSpec {
+  return {
+    arg: 'from -> to, as code paths',
+    check: (arg, ctx) => {
+      const r = runWalkthroughCheck(`${verb} | ${arg}`, ctx.diagram, { ordered: false });
+      return { ok: r.ok, detail: r.detail };
+    },
+    apply: (arg, d) => {
+      const [fromRef, toRef] = splitArrow(arg);
+      const from = findCodeRef(d, fromRef).node;
+      const to = findCodeRef(d, toRef).node;
+      if (!from || !to || from.id === to.id) return false;
+      if (from.steps.some((s) => s.op === op && s.codeId === to.id)) return false;
+      from.steps.push(createProgramStep({ op, codeId: to.id }));
+      return true;
+    },
+  };
+}
+
+/** `reads table | code -> table`, `writes table | code -> table`: a read or write step on the code node. */
+function tableStepSpec(verb: 'reads table' | 'writes table', op: 'read' | 'write'): GoalSpec {
+  return {
+    arg: 'code path -> table name',
+    check: (arg, ctx) => {
+      const r = runWalkthroughCheck(`${verb} | ${arg}`, ctx.diagram, { ordered: false });
+      return { ok: r.ok, detail: r.detail };
+    },
+    apply: (arg, d) => {
+      const [codeRef, tableName] = splitArrow(arg);
+      const from = findCodeRef(d, codeRef).node;
+      const table = findTable(d, tableName);
+      if (!from || !table) return false;
+      if (from.steps.some((s) => s.op === op && s.tableId === table.id)) return false;
+      from.steps.push(createProgramStep({ op, tableId: table.id }));
+      return true;
+    },
+  };
+}
 
 /* ------------------------------------------------------------------ */
 /* Shared spec builders                                                */
@@ -1099,8 +1231,10 @@ function matchReads(d: Diagram, sentence: string): { rel?: Relationship; phrase:
 const CONNECTION_VERBS = new Set(['fk', 'flow', 'embed', 'dependency', 'reads', 'label', 'reverse label', 'ondelete', 'query', 'select connection', 'derivation']);
 /** Verbs whose subject is a table. */
 const TABLE_VERBS = new Set(['table', 'view', 'column', 'no column', 'flags', 'default', 'check', 'schema', 'collapsed', 'materialized', 'viewsql', 'index', 'unique index', 'select table']);
+/** Verbs whose subject is a code node: the one the step is about, or the one a call leaves. */
+const CODE_VERBS = new Set(['code', 'calls', 'imports', 'extends', 'reads table', 'writes table', 'code collapsed', 'select code']);
 
-export type Subject = { kind: 'table'; id: string } | { kind: 'relationship'; id: string };
+export type Subject = { kind: 'table'; id: string } | { kind: 'relationship'; id: string } | { kind: 'code'; id: string };
 
 /**
  * The thing on the canvas a step is about, read off its goals.
@@ -1116,6 +1250,12 @@ export function subjectOfStep(goals: Goal[], d: Diagram): Subject | null {
     if (CONNECTION_VERBS.has(g.verb)) {
       const rel = connectionSubject(g, d);
       if (rel) return { kind: 'relationship', id: rel.id };
+      continue;
+    }
+    if (CODE_VERBS.has(g.verb)) {
+      const ref = g.arg.includes('->') ? splitArrow(g.arg)[0] : splitOn(g.arg)[0];
+      const node = findCodeRef(d, ref).node;
+      if (node) return { kind: 'code', id: node.id };
       continue;
     }
     if (!TABLE_VERBS.has(g.verb)) continue;

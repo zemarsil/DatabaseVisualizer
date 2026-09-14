@@ -19,6 +19,7 @@ import { useSimulation } from '@/store/useSimulation';
 import { useTour } from '@/store/useTour';
 import { renderMarkdown } from '@/lib/markdown';
 import { evaluateGoals, subjectOfStep, type GoalStatus, type TourView } from '@/lib/tour/goals';
+import { findCodeByPath } from '@/lib/codemap';
 import { exactAnchorElement, findAnchorElement, resolveAnchor } from '@/lib/tour/anchors';
 import { performStep } from '@/lib/tour/perform';
 import { setUpCanvas } from './setup';
@@ -32,10 +33,11 @@ const EDGE = 10; // px the card keeps away from the window edge
 function useLiveView(): TourView {
   const drawer = useStore((s) => s.drawer);
   const selectedTableIds = useStore((s) => s.selection.tableIds);
+  const selectedProgramIds = useStore((s) => s.selection.programIds);
   const selectedRelationshipId = useStore((s) => s.selection.relationshipId);
-  const tracePath = useStore((s) => s.trace.result?.tableIds ?? null);
+  const tracePath = useStore((s) => s.trace.result?.nodeIds ?? null);
   const showCardinality = useUi((s) => s.showCardinality);
-  const focusTableId = useUi((s) => s.focus?.tableId ?? null);
+  const focusTableId = useUi((s) => s.focus?.nodeId ?? null);
   const simulateTargetId = useSimulation((s) => s.targetId);
   return useMemo(
     () => ({
@@ -46,8 +48,9 @@ function useLiveView(): TourView {
       simulateTargetId,
       tracePath,
       focusTableId,
+      selectedProgramIds,
     }),
-    [drawer.open, drawer.tab, selectedTableIds, selectedRelationshipId, showCardinality, simulateTargetId, tracePath, focusTableId],
+    [drawer.open, drawer.tab, selectedTableIds, selectedRelationshipId, showCardinality, simulateTargetId, tracePath, focusTableId, selectedProgramIds],
   );
 }
 
@@ -76,6 +79,10 @@ export function TourHost() {
     if (reveal.drawerTab) s.openDrawer(reveal.drawerTab as Parameters<typeof s.openDrawer>[0]);
     if (reveal.inspector) s.setInspectorOpen(true);
     if (reveal.sidebar) s.setSidebarOpen(true);
+    if (reveal.centerCode) {
+      const p = findCodeByPath(s.diagram, reveal.centerCode);
+      if (p && !isOnScreen(`.react-flow__node[data-id="${p.id}"]`)) s.focusTable(p.id);
+    }
     if (reveal.centerTable) {
       const t = s.diagram.tables.find((x) => x.name.toLowerCase() === reveal.centerTable!.toLowerCase());
       // Only pan when the table is not already somewhere the reader can see it:
@@ -90,6 +97,10 @@ export function TourHost() {
       const subject = subjectOfStep(step.goals, s.diagram);
       if (subject?.kind === 'table' && !(s.selection.tableIds.length === 1 && s.selection.tableIds[0] === subject.id)) s.selectTable(subject.id);
       else if (subject?.kind === 'relationship' && s.selection.relationshipId !== subject.id) s.setSelection({ relationshipId: subject.id, tableIds: [], noteIds: [] });
+      else if (subject?.kind === 'code' && !(s.selection.programIds.length === 1 && s.selection.programIds[0] === subject.id)) {
+        s.setSelection({ programIds: [subject.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+        s.setInspectorOpen(true);
+      }
     }
 
     // Panels scroll, and half the inspector is below the fold: bring the target

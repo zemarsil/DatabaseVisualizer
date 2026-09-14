@@ -68,7 +68,7 @@ function RenameInput({ table }: { table: Table }) {
   const [value, setValue] = useState(table.name);
   const ref = useRef<HTMLInputElement>(null);
   const updateTable = useStore((s) => s.updateTable);
-  const setRenaming = useUi((s) => s.setRenamingTableId);
+  const setRenaming = useUi((s) => s.setRenamingNodeId);
   useEffect(() => {
     ref.current?.focus();
     ref.current?.select();
@@ -145,7 +145,7 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
         className="table-node__header"
         onDoubleClick={(e) => {
           e.stopPropagation();
-          useUi.getState().setRenamingTableId(table.id);
+          useUi.getState().setRenamingNodeId(table.id);
         }}
       >
         {isView && <Eye className="table-node__kind-icon" />}

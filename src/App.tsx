@@ -121,15 +121,27 @@ export default function App() {
           useDialogStore.getState().setHelp(true);
           break;
         case 'Delete':
-        case 'Backspace':
+        case 'Backspace': {
           // React Flow handles tables, notes and edges; regions are not its nodes.
           if (s.selection.groupId) {
             e.preventDefault();
             const name = s.diagram.groups.find((g) => g.id === s.selection.groupId)?.name ?? 'group';
             s.deleteGroup(s.selection.groupId, false);
             s.toast('info', `Removed the "${name}" region. Its tables are still in the diagram.`);
+            break;
+          }
+          // An expanded code container is a region too. Deleting it from the
+          // keyboard keeps its members, the way deleting a group keeps its
+          // tables; the inspector is where the whole subtree goes.
+          const only = s.selection.programIds.length === 1 && !s.selection.tableIds.length && !s.selection.noteIds.length ? s.selection.programIds[0] : null;
+          const container = only ? s.diagram.programs.find((p) => p.id === only) : undefined;
+          if (container && !container.collapsed && s.diagram.programs.some((p) => p.parentId === container.id)) {
+            e.preventDefault();
+            s.dissolveCodeNode(container.id);
+            s.toast('info', `Removed the "${container.name}" container. What was inside it is still in the diagram.`);
           }
           break;
+        }
         case 'Escape':
           if (s.trace.picking) s.setTracePicking(false);
           else if (s.trace.result) s.clearTrace();

@@ -35,7 +35,7 @@ npx vitest run tests/tour.test.ts -t NN-slug                         # the step 
 
 ## The series is one build
 
-The sixteen walkthroughs are not sixteen exercises. They build **one database,
+The seventeen walkthroughs are not seventeen exercises. They build **one database,
 once**: walkthrough N starts from exactly what N-1 left on the canvas, and the
 schema grows the whole way down. That shapes everything below, so it comes
 first.
@@ -182,6 +182,7 @@ walkthrough that puts each table on the canvas; every later stage still has it.
 | `warehouses`, `stock_levels`, `shipments`, `shipment_items` | 09 | imported from someone else's script, mistakes included; cleaned up in 10 |
 | `reviews` | 11 | a second path between `books` and `customers`, for tracing |
 | `book_embeddings` | 15 | the column an extension has to exist for: `vector(768)` |
+| `bookshop_api` (code, not a table) | 16 | the checkout service: `orders.py` with `OrderService.place_order`, `inventory.py` with `reserve_stock`, and the arrows for what each reads, writes and calls |
 
 Conventions that keep the examples consistent with each other and with
 `docs/examples/orders-rollup.dbviz.json`:
@@ -266,7 +267,10 @@ diagram by `tests/walkthroughs.test.ts`, using the same code the app uses.
 | `lint clean` | the **Problems** tab reports no errors |
 | `lint errors \| 2` | it reports *exactly* that many errors — for a walkthrough that deliberately ends broken, like the import that the next one cleans up |
 | `simulate \| daily_sales` | **Simulate** into that table runs, produces rows, and warns about nothing |
-| `trace \| authors -> reviews` | **Trace** finds a path between those two tables |
+| `trace \| authors -> reviews` | **Trace** finds a path between those two tables — or code nodes: `trace \| place_order -> stock_levels` walks the call |
+| `code \| function orders.py/place_order` | a code node with that path exists and is of that kind (the kind is optional) |
+| `calls \| place_order -> reserve_stock` | a call step on the first naming the second; `imports` and `extends` likewise |
+| `reads table \| place_order -> customers` | a read step on that code node naming that table; `writes table` likewise |
 
 Pick checks that would **break if the walkthrough's claims stopped being true**.
 A walkthrough about external groups wants `omits | CREATE TABLE public.crm_contacts`.
@@ -363,11 +367,13 @@ One token: a kind, a colon, and what to look for.
 | `table:orders` | a table on the canvas, panning to it only if it is off-screen |
 | `column:books.author_id` | one column row inside a table node |
 | `rel:books -> authors` | a connection on the canvas |
+| `code:orders.py/place_order` | a code node on the canvas, by its path — a node, or the region an expanded container is drawn as |
 | `none` | nothing; the card floats free |
 
 Because `field:` and `section:` are matched on the label the reader sees, they
 only exist while the right thing is selected — so the tour selects whatever the
-step's goals are about before it looks. Quote the label exactly as the component
+step's goals are about before it looks. A code node is named by its path, and
+a bare name will do when only one node in the map carries it. Quote the label exactly as the component
 spells it (`Color`, not `Colour`, in the table editor).
 
 #### `goals:`
@@ -409,18 +415,22 @@ can assert exactly what the front matter asserts. On top of those:
 | `enum \| order_status : pending, paid` | the enum and its values, in order | creates it |
 | `composite \| postal_address : street TEXT` | the struct and its fields | creates it |
 | `dialect \| postgresql` | the diagram's dialect | switches it |
+| `code \| module bookshop_api/orders.py` | a code node of that kind at that path | adds it inside the container the path names, which must exist already: a map is built from the outside in |
+| `calls`, `imports`, `extends` `\| a -> b` | a step of that kind on `a` naming `b` | adds the step |
+| `reads table`, `writes table` `\| fn -> table` | a read or write step on the code node naming the table | adds the step |
+| `code collapsed \| bookshop_api : on` | the container is folded to one node (`off` for expanded) | folds or unfolds it |
 
-And five that describe the screen rather than the diagram — they are never run
-against a companion diagram, because there is no screen in CI:
+And a handful that describe the screen rather than the diagram — they are never
+run against a companion diagram, because there is no screen in CI:
 
 | Goal | Asserts |
 | --- | --- |
 | `open \| problems` | that drawer tab is in front |
-| `select table \| authors`, `select connection \| a -> b` | it is selected, so the inspector shows it |
+| `select table \| authors`, `select connection \| a -> b`, `select code \| orders.py` | it is selected, so the inspector shows it |
 | `cardinality \| on` | the **View** menu's cardinality labels |
 | `simulating \| daily_sales` | a simulation is feeding that table |
-| `traced \| books -> customers` | **Trace** is showing that path |
-| `focus \| books` | the canvas is focused on that neighbourhood (`none` for cleared) |
+| `traced \| books -> customers` | **Trace** is showing that path; either end may be a code node |
+| `focus \| books` | the canvas is focused on that table's or code node's neighbourhood (`none` for cleared) |
 
 A step with no goals is legitimate — "read what Problems says", "try a what-if
 edit" — and is ticked off when the reader presses **Continue**.

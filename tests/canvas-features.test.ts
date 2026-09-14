@@ -230,7 +230,7 @@ describe('context menu additions', () => {
     action(items, 'show-keys').run();
     expect(store.setTableDisplay).toHaveBeenCalledWith([table.id], 'keys');
     action(items, 'focus').run();
-    expect(useUi.getState().focus).toEqual({ tableId: table.id, hops: 1 });
+    expect(useUi.getState().focus).toEqual({ nodeId: table.id, hops: 1 });
     const again = buildContextMenu({ type: 'table', tableId: table.id }, e);
     expect(ids(again)).toContain('unfocus');
     action(again, 'unfocus').run();

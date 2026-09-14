@@ -13,6 +13,7 @@ A locally hosted web app for designing relational schemas visually.
 - **Simulate**: pick a table and watch sample rows flow into it. Every data flow upstream runs once, stage by stage: dots travel the connections on the canvas, the columns being read and written light up, and a grid shows each produced row with the rows it came from and how every value was computed. Edit a raw input cell and the change propagates.
 - **Describe how data moves**: a data-flow connection carries one derivation per target column: an expression, an aggregate over a grouping, a filter, and, for sequences, an operation over rows in order (change since the previous row, running total, rank…). Expressions may read columns of other tables as `table.column`; the diagram's own foreign keys say how they join. The same description drives the edge summary, the generated `INSERT … SELECT` (window functions and joins included, per dialect) and the simulation.
 - **Programs**: the work that happens *outside* the database gets a node of its own. A program is an ordered list of steps — read a table, compute something the database never sees, write the answer back — and each step that names a table draws a numbered arrow, so a round trip reads straight off the canvas. Steps carry the statement they run and the host-language code around it, and the app writes a starter for you: the real driver for your language and engine, your table and column names, parameters spelled the way that driver expects.
+- **Code maps**: a program can open up into the codebase behind it — modules as regions, classes inside them, functions as the nodes whose steps say what each one reads, writes and calls — so *this function reads that table* is one arrow in the same picture as the schema, and a rename or a drop can be traced into the code that would break. Every arrow and every region is derived from the steps and the containment, never stored; collapse a module and its arrows gather onto it. The whole map rides in the SQL script's annotation block, the Markdown export and the clipboard.
 - **Read a big diagram**: collapse tables to keys or headers (automatically when zoomed out), focus on one table and its neighbours, cardinality labels on every connection, and one-click grouping by schema.
 - **Command palette** (`Ctrl+K`): jump to any table or run any action by typing a few letters.
 - **Migrate and seed**: diff the diagram against a live database and get the `ALTER` statements that bring it up to date; generate deterministic seed rows that respect foreign keys, uniqueness and enums.
@@ -79,6 +80,7 @@ docker compose up --build
 | See what is computed | Any column a data flow fills carries a **Σ** mark, and its table a **Σ n** badge that survives collapsing. `D` (or **View → Derived-column lens**) turns that into a way of reading the whole canvas: computed columns take the green rail, the columns feeding them the flow colour, foreign keys step back. The **Derived** drawer tab lists every one with its formula; pick a column — there, or by right-clicking it → *Show where this comes from* — and the canvas narrows to that column's chain: every column read to produce it, and everything computed from it in turn. `Esc` widens the chain back, then puts the lens away |
 | One source, several look-alike targets | On a data-flow edge, **Match by name** adds a plain passthrough derivation for every target column a source column of the same name can fill (case and underscores ignored; columns already derived are left alone). *Feed other tables the same way* then ticks off the other tables that share those column names and draws the same flow into each, its derivations re-pointed at the columns each table spells the same way. Five tables fed from one is five edges either way — a connection joins two tables — but not five sets of derivations typed by hand |
 | Say what talks to the database from outside | Right-click the canvas → **Add program here** (or `Ctrl+K` → *Add program*). Name it, pick its language, then add steps in the order they happen: read a table, compute something the database never sees, write the answer back. Each step naming a table draws a numbered arrow, and the node says *round trip: jobs* when it both reads and writes one. Every step holds the statement it runs and the code around it; **Show the … starter** writes a runnable skeleton from the steps with the right driver for your language and engine |
+| Map the code behind a program | With a program selected, the `▾` beside **+ Table** adds a **Module**, **Class** or **Function** inside it (or right-click the canvas → **Add module here**, or the **+ Module** buttons in the inspector's *Inside* section). A container is drawn as a region around its members; drag a node into or out of one to move it. Give a function read and write steps as you would a program, drag the handle on its header onto another node for a **call** (an **import** between modules, an **extends** between classes), and drag from a table's column handle onto a node for a read on that column. Right-click a region → **Collapse to one node** folds it and gathers its arrows; **Trace** accepts a code node at either end |
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express. The menu above the box offers queries written for this connection from what the diagram knows — the `JOIN` of a foreign key, its orphan check, an `INSERT … SELECT` with columns paired by name or a dialect-correct upsert for a data flow, the statement built from the derivations, JSON unpacking for a serialized one — as a starting point; `Ctrl+Enter` runs the query in the Query tab, and the expand button opens it in a bigger window |
 | Write SQL anywhere | Every SQL box is the same editor: the diagram's table and column names are coloured (so a typo shows up as plain text), `Ctrl+Space` completes tables, columns, keywords and functions — `orders.` or an alias's `o.` narrows to that table's columns — and problems show under the box as you type: an expression the simulator cannot parse, a column the source table does not have (with the `table.column` spelling that would reach it), a table the diagram does not have, an unclosed string or parenthesis. `Enter` keeps the indentation, `(` and `'` close themselves, `Tab` / `Shift+Tab` indent, `Ctrl+/` comments lines out, `Ctrl+Shift+F` formats |
@@ -106,10 +108,11 @@ Press `?` in the app for the full shortcut list.
 
 ## Walkthroughs
 
-[`docs/walkthroughs/`](docs/walkthroughs/) is sixteen hands-on guides that build
+[`docs/walkthroughs/`](docs/walkthroughs/) is seventeen hands-on guides that build
 **one database, once**: walkthrough 00 puts two tables on the canvas, walkthrough
-14 exports the eighteen-table bookshop they grew into, and walkthrough 15 adds
-the one column type PostgreSQL cannot make without an extension. Each one
+14 exports the eighteen-table bookshop they grew into, walkthrough 15 adds
+the one column type PostgreSQL cannot make without an extension, and walkthrough
+16 draws the checkout service that uses all of it beside the tables. Each one
 picks the canvas up exactly where the last put it down — the foreign keys from
 02 are what the derivations in 05 resolve through, the enum from 04 is what the
 seeded rows in 13 obey — so the schema in front of you is always the one you
@@ -240,6 +243,7 @@ src/lib/sql/             tokenizer, parser (DDL -> model), generator (model -> D
 src/lib/sql/annotations.ts  the connections a script carries in its comments, so exported SQL imports back whole
 src/lib/groups.ts        table groups: region geometry, membership, external tables
 src/lib/programs.ts      programs: the arrows derived from their steps, round-trip detection, prose summaries
+src/lib/codemap.ts       code maps: the containment tree, what a collapsed container stands in for, gathered arrows, container regions, paths
 src/lib/code/           drivers.ts: which package each language reaches each engine with; generate.ts: the starter; highlight.ts: a lexer per host language
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
@@ -264,8 +268,8 @@ src/store/useSimulation.ts  simulation mode: target, sample options, playback, r
 src/components/          React UI (canvas, inspector, drawer panels, command palette)
 server/                  Express API: Docker control, pg / MariaDB execution, introspection and read-only queries
 scripts/                 validate-dbviz.mjs (diagram files), validate-walkthrough.mjs and build-walkthrough-index.mjs (docs/walkthroughs)
-docs/                    ADVISOR_OUTPUT_FORMAT.md, EXTENSION_PACK_FORMAT.md, examples, and walkthroughs/
-tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, column lineage, layout, file format, the simulation, extensions, the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
+docs/                    ADVISOR_OUTPUT_FORMAT.md, CODE_MAP_FORMAT.md, EXTENSION_PACK_FORMAT.md, examples, and walkthroughs/
+tests/                   vitest unit tests for the SQL round-trip, lint, migrate, seed, exports, tracing, column lineage, layout, file format, the simulation, extensions, code maps, the walkthroughs and their clickthroughs, plus the server's catalog queries against a real PostgreSQL (PGlite)
 ```
 
 ```bash
@@ -364,6 +368,48 @@ DBML, which has only tables, keeps them as notes.
 data flow already computes (one of the two is wrong about where the value comes
 from), a write to a view, a write to a table you marked as living in another
 database, and a program that never touches the schema at all.
+
+### Modules, classes and functions: mapping a codebase
+
+A program is enough for "a job does this nightly". It is not enough for the
+question a schema change really raises — *which function writes this column,
+and what does it call on the way?* — so a program can open up into the code
+behind it. The pieces are the same node with a **kind** and a **parent**:
+
+| Kind | Is | Sits inside |
+| --- | --- | --- |
+| Program | something that runs: a service, a job, a script | nothing; it is the root |
+| Module | a file or a package | a program, or another module |
+| Class | a class, a struct, a type with methods | a program, a module, or another class |
+| Function | a function or a method, and the node whose steps say what it does | any of those |
+
+Three more kinds of step name code instead of a table — **call**, **import**
+and **extends** — and each draws its arrow to the node it names, numbered in
+step order like a read or a write. So `place_order` reads `customers`, writes
+`orders`, writes `order_items` and calls `reserve_stock`, which reads and
+writes `stock_levels`: four arrows to tables and one to a function, and
+**Trace** from `place_order` to `stock_levels` runs through the call.
+
+Nothing about the map is stored except the nodes, their parents and their
+steps. A module or class with members is drawn as a **region** — the bounding
+box of what is inside it, like a group's rectangle — and dragging a node into
+or out of a region is how it changes container. **Collapse** a container and
+it folds to one node; every arrow into or out of what it hides is redrawn from
+the folded node, and arrows that then say the same thing are gathered into
+one carrying a count, so a whole service reads as one node with one arrow per
+table, exactly as a plain program would. Only the outermost collapsed
+container counts, so folding a program hides its folded modules too.
+
+The map goes everywhere a program goes. The SQL annotation block names nodes
+by **path** (`bookshop_api/orders.py/OrderService/place_order`) rather than
+id, so it survives a re-import; the Markdown export's `## Code` section walks
+the tree; Mermaid and DBML carry each node; copying a container copies its
+members; **Problems** adds the rules a map needs — a container holding a kind
+it cannot, a call to something that is gone (the step and its code are kept,
+the fix is one click), a function nothing calls, a circular import. The file
+format, the annotation block and the derived-versus-stored rules are in
+[`docs/CODE_MAP_FORMAT.md`](docs/CODE_MAP_FORMAT.md); walkthrough
+[16](docs/walkthroughs/16-map-the-code-that-talks-to-it.md) builds one by hand.
 
 ## Several diagrams in one workspace
 

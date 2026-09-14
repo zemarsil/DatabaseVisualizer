@@ -20,6 +20,7 @@
  * disagree with it in one edit.
  */
 import {
+  isCodeStepOp,
   programLanguageMeta,
   programRoleMeta,
   type Column,
@@ -116,7 +117,27 @@ export function resolveSteps(d: Diagram, p: Program, driver?: Driver): ProgramCo
     used.set(base, seen + 1);
     return seen === 0 ? base : `${base}_${seen + 1}`;
   };
+  const codeById = new Map(d.programs.map((x) => [x.id, x]));
   return p.steps.map((s, i) => {
+    // A call, an import or an extends is work the database never sees, so the
+    // starter treats it as a compute stub named after what it reaches: the
+    // diagram knows *that* place_order is called here, not what calling it
+    // takes, and a stub that raises says so.
+    if (isCodeStepOp(s.op)) {
+      const target = s.codeId ? codeById.get(s.codeId) : undefined;
+      const what = target?.name ?? '(missing code)';
+      return {
+        index: i + 1,
+        op: 'compute',
+        table: undefined,
+        columns: [],
+        sql: '',
+        generated: false,
+        note: s.note?.trim() ? `${s.op} ${what} — ${s.note.trim()}` : `${s.op} ${what}`,
+        slug: unique(sanitize(`${s.op}_${target?.name ?? `step_${i + 1}`}`)),
+        params: [],
+      };
+    }
     const table = s.tableId ? d.tables.find((t) => t.id === s.tableId) : undefined;
     const columns = columnsFor(s, table);
     const own = s.sql?.trim() ?? '';

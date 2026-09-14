@@ -22,7 +22,8 @@ below carries where it came from so you can re-check it after the app changes.
 ```
 
 The **inspector** on the right always shows whatever is selected: a table, a
-connection, a note, or a group region. The **bottom drawer** holds the ten
+connection, a note, a group region, or a code node (a program, a module, a
+class or a function). The **bottom drawer** holds the ten
 tabs. The **sidebar** on the left is the table list. All three toggle from the
 **View** menu or the icon buttons at the far right of the top bar.
 
@@ -86,7 +87,7 @@ Source: `src/components/TopBar.tsx`
 | Dialect selector | *PostgreSQL*, *MariaDB*, *SQLite (in browser)*, *DuckDB (in browser)*. Switching translates known column types; undo reverts it. |
 | Undo / Redo | `Ctrl+Z`, `Ctrl+Shift+Z` (also `Ctrl+Y`). |
 | **+ Table** | Adds a table (`T`). |
-| The `▾` beside it | *Table* `T`, *View*, *Note* `N`, *Group region* `G` (reads *Group the N selected tables* when several are selected), then *Enum type* and *Composite type*, which both open the **Types** tab. |
+| The `▾` beside it | *Table* `T`, *View*, *Note* `N`, *Group region* `G` (reads *Group the N selected tables* when several are selected); then, under a *Code map* label, *Program*, *Module*, *Class* and *Function* — a module, class or function goes inside the selected code node when that node can hold it and at the top level otherwise, and the inspector opens on the new node; then *Enum type* and *Composite type*, which both open the **Types** tab. |
 | Group icon button | Same as *Group region* (`G`). |
 | Note icon button | Same as *Note* (`N`). |
 | **Detangle** | Auto-layout (`L`). Its `▾` holds *Layout direction* → *Left to right* / *Top to bottom*. |
@@ -183,6 +184,24 @@ another database*, *Note*, *Colour*, counts of tables and crossing connections,
 *Tables (N)*, **Remove the region, keep the tables** and **Delete the region and
 its N table(s)**.
 
+**Code node** (`ProgramEditor.tsx`) — one panel for a program, a module, a
+class and a function. *Name*, *Kind*, *Inside* (the container it sits in, or
+nothing; only containers that can hold this kind are offered), *Language*,
+*Runs as* (programs only: *Service*, *Job*, *Script*, *ETL*), a box whose label
+follows the kind — *Where the code lives* for a program, *Path* for a module,
+*Signature or location* for a class or function — *What it is for* and
+*Color*. A container gets *Inside (N)*, listing its members with a
+**Collapse** / **Expand** button and **+ Module**, **+ Class** and
+**+ Function** buttons offering only the kinds it can hold; a node something
+names gets *Reached from*. Then *Steps, in order* with **+ Read**, **+ Write**,
+**+ Compute**, **+ Call**, **+ Import** and **+ Extends**: a read or write step
+has a table box, *Columns it touches*, *The statement it runs*, *Note* and
+*Code*; a call, import or extends step has a code-node box listing every node
+by path, *Note* and *Code*; a compute step *Note* and *Code*. Under the steps:
+**Show the {Language} starter** (**Hide** once open), **Duplicate**,
+**Dissolve** for a container with members (removes it and moves what was
+inside up a level) and **Delete {kind}**.
+
 **Diagram** (`DiagramPanel.tsx`) — shown with nothing selected: *Diagram name*,
 *Connection types*, *Groups*, *Custom types*, *Tips* and *Checkpoints (N)*.
 
@@ -205,8 +224,8 @@ spelling other than the one in the left column.
 | `T` / `N` / `G` | Add table / note / group region |
 | `L` / `F` | Detangle / fit to window |
 | `S` | Simulate into the selected table (again, or `Esc`, to stop) |
-| `F2` | Rename the selected table in place |
-| `.` | Focus on the selected table |
+| `F2` | Rename the selected table or code node in place |
+| `.` | Focus on the selected table or code node |
 | `[` / `]` | Narrow / widen the focus neighbourhood |
 | `Arrow keys` | Nudge the selection 10 px; in a column name, move to the same box one row up or down |
 | `Shift+Arrow keys` | Nudge 50 px |
@@ -223,7 +242,7 @@ spelling other than the one in the left column.
 | `←` `→` `Home` `End` | Inside the colour palette or a column's flag toolbar, which share one tab stop each |
 | `Shift+click` | Add a table or note to the selection |
 | `Shift+drag` | Box-select everything the box touches |
-| `Delete` / `Backspace` | Delete the selection |
+| `Delete` / `Backspace` | Delete the selection. On an expanded code container it removes the container and keeps what was inside, the way it does for a group region |
 | `D` | Derived-column lens on / off |
 | `Esc` | Clear focus, the derived lens, selection, trace picking or simulation. With a column's lineage on screen the first `Esc` widens it back to the whole diagram and the second puts the lens away |
 | `?` | Help |
@@ -235,7 +254,8 @@ spelling other than the one in the left column.
 Sources: `src/components/ui/contextMenuItems.ts`, which wires in the operations from
 `src/lib/canvasOps.ts` (`src/lib/canvasActions.ts` holds only copy/paste/cut and file drops)
 
-- **Canvas**: *Add table here*, *Add view here*, *Add note here*, *Paste here*,
+- **Canvas**: *Add table here*, *Add view here*, *Add note here*, *Add program
+  here*, *Add module here*, *Add class here*, *Add function here*, *Paste here*,
   *Select all tables*, *Group tables by schema*, *Snap to grid* (a toggle — tables
   land on the grid as you drag them; there is no one-shot "snap everything now"), *Detangle
   layout*, *Fit to window*, *Undo*, *Redo*, and the drawer tabs.
@@ -256,11 +276,22 @@ Sources: `src/components/ui/contextMenuItems.ts`, which wires in the operations 
 - **Group region**: *Edit group…*, *In another database*, *Select its N table(s)*,
   *Copy its N table(s)* and the same **Copy as** group as a table,
   *Remove region, keep tables*, *Delete region and its N table(s)*.
+- **Code node** (a program, module, class or function): *Edit steps*, *Rename
+  in place* `F2`, *Add a step*, *Add a module inside* / *Add a class inside* /
+  *Add a function inside* (only the kinds it can hold), *Color*, *Collapse to
+  one node* or *Expand: show the N nodes inside*, *Select the N nodes inside*,
+  *Move out of {container}* when it sits inside one, *Focus neighborhood* /
+  *Clear focus*, *Trace from here…*, *Copy the {Language} starter*, *Copy
+  {kind}* `Ctrl+C`, *Duplicate {kind}*, *Dissolve: keep the N nodes, drop the
+  {kind}* on a container with members, and *Delete {kind}* (*Delete {kind} and
+  the N nodes inside* on such a container).
 - **Multi-selection**: adds *Align left edges* / *right edges* / *top edges* /
   *bottom edges* / *centres (vertical axis)* / *middles (horizontal axis)*,
   *Distribute horizontally*, *Distribute vertically*, *Color for all*, a **Copy as**
   group whose SQL row is the whole selection's script, and — at exactly
-  two tables — *Trace {first} → {second}*, which traces immediately.
+  two tables — *Trace {first} → {second}*, which traces immediately. With code
+  containers in the selection it adds *Collapse the N containers* or *Expand the
+  N containers*.
 - **Note**: *Edit text*, *Duplicate note*, *Copy text*, *Delete note*.
 
 ---
@@ -398,7 +429,13 @@ Say so plainly rather than working around it:
 - a named enum type on MariaDB or SQLite (PostgreSQL and DuckDB emit `CREATE TYPE`;
   MariaDB inlines `ENUM(...)` per column and SQLite becomes a `CHECK`);
 - a group's rectangle — it is derived from where its member tables sit, never
-  stored, so a group cannot be dragged away from its contents;
+  stored, so a group cannot be dragged away from its contents; a code
+  container's region is the same: the box around its members, never a size of
+  its own;
+- an arrow between code nodes that is not a step — every call, import and
+  extends is a step on the node it leaves, and the arrow is drawn from it;
+- a function inside a function — a function is a leaf, so closures and nested
+  helpers are one node, with the inner one's work in the *Code* box;
 - an index's method or operator class — an index is a list of columns and a
   unique flag, so `USING gin (title gin_trgm_ops)` and pgvector's `hnsw` cannot
   be drawn even when the extension that provides them is declared.

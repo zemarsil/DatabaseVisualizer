@@ -8,9 +8,9 @@ export const MAX_FOCUS_HOPS = 6;
 export function FocusBanner() {
   const focus = useUi((s) => s.focus);
   const setFocus = useUi((s) => s.setFocus);
-  const name = useStore((s) => (focus ? s.diagram.tables.find((t) => t.id === focus.tableId)?.name : undefined));
+  const name = useStore((s) => (focus ? (s.diagram.tables.find((t) => t.id === focus.nodeId)?.name ?? s.diagram.programs.find((p) => p.id === focus.nodeId)?.name) : undefined));
   if (!focus) return null;
-  const set = (hops: number) => setFocus({ tableId: focus.tableId, hops: Math.max(1, Math.min(MAX_FOCUS_HOPS, hops)) });
+  const set = (hops: number) => setFocus({ nodeId: focus.nodeId, hops: Math.max(1, Math.min(MAX_FOCUS_HOPS, hops)) });
   return (
     <div className="canvas__picking-banner canvas__focus-banner">
       <Target size={16} />

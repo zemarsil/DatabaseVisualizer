@@ -26,7 +26,7 @@ checks:
 prerequisites:
   - 14-export-share-and-save
 next:
-  - none
+  - 16-map-the-code-that-talks-to-it
 ---
 
 # Add an extension
@@ -401,8 +401,12 @@ and a clean **Problems** tab.
 
 ## Where to go next
 
-This is the last walkthrough in the series. Two things are worth doing next
-with what it leaves you:
+- [Map the code that talks to it](16-map-the-code-that-talks-to-it.md) is
+  where the series ends: the checkout service that reads `customers`, writes
+  `orders` and `order_items` and reserves stock, drawn as modules, a class and
+  functions on the same canvas as the tables they touch.
+
+Two more things are worth doing with what this walkthrough leaves you:
 
 - [Run the schema on a real database](13-run-the-schema-on-a-real-database.md)
   again, now that the script has two `CREATE EXTENSION` lines in it — a

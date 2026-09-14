@@ -21,7 +21,12 @@ import {
   ArrowLeftRight,
   ArrowRight,
   ArrowUp,
+  Box,
   Boxes,
+  ChevronsDownUp,
+  ChevronsUpDown,
+  FileCode,
+  SquareFunction,
   Braces,
   ClipboardCopy,
   ClipboardPaste,
@@ -34,6 +39,7 @@ import {
   FileDown,
   FileText,
   Focus,
+  FolderInput,
   KeyRound,
   ListPlus,
   Maximize,
@@ -58,7 +64,8 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { RELATIONSHIP_KINDS, kindMeta, programLanguageMeta, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
+import { CODE_KINDS, RELATIONSHIP_KINDS, canContain, codeKindMeta, codeKindOf, kindMeta, programLanguageMeta, type CodeKind, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
+import { codeChildren, codeDescendantIds, codePath } from '@/lib/codemap';
 import { generateProgramCode } from '@/lib/code/generate';
 import { flowDerivations, matchColumnsByName } from '@/lib/derivation';
 import { buildLineage, columnOrigin, derivedColumnIds, type Lineage } from '@/lib/lineage';
@@ -136,8 +143,8 @@ export interface MenuEnv {
   copy: (text: string, message: string) => void;
   /** Ask for a new name and apply it. */
   renameTable: (tableId: string) => void;
-  /** Delete tables and/or notes, confirming first when connections would go with them. */
-  remove: (ids: { tableIds?: string[]; noteIds?: string[] }) => void;
+  /** Delete tables, notes and/or code nodes, confirming first when connections would go with them. */
+  remove: (ids: { tableIds?: string[]; noteIds?: string[]; programIds?: string[] }) => void;
   /** Delete a group's region together with its tables, confirming first. */
   removeGroup: (groupId: string) => void;
   /** Paste the clipboard at a canvas position (defaults to the shared clipboard action). */
@@ -155,8 +162,12 @@ function plural(n: number, one: string, many = `${one}s`): string {
 }
 
 /** "2 tables and 1 note" — shared by the group menu and its confirm dialog. */
-export function describeElements({ tableIds = [], noteIds = [] }: { tableIds?: string[]; noteIds?: string[] }, joiner = ' and '): string {
-  const parts = [tableIds.length && plural(tableIds.length, 'table'), noteIds.length && plural(noteIds.length, 'note')].filter(Boolean) as string[];
+export function describeElements({ tableIds = [], noteIds = [], programIds = [] }: { tableIds?: string[]; noteIds?: string[]; programIds?: string[] }, joiner = ' and '): string {
+  const parts = [
+    tableIds.length && plural(tableIds.length, 'table'),
+    noteIds.length && plural(noteIds.length, 'note'),
+    programIds.length && plural(programIds.length, 'code node'),
+  ].filter(Boolean) as string[];
   return parts.join(joiner);
 }
 
@@ -176,11 +187,13 @@ function selectOnly(store: Store, patch: Partial<Selection>): void {
 }
 
 /** True when the clicked node is part of a group selection, so the menu should act on the group. */
-function inGroup(store: Store, kind: 'table' | 'note', id: string): boolean {
+function inGroup(store: Store, kind: 'table' | 'note' | 'program', id: string): boolean {
   const sel = store.selection;
   if (selectionSize(sel) < 2) return false;
-  return kind === 'note' ? sel.noteIds.includes(id) : sel.tableIds.includes(id);
+  return kind === 'note' ? sel.noteIds.includes(id) : kind === 'program' ? sel.programIds.includes(id) : sel.tableIds.includes(id);
 }
+
+const KIND_ICONS: Record<CodeKind, LucideIcon> = { program: Cpu, module: FileCode, class: Box, function: SquareFunction };
 
 /* ------------------------------------------------------------------ */
 /* Shared rows: collapse modes and arrange                             */
@@ -292,7 +305,7 @@ function arrangeItems(store: Store, tableIds: string[]): MenuNode[] {
 
 function focusItem(store: Store, tableId: string): MenuAction {
   const ui = useUi.getState();
-  const focused = ui.focus?.tableId === tableId;
+  const focused = ui.focus?.nodeId === tableId;
   return {
     kind: 'action',
     id: focused ? 'unfocus' : 'focus',
@@ -300,7 +313,7 @@ function focusItem(store: Store, tableId: string): MenuAction {
     icon: Focus,
     hint: '.',
     disabled: !focused && store.diagram.relationships.every((r) => r.sourceTableId !== tableId && r.targetTableId !== tableId),
-    run: () => ui.setFocus(focused ? null : { tableId, hops: 1 }),
+    run: () => ui.setFocus(focused ? null : { nodeId: tableId, hops: 1 }),
   };
 }
 
@@ -359,6 +372,15 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
       icon: Cpu,
       run: () => s.addProgram({ position: { x: Math.round(at.x - 130), y: Math.round(at.y - 30) } }),
     },
+    // The three levels of a code map, so a codebase can be sketched from the
+    // canvas the way it would be sketched on paper: files, classes, functions.
+    ...(['module', 'class', 'function'] as const).map((k) => ({
+      kind: 'action' as const,
+      id: `add-${k}`,
+      label: `Add ${codeKindMeta(k).label.toLowerCase()} here`,
+      icon: KIND_ICONS[k],
+      run: () => s.addProgram({ kind: k, position: { x: Math.round(at.x - 130), y: Math.round(at.y - 30) } }),
+    })),
     {
       kind: 'action',
       id: 'paste',
@@ -537,7 +559,7 @@ function tableMenu(table: Table, env: MenuEnv): MenuNode[] {
       },
     },
     { kind: 'action', id: 'rename', label: 'Rename…', icon: Pencil, run: () => env.renameTable(table.id) },
-    { kind: 'action', id: 'rename-inline', label: 'Rename in place', icon: TextCursorInput, hint: 'F2', run: () => useUi.getState().setRenamingTableId(table.id) },
+    { kind: 'action', id: 'rename-inline', label: 'Rename in place', icon: TextCursorInput, hint: 'F2', run: () => useUi.getState().setRenamingNodeId(table.id) },
     { kind: 'action', id: 'add-column', label: 'Add column', icon: Plus, run: () => s.addColumn(table.id) },
     sep('s1'),
     { kind: 'swatches', id: 'color', label: 'Color', value: table.color, pick: (key) => s.updateTable(table.id, { color: key }) },
@@ -654,12 +676,13 @@ function columnMenu(table: Table, column: Column, env: MenuEnv): MenuNode[] {
 
 function selectionMenu(env: MenuEnv): MenuNode[] {
   const s = env.store;
-  const { tableIds, noteIds } = s.selection;
+  const { tableIds, noteIds, programIds } = s.selection;
   const tableNames = tableIds.map((id) => s.diagram.tables.find((t) => t.id === id)?.name ?? '?');
   const noteNames = noteIds.map((id) => s.diagram.notes.find((n) => n.id === id)?.text.split('\n')[0] || 'Empty note');
+  const codeNames = programIds.map((id) => s.diagram.programs.find((p) => p.id === id)?.name ?? '?');
   // Same phrasing the inspector uses for a mixed group, e.g. "2 tables + 1 note".
   return [
-    { kind: 'heading', id: 'head', label: `${describeElements(s.selection, ' + ')} selected`, detail: [...tableNames, ...noteNames].join(', ') },
+    { kind: 'heading', id: 'head', label: `${describeElements(s.selection, ' + ')} selected`, detail: [...tableNames, ...noteNames, ...codeNames].join(', ') },
     ...(tableIds.length > 1
       ? [
           {
@@ -676,7 +699,27 @@ function selectionMenu(env: MenuEnv): MenuNode[] {
           sep('s1'),
         ]
       : []),
-    { kind: 'swatches', id: 'color', label: 'Color for all', value: null, pick: (key) => s.colorElements({ tableIds, noteIds }, key) },
+    { kind: 'swatches', id: 'color', label: 'Color for all', value: null, pick: (key) => s.colorElements({ tableIds, noteIds, programIds }, key) },
+    ...(programIds.length > 1
+      ? [
+          {
+            kind: 'action' as const,
+            id: 'fold',
+            label: `Collapse the ${plural(programIds.length, 'container')}`,
+            icon: ChevronsDownUp,
+            disabled: !programIds.some((id) => codeChildren(s.diagram).get(id)?.length),
+            run: () => s.setCodeCollapsed(programIds, true),
+          },
+          {
+            kind: 'action' as const,
+            id: 'unfold',
+            label: `Expand the ${plural(programIds.length, 'container')}`,
+            icon: ChevronsUpDown,
+            disabled: !programIds.some((id) => s.diagram.programs.find((p) => p.id === id)?.collapsed),
+            run: () => s.setCodeCollapsed(programIds, false),
+          },
+        ]
+      : []),
     ...(tableIds.length
       ? [
           sep('s-show'),
@@ -699,7 +742,7 @@ function selectionMenu(env: MenuEnv): MenuNode[] {
       icon: Trash2,
       danger: true,
       hint: 'Del',
-      run: () => env.remove({ tableIds, noteIds }),
+      run: () => env.remove({ tableIds, noteIds, programIds }),
     },
   ];
 }
@@ -743,9 +786,20 @@ function programMenu(programId: string, env: MenuEnv): MenuNode[] {
   const prg = s.diagram.programs.find((p) => p.id === programId);
   if (!prg) return [];
   const lang = programLanguageMeta(prg.language);
+  const kind = codeKindOf(prg);
+  const noun = codeKindMeta(kind).label.toLowerCase();
   const starter = generateProgramCode(s.diagram, prg);
+  const members = codeChildren(s.diagram).get(prg.id) ?? [];
+  const inside = codeDescendantIds(s.diagram, prg.id);
+  const parent = prg.parentId ? s.diagram.programs.find((p) => p.id === prg.parentId) : undefined;
+  const ui = useUi.getState();
+  const focused = ui.focus?.nodeId === prg.id;
+  const memberKinds = CODE_KINDS.filter((k) => canContain(kind, k.id));
+  const detail = [kind === 'program' ? `${lang.label} program` : `${noun}, ${lang.label}`, parent && `in ${codePath(s.diagram, parent)}`, inside.length > 0 && `${plural(inside.length, 'node')} inside`]
+    .filter(Boolean)
+    .join(' · ');
   return [
-    { kind: 'heading', id: 'head', label: prg.name, detail: `${lang.label} program` },
+    { kind: 'heading', id: 'head', label: prg.name, detail },
     {
       kind: 'action',
       id: 'edit',
@@ -756,8 +810,54 @@ function programMenu(programId: string, env: MenuEnv): MenuNode[] {
         s.setInspectorOpen(true);
       },
     },
+    { kind: 'action', id: 'rename-inline', label: 'Rename in place', icon: TextCursorInput, hint: 'F2', run: () => ui.setRenamingNodeId(prg.id) },
     { kind: 'action', id: 'add-step', label: 'Add a step', icon: Plus, run: () => s.addProgramStep(prg.id) },
+    ...memberKinds.map((k) => ({
+      kind: 'action' as const,
+      id: `add-member-${k.id}`,
+      label: `Add a ${k.label.toLowerCase()} inside`,
+      icon: KIND_ICONS[k.id],
+      run: () => s.addProgram({ kind: k.id, parentId: prg.id }),
+    })),
     { kind: 'swatches', id: 'color', label: 'Color', value: prg.color, pick: (key) => s.updateProgram(prg.id, { color: key }) },
+    sep('s-fold'),
+    ...(members.length
+      ? [
+          prg.collapsed
+            ? { kind: 'action' as const, id: 'unfold', label: `Expand: show the ${plural(inside.length, 'node')} inside`, icon: ChevronsUpDown, run: () => s.setCodeCollapsed([prg.id], false) }
+            : { kind: 'action' as const, id: 'fold', label: 'Collapse to one node', icon: ChevronsDownUp, run: () => s.setCodeCollapsed([prg.id], true) },
+          {
+            kind: 'action' as const,
+            id: 'select-members',
+            label: `Select the ${plural(inside.length, 'node')} inside`,
+            icon: SquareDashedMousePointer,
+            run: () => selectOnly(s, { programIds: inside }),
+          },
+        ]
+      : []),
+    ...(parent
+      ? [{ kind: 'action' as const, id: 'move-out', label: `Move out of ${parent.name}`, icon: FolderInput, run: () => s.setCodeParent([prg.id], parent.parentId ?? null) }]
+      : []),
+    {
+      kind: 'action',
+      id: focused ? 'unfocus' : 'focus',
+      label: focused ? 'Clear focus' : 'Focus neighborhood',
+      icon: Focus,
+      hint: '.',
+      run: () => ui.setFocus(focused ? null : { nodeId: prg.id, hops: 1 }),
+    },
+    {
+      kind: 'action',
+      id: 'trace-from',
+      label: 'Trace from here…',
+      icon: Route,
+      hint: 'pick a 2nd node',
+      run: () => {
+        s.setTracePicking(true);
+        s.setTraceEndpoints(prg.id, null);
+        s.openDrawer('trace');
+      },
+    },
     sep('s1'),
     {
       kind: 'action',
@@ -767,9 +867,19 @@ function programMenu(programId: string, env: MenuEnv): MenuNode[] {
       disabled: prg.steps.length === 0,
       run: () => env.copy(starter, `Copied the ${lang.label} starter for ${prg.name}.`),
     },
-    { kind: 'action', id: 'duplicate', label: 'Duplicate program', icon: Copy, run: () => s.duplicateProgram(prg.id) },
+    { kind: 'action', id: 'copy', label: `Copy ${noun}`, icon: ClipboardCopy, hint: 'Ctrl+C', run: () => void copySelectionToClipboard([], [prg.id]) },
+    { kind: 'action', id: 'duplicate', label: `Duplicate ${noun}`, icon: Copy, run: () => s.duplicateProgram(prg.id) },
     sep('s2'),
-    { kind: 'action', id: 'delete', label: 'Delete program', icon: Trash2, danger: true, hint: 'Del', run: () => s.deleteProgram(prg.id) },
+    ...(members.length ? [{ kind: 'action' as const, id: 'dissolve', label: `Dissolve: keep the ${plural(inside.length, 'node')}, drop the ${noun}`, icon: Ungroup, run: () => s.dissolveCodeNode(prg.id) }] : []),
+    {
+      kind: 'action',
+      id: 'delete',
+      label: inside.length ? `Delete ${noun} and the ${plural(inside.length, 'node')} inside` : `Delete ${noun}`,
+      icon: Trash2,
+      danger: true,
+      hint: 'Del',
+      run: () => env.remove({ programIds: [prg.id] }),
+    },
   ];
 }
 
@@ -977,18 +1087,19 @@ export function buildContextMenu(target: ContextTarget, env: MenuEnv): MenuNode[
       return column ? columnMenu(table, column, env) : tableMenu(table, env);
     }
     case 'selection': {
-      const { tableIds, noteIds } = s.selection;
+      const { tableIds, noteIds, programIds } = s.selection;
       if (selectionSize(s.selection) > 1) return selectionMenu(env);
       if (tableIds.length === 1) {
         const table = s.diagram.tables.find((t) => t.id === tableIds[0]);
         return table ? tableMenu(table, env) : [];
       }
+      if (programIds.length === 1) return programMenu(programIds[0], env);
       return noteIds.length === 1 ? noteMenu(noteIds[0], env) : [];
     }
     case 'note':
       return inGroup(s, 'note', target.noteId) ? selectionMenu(env) : noteMenu(target.noteId, env);
     case 'program':
-      return programMenu(target.programId, env);
+      return inGroup(s, 'program', target.programId) ? selectionMenu(env) : programMenu(target.programId, env);
     case 'relationship':
       return relationshipMenu(target.relationshipId, env);
     case 'group':

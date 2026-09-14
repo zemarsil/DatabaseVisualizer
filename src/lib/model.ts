@@ -1,5 +1,6 @@
 import {
   kindMeta,
+  programStepOpMeta,
   type Column,
   type CustomType,
   type CustomTypeField,
@@ -115,12 +116,18 @@ export function createNote(partial: Partial<Note> = {}): Note {
 }
 
 export function createProgramStep(partial: Partial<ProgramStep> = {}): ProgramStep {
-  const { id, op, tableId, ...rest } = partial;
+  const { id, op, tableId, codeId, ...rest } = partial;
   const step: ProgramStep = { id: id ?? newId('pstep'), op: op ?? 'read', columnIds: [], ...rest };
-  // A compute step is defined by not touching the database, so a table on one
-  // would be a contradiction the rest of the app would have to keep checking for.
-  if (step.op !== 'compute' && tableId) step.tableId = tableId;
-  if (step.op === 'compute') step.columnIds = [];
+  // Each op names one kind of thing or nothing: a table on a compute step, or a
+  // table on a call, would be a contradiction the rest of the app would have to
+  // keep checking for, so it is settled here once.
+  const meta = programStepOpMeta(step.op);
+  if (meta.touchesDatabase && tableId) step.tableId = tableId;
+  if (meta.namesCode && codeId) step.codeId = codeId;
+  if (!meta.touchesDatabase) {
+    step.columnIds = [];
+    delete step.sql;
+  }
   return step;
 }
 
@@ -138,9 +145,14 @@ export function createProgram(partial: Partial<Program> = {}): Program {
   };
 }
 
-/** Next free program name like "worker_2". Programs share a namespace with each other only. */
-export function uniqueProgramName(d: Diagram, base = 'new_program'): string {
-  const names = new Set(d.programs.map((p) => p.name.toLowerCase()));
+/**
+ * Next free name like "worker_2" among the nodes that share a container. Two
+ * classes may each have a `save`, so the namespace is the siblings, not the
+ * whole diagram; a top-level program only has to be distinct from the other
+ * top-level nodes.
+ */
+export function uniqueProgramName(d: Diagram, base = 'new_program', parentId?: string): string {
+  const names = new Set(d.programs.filter((p) => (p.parentId ?? null) === (parentId ?? null)).map((p) => p.name.toLowerCase()));
   if (!names.has(base.toLowerCase())) return base;
   let i = 2;
   while (names.has(`${base}_${i}`.toLowerCase())) i++;
@@ -350,7 +362,8 @@ export function flowCopyForTable(r: Relationship, from: Table, to: Table): Omit<
  * may carry hand-written code and a note, and silently deleting that to tidy up
  * a reference would throw away the only copy. The canvas simply draws no edge
  * for it and the linter reports it, with a one-click fix that removes the step
- * once the user agrees that is what they want.
+ * once the user agrees that is what they want. A call whose callee is gone is
+ * kept for exactly the same reason, and by the same rule.
  */
 export function pruneProgramRefs(d: Diagram): Program[] {
   const columns = new Set(d.tables.flatMap((t) => t.columns.map((c) => c.id)));
@@ -384,17 +397,64 @@ export function pruneRelationships(d: Diagram): Diagram {
 }
 
 /**
+ * Deep-copy code nodes with fresh ids (for copy/paste and duplicate).
+ *
+ * Containment and calls are re-pointed within the copied set, so a copied
+ * module still holds its copied functions and they still call each other. A
+ * step that named something outside the set keeps its pointer only when the
+ * destination diagram has that very node or table (a paste back into the same
+ * diagram), and otherwise keeps everything but the pointer — the code and the
+ * note are the part nobody can rebuild, the pointer would only ever dangle.
+ * `tableIdMap` is how tables copied alongside are found again, and
+ * `columnIdMap` their columns.
+ */
+export function clonePrograms(
+  programs: Program[],
+  tableIdMap: Map<string, string>,
+  existing: Diagram | null,
+  offset: { x: number; y: number } = { x: 40, y: 40 },
+  columnIdMap: Map<string, string> = new Map(),
+): Program[] {
+  const idMap = new Map(programs.map((p) => [p.id, newId('prg')] as const));
+  const knownCode = new Set((existing?.programs ?? []).map((p) => p.id));
+  const knownTables = new Set((existing?.tables ?? []).map((t) => t.id));
+  const knownColumns = new Set((existing?.tables ?? []).flatMap((t) => t.columns.map((c) => c.id)));
+  // A column id survives when its table came along (and was re-minted) or
+  // when the destination already has it; anything else would dangle.
+  const pastedColumns = new Set(columnIdMap.values());
+  return programs.map((p) => {
+    const parentId = p.parentId ? (idMap.get(p.parentId) ?? (knownCode.has(p.parentId) ? p.parentId : undefined)) : undefined;
+    const copy: Program = {
+      ...p,
+      id: idMap.get(p.id)!,
+      position: { x: p.position.x + offset.x, y: p.position.y + offset.y },
+      steps: p.steps.map((s) => {
+        const codeId = s.codeId ? (idMap.get(s.codeId) ?? (knownCode.has(s.codeId) ? s.codeId : undefined)) : undefined;
+        const tableId = s.tableId ? (tableIdMap.get(s.tableId) ?? (knownTables.has(s.tableId) ? s.tableId : undefined)) : undefined;
+        const columnIds = tableId ? s.columnIds.map((id) => columnIdMap.get(id) ?? id).filter((id) => pastedColumns.has(id) || knownColumns.has(id)) : [];
+        const { codeId: _c, tableId: _t, ...rest } = s;
+        return createProgramStep({ ...rest, id: undefined, columnIds, ...(codeId ? { codeId } : {}), ...(tableId ? { tableId } : {}) });
+      }),
+    };
+    delete copy.parentId;
+    if (parentId) copy.parentId = parentId;
+    return copy;
+  });
+}
+
+/**
  * Deep-copy tables with fresh ids (for copy/paste). Relationships are kept only
  * when both ends are inside the copied set; their column ids are remapped.
  * Names are made unique against `existing`, and a group membership survives
- * only when that group exists in the destination diagram.
+ * only when that group exists in the destination diagram. `tableIdMap` says
+ * which copy each original became, for anything else pasted alongside.
  */
 export function cloneTables(
   tables: Table[],
   relationships: Relationship[],
   existing: Diagram | null,
   offset: { x: number; y: number } = { x: 40, y: 40 },
-): { tables: Table[]; relationships: Relationship[] } {
+): { tables: Table[]; relationships: Relationship[]; tableIdMap: Map<string, string>; columnIdMap: Map<string, string> } {
   const tableIdMap = new Map<string, string>();
   const columnIdMap = new Map<string, string>();
   const scratch: Diagram = existing ? { ...existing, tables: [...existing.tables] } : emptyDiagram();
@@ -437,7 +497,7 @@ export function cloneTables(
         : {}),
     });
   }
-  return { tables: out, relationships: rels };
+  return { tables: out, relationships: rels, tableIdMap, columnIdMap };
 }
 
 /** Custom types referenced by the given tables' column types (case-insensitive name match). */
