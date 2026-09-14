@@ -482,6 +482,21 @@ clean **Problems** tab.
 
 ## Try it yourself
 
+- **Select `orders.py` and press *Show the Python starter*.** It is not the
+  module's one import step on its own: it is the file, with `class
+  OrderService` in it and `place_order` inside that, because that is what the
+  diagram says lives there. The import step became `import inventory` at the
+  top rather than a stub, and `inventory.py` is not in the file at all — it is
+  a module, so it is a file of its own with a starter of its own. Select
+  `OrderService` and you get the class; select `place_order` and you get the
+  one function as a script, which is what a leaf is good for.
+- **Give `reserve_stock` and `place_order` different signatures.**
+  `reserve_stock`'s *Signature or location* already reads `def
+  reserve_stock(conn, book_id, warehouse_code, quantity) -> None`, so its
+  starter is written under exactly that signature and uses the `conn` it is
+  handed. `place_order`'s does not name a connection, so its body opens one.
+  Clear a signature altogether and the starter writes a plain one from the
+  name.
 - **Delete `inventory.py`** (right-click it → *Delete module and the 1 node
   inside*) and open **Problems**. `place_order`'s call step is now an error,
   *calls something that is no longer in the diagram*, with a **Remove the

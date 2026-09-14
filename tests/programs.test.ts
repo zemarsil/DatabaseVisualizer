@@ -339,7 +339,7 @@ describe('the generated starter', () => {
     const { d, program } = jobRunner();
     const code = generateProgramCode(d, { ...program, language: 'cpp' });
     expect(code).toContain('#include <pqxx/pqxx>');
-    expect(code).toContain('pqxx::work tx{conn};');
+    expect(code).toContain('pqxx::work tx{connection};');
     expect(code).toContain('for (const auto &row : rows) {');
     expect(code).toContain('tx.commit();');
     // It owns its handles and throws, so the generated main catches.
@@ -427,6 +427,30 @@ describe('the generated starter', () => {
     const d = emptyDiagram();
     const empty = createProgram({ name: 'idle', language: 'python' });
     expect(() => generateProgramCode(d, empty)).not.toThrow();
+  });
+
+  it('opens no row loop for a read that is the last thing the program does', () => {
+    const { d, program } = jobRunner();
+    program.steps = [program.steps[0]];
+    const code = generateProgramCode(d, program);
+    // An empty `for row in rows:` does not even parse, so it is not written.
+    expect(code).not.toContain('for row in rows:');
+    expect(code).toContain('rows = cur.fetchall()');
+  });
+
+  it('gives a second read a name of its own rather than re-declaring rows', () => {
+    const { d, program } = jobRunner();
+    program.steps.splice(2, 0, createProgramStep({ op: 'read', tableId: tableId(d, 'results') }));
+    expect(generateProgramCode(d, program)).toContain('read_results_rows = cur.fetchall()');
+    // In JavaScript and Java a second `rows` is a syntax error, not a shadow.
+    expect(generateProgramCode(d, { ...program, language: 'javascript' })).toContain('const { rows: readResultsRows } =');
+    expect(generateProgramCode(d, { ...program, language: 'java' })).toContain('ResultSet readResultsRows =');
+  });
+
+  it('closes a one-parameter tuple, which is otherwise just a value in brackets', () => {
+    const { d, program } = jobRunner();
+    program.steps[2].columnIds = [d.tables[1].columns[2].id];
+    expect(generateProgramCode(d, program)).toContain('cur.execute(WRITE_RESULTS, (score,))');
   });
 });
 

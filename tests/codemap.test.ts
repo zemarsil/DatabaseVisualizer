@@ -26,6 +26,7 @@ import {
   wouldNestInItself,
 } from '../src/lib/codemap';
 import { describeProgram } from '../src/lib/programs';
+import { generateProgramCode, hasStarter, programCodeFilename, resolveUnits } from '../src/lib/code/generate';
 import { parseDiagramFile, serializeDiagram } from '../src/lib/io';
 import { lintDiagram } from '../src/lib/lint';
 import { generateSchema } from '../src/lib/sql/generator';
@@ -553,5 +554,162 @@ describe('the validator script', () => {
     }
     expect(out).toContain('ERROR  programs[4] "inventory.py" is a module inside a class');
     expect(out).toContain('ERROR  programs[3] "place_order" step 4: codeId "fn_gone" is not a code node in this file.');
+  });
+});
+
+describe('the starter a container writes', () => {
+  it('writes the module as the file it stands for: its class, and the function inside that', () => {
+    const { d, ordersPy } = checkout();
+    const code = generateProgramCode(d, ordersPy);
+    expect(code).toContain('class OrderService:');
+    // The method is indented inside the class, not left beside it.
+    expect(code).toContain('    def place_order(self, conn):');
+    expect(code.indexOf('class OrderService:')).toBeLessThan(code.indexOf('def place_order'));
+    // And the header says so, rather than leaving the reader to notice.
+    expect(code).toContain('OrderService and place_order sit inside it on the diagram');
+  });
+
+  it('stops at the file boundary: a sibling module is imported, never inlined', () => {
+    const { d, ordersPy, api } = checkout();
+    const code = generateProgramCode(d, ordersPy);
+    expect(code).toContain('import inventory');
+    expect(code).not.toContain('def reserve_stock');
+    // A program holds modules, and a module is a file of its own.
+    const program = generateProgramCode(d, api);
+    expect(program).not.toContain('class OrderService');
+    expect(program).toContain('orders.py and inventory.py are modules of their own');
+  });
+
+  it('turns an import step into an import line rather than a stub that raises', () => {
+    const { d, ordersPy } = checkout();
+    const code = generateProgramCode(d, ordersPy);
+    expect(code).not.toContain('def import_inventory_py');
+    expect(code).not.toContain('import_inventory_py(row)');
+    // Nothing is left for main to do, so there is no empty main under the class.
+    expect(code).not.toContain('def main()');
+  });
+
+  it('gives a class with no steps of its own the class it holds', () => {
+    const { d, service } = checkout();
+    expect(service.steps).toHaveLength(0);
+    expect(hasStarter(d, service)).toBe(true);
+    const code = generateProgramCode(d, service);
+    expect(code).toContain('class OrderService:');
+    expect(code).toContain('def place_order(self, conn):');
+    // A class is a definition, not a script: no main, and no entry point.
+    expect(code).not.toContain('if __name__ == "__main__":');
+  });
+
+  it('leaves a leaf alone: a node with neither steps nor members has no starter', () => {
+    const { d, service } = checkout();
+    const empty = createProgram({ name: 'nothing_yet', kind: 'function', parentId: service.id });
+    d.programs.push(empty);
+    expect(hasStarter(d, empty)).toBe(false);
+  });
+
+  it('keeps one namespace for the file, so two functions cannot collide', () => {
+    const { d, ordersPy, service } = checkout();
+    const twin = createProgram({
+      name: 'quote_order',
+      kind: 'function',
+      parentId: service.id,
+      steps: [
+        createProgramStep({ op: 'read', tableId: d.tables[0].id, sql: 'SELECT id FROM customers WHERE email = %s' }),
+        createProgramStep({ op: 'compute', note: 'price it' }),
+      ],
+    });
+    d.programs.push(twin);
+    const code = generateProgramCode(d, ordersPy);
+    // Both read customers and both compute at step 2; each keeps its own name.
+    expect(code).toContain('PLACE_ORDER_READ_CUSTOMERS');
+    expect(code).toContain('QUOTE_ORDER_READ_CUSTOMERS');
+    expect(code).toContain('def place_order_compute_2(row):');
+    expect(code).toContain('def quote_order_compute_2(row):');
+    const units = resolveUnits(d, ordersPy);
+    const slugs = units.members.flatMap((u) => [u, ...u.members]).flatMap((u) => u.steps.map((s) => s.slug));
+    expect(new Set(slugs).size).toBe(slugs.length);
+  });
+
+  it('uses the signature the node declares, and hands it the connection when it names one', () => {
+    const { d, inventoryPy, reserveStock, placeOrder } = checkout();
+    reserveStock.entrypoint = 'def reserve_stock(conn, book_id, quantity) -> None';
+    const code = generateProgramCode(d, inventoryPy);
+    expect(code).toContain('def reserve_stock(conn, book_id, quantity) -> None:');
+    // It was handed a connection, so it does not open one of its own.
+    expect(code).toContain('with conn.cursor() as cur:');
+    expect(code).not.toContain('with psycopg.connect(DSN)');
+    // A signature written in another language is not pasted into this one: it
+    // is quoted in the comment and a Java one is synthesised beside it.
+    placeOrder.entrypoint = 'def place_order(self, email, cart) -> int';
+    const java = generateProgramCode(d, { ...d.programs[1], language: 'java' });
+    expect(java.split('\n').some((l) => l.trim().startsWith('def '))).toBe(false);
+    expect(java).toContain('static void placeOrder(Connection conn) throws Exception {');
+  });
+
+  it('hands a stub a row only where there is one: inside the loop, never before it', () => {
+    const { d, ordersPy, service } = checkout();
+    const early = createProgram({
+      name: 'warm_cache',
+      kind: 'function',
+      parentId: service.id,
+      steps: [createProgramStep({ op: 'compute', note: 'fill the price cache' })],
+    });
+    d.programs.push(early);
+    const code = generateProgramCode(d, ordersPy);
+    expect(code).toContain('def compute_1():');
+    expect(code).toContain('result_1 = compute_1()');
+  });
+
+  it('nests the members in every language that has somewhere to nest them', () => {
+    const { d, ordersPy } = checkout();
+    const rust = generateProgramCode(d, { ...ordersPy, language: 'rust' });
+    expect(rust).toContain('pub struct OrderService;');
+    expect(rust).toContain('impl OrderService {');
+    expect(rust).toContain('    pub async fn place_order(&self)');
+    const go = generateProgramCode(d, { ...ordersPy, language: 'go' });
+    expect(go).toContain('type OrderService struct{}');
+    expect(go).toContain('func (o *OrderService) placeOrder(db *sql.DB) error {');
+    const java = generateProgramCode(d, { ...ordersPy, language: 'java' });
+    expect(java).toContain('public class Orders {');
+    expect(java).toContain('    static class OrderService {');
+    const ts = generateProgramCode(d, { ...ordersPy, language: 'typescript' });
+    expect(ts).toContain('class OrderService {');
+    expect(ts).toContain('  async placeOrder(db: Db): Promise<void> {');
+    // C has nowhere to nest, so it flattens and says where each came from —
+    // and is handed the connection, since it is not the one that opened it.
+    const c = generateProgramCode(d, { ...ordersPy, language: 'c' });
+    expect(c).toContain('static int order_service_place_order(PGconn *conn) {');
+    // And a language with no template still walks the tree in comments.
+    const csharp = generateProgramCode(d, { ...ordersPy, language: 'csharp' });
+    expect(csharp).toContain('// OrderService/place_order —');
+    expect(csharp.split('\n').filter((l) => l.trim() && !l.trim().startsWith('//'))).toEqual([]);
+  });
+
+  it('names the file after the node, without doubling the extension', () => {
+    const { d, ordersPy, api } = checkout();
+    expect(programCodeFilename(ordersPy)).toBe('orders.py');
+    expect(programCodeFilename(api)).toBe('api.py');
+    expect(generateProgramCode(d, { ...ordersPy, language: 'java' })).toContain('public class Orders {');
+  });
+
+  it('drops an import of something this file already holds, and renames one that clashes', () => {
+    const { d, ordersPy, service, inventoryPy } = checkout();
+    // orders.py importing its own class: it is right here, so there is nothing to import.
+    ordersPy.steps.push(createProgramStep({ op: 'import', codeId: service.id }));
+    const code = generateProgramCode(d, ordersPy);
+    expect(code).toContain('import inventory');
+    expect(code).not.toContain('import order_service');
+    // A class named for the module it imports would shadow the import.
+    d.programs.push(createProgram({ name: 'inventory', kind: 'class', parentId: ordersPy.id }));
+    expect(generateProgramCode(d, ordersPy)).toContain('import inventory as inventory_2');
+    const js = generateProgramCode(d, { ...ordersPy, language: 'javascript' });
+    expect(js).toContain("import * as inventory2 from './inventory.js';");
+    expect(inventoryPy.name).toBe('inventory.py');
+  });
+
+  it('survives a parent pointer that loops back on itself', () => {
+    const { d, ordersPy, service } = checkout();
+    ordersPy.parentId = service.id;
+    expect(() => generateProgramCode(d, ordersPy)).not.toThrow();
   });
 });
