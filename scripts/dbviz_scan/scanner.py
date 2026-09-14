@@ -18,6 +18,7 @@ from typing import Optional
 
 from .bracesource import BraceReader
 from .model import (
+    DATA_LANGUAGES,
     DEFAULT_EXCLUDES,
     LANGUAGE_BY_ID,
     TEST_DIRS,
@@ -49,6 +50,9 @@ class Scanner:
         self.by_dotted: dict[str, ModuleInfo] = {}
         self.by_suffix: dict[str, list[ModuleInfo]] = {}
         self.notes: list[str] = []
+        # The YAML and JSON files found on the way, so a load step naming one
+        # by its path has somewhere to look it up.
+        self.data_nodes: list[Node] = []
         # Queries whose table is substituted in at run time: read, understood to
         # be a query, and impossible to point at anything.
         self.dynamic = 0
@@ -208,6 +212,20 @@ class Scanner:
         own_node: Optional[Node] = None,
         also: Optional[Path] = None,
     ) -> None:
+        # A data file is not read. Nothing runs in a YAML or JSON file, so
+        # there are no queries in it and no calls out of it — it is a node
+        # other code points at, and the file's own contents are its business.
+        if language.data:
+            node = Node(kind='data', name=path.name, parent=parent, lineno=0, language=language.id)
+            parent.children.append(node)
+            node.entrypoint = rel(path)
+            info = ModuleInfo(node=node, dotted=dotted, is_package=False, language=language.id)
+            node.module = info
+            self.register(info, program)
+            self.languages[language.id] = self.languages.get(language.id, 0) + 1
+            self.data_nodes.append(node)
+            return
+
         try:
             source = path.read_text(encoding='utf-8', errors='replace')
         except OSError as e:
@@ -258,7 +276,8 @@ def dominant_language(program: Node) -> str:
 
     A service with forty Go files and a build script is a Go service, and the
     node says so; the files themselves keep their own language either way, so
-    nothing is lost by the program node rounding.
+    nothing is lost by the program node rounding. The data files do not get a
+    vote: a program is not written in YAML however much of it there is.
     """
     counts: dict[str, int] = {}
     for node in program.descendants():
@@ -286,7 +305,10 @@ def spread_language(program: Node) -> None:
             visit(child, node.language if node.language != 'other' else inherited)
         if node.kind in ('class', 'function') or (node.module is not None and not node.module.is_directory):
             return
-        kids = [c.language for c in node.children if c.language != 'other']
+        # A directory of YAML is not a directory written in YAML: nothing runs
+        # in a data language, so a container may never take one. A folder with
+        # nothing but data files in it keeps whatever it inherited.
+        kids = [c.language for c in node.children if c.language != 'other' and c.language not in DATA_LANGUAGES]
         node.language = max(set(kids), key=kids.count) if kids else inherited
 
     visit(program, program.language)

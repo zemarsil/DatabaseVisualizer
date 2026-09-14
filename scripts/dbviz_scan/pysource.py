@@ -239,6 +239,8 @@ class PythonReader(SourceReader):
                             folded.add(id(d))
                     if self.maybe_sql(text):
                         self.emit_sql(text, _at(n), owner)
+                    else:
+                        self.emit_data_load(text, _at(n), owner)
             if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load):
                 self.emit_named_query(n.id, _at(n), owner, module)
             elif isinstance(n, ast.Attribute) and isinstance(n.value, ast.Name) and n.value.id in ('self', 'cls'):

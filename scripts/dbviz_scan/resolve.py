@@ -13,6 +13,7 @@ arrow with it, and that can only be decided once the arrows exist.
 from __future__ import annotations
 
 import argparse
+import re
 from typing import Iterator, Optional
 
 from pathlib import Path
@@ -29,9 +30,10 @@ class Resolver:
     """
     Turns the names the code used into the nodes the map holds.
 
-    Three things get resolved, in that order because each needs the one before
-    it: imports (which module is that), inheritance (which class is that), and
-    calls (which function is that — possibly one the class inherits).
+    Four things get resolved, in that order because each needs the one before
+    it: imports (which module is that), inheritance (which class is that),
+    calls (which function is that — possibly one the class inherits) and loads
+    (which file on disk is that).
     """
 
     def __init__(self, scan: Scanner) -> None:
@@ -41,6 +43,7 @@ class Resolver:
         for n in self.nodes:
             if n.kind in ('function', 'class'):
                 self.by_name.setdefault(n.name, []).append(n)
+        self.data_nodes: list[Node] = [n for n in self.nodes if n.kind == 'data']
 
     # -- lookups ------------------------------------------------------------
 
@@ -62,6 +65,32 @@ class Resolver:
                 if found is not None:
                     return found
         return None
+
+    def data_file(self, ref: str) -> Optional[Node]:
+        """
+        The data file a load step's path names.
+
+        A path in the source is written from wherever the program runs, which
+        is not where the scan started, so an exact match is the lucky case and
+        the tail is the usual one: "config/settings.yaml" in the source and
+        "services/api/config/settings.yaml" on disk are the same file. A
+        basename that names exactly one file in the tree is the last resort —
+        the same rule the format already uses for a code path — and a basename
+        that names two is no answer, so nothing is drawn.
+        """
+        want = _slashes(ref)
+        if not want:
+            return None
+        exact = [n for n in self.data_nodes if _slashes(n.entrypoint or '') == want]
+        if len(exact) == 1:
+            return exact[0]
+        tails = [n for n in self.data_nodes
+                 if _slashes(n.entrypoint or '').endswith('/' + want) or want.endswith('/' + _slashes(n.entrypoint or ''))]
+        if len(tails) == 1:
+            return tails[0]
+        base = want.rsplit('/', 1)[-1]
+        named = [n for n in self.data_nodes if n.name.lower() == base]
+        return named[0] if len(named) == 1 else None
 
     def child(self, node: Node, name: str) -> Optional[Node]:
         for c in node.children:
@@ -169,6 +198,10 @@ class Resolver:
             for step in node.steps:
                 if step.op == 'call':
                     step.target = self.expression(step.ref or '', node, guess=not self.scan.opts.strict_calls)
+                elif step.op == 'load' and step.target is None:
+                    # A load that came from an import already knows what it
+                    # reads; one read off a path in the source is resolved here.
+                    step.target = self.data_file(step.ref or '')
         for node in self.nodes:
             node.steps = [s for s in self.keep_steps(node)]
 
@@ -192,7 +225,11 @@ class Resolver:
                     if target is info.node or any(a is target for a in info.node.ancestors()):
                         continue
                     note = 'for ' + ', '.join(taken[:4]) + ('…' if len(taken) > 4 else '') if taken else None
-                    info.node.steps.append(Step(op='import', order=order, target=target, note=note))
+                    # `import config from './config.json'` is an import in the
+                    # source and a read of a file at run time; the map says the
+                    # second, because nothing in a data file can be imported.
+                    op = 'load' if target.kind == 'data' else 'import'
+                    info.node.steps.append(Step(op=op, order=order, target=target, note=note))
 
     def keep_steps(self, node: Node) -> Iterator[Step]:
         """
@@ -204,7 +241,7 @@ class Resolver:
         """
         seen: set[tuple] = set()
         for step in sorted(node.steps, key=lambda s: s.order):
-            if step.op in ('call', 'import', 'extends'):
+            if step.op in ('call', 'import', 'extends', 'load'):
                 if step.target is None:
                     continue
                 # The validator is right to refuse these: an arrow from a node
@@ -225,6 +262,11 @@ class Resolver:
 # ---------------------------------------------------------------------------
 # What to keep
 # ---------------------------------------------------------------------------
+
+
+def _slashes(path: str) -> str:
+    """A path as one spelling: forward slashes, no leading `./`, lower case."""
+    return re.sub(r'^\./+', '', path.replace('\\', '/').strip()).lower()
 
 
 def _innermost(nodes: list[Node]) -> list[Node]:
@@ -280,6 +322,16 @@ def prune(programs: list[Node], opts: argparse.Namespace) -> int:
         if id(n) in keep:
             final.update(id(a) for a in n.ancestors())
     final.update(id(p) for p in programs)
+    # A data file is kept because something that survived reads it, never on
+    # its own account: a repository is full of YAML nobody in the map has heard
+    # of. Asked after the containers are in, since a module's own load step is
+    # as good a reason to keep the file as a function's.
+    loaded = {id(s.target) for n in nodes if id(n) in final
+              for s in n.steps if s.op == 'load' and s.target is not None}
+    final |= loaded
+    for n in nodes:
+        if id(n) in loaded:
+            final.update(id(a) for a in n.ancestors())
 
     def filter_children(n: Node) -> None:
         n.children = [c for c in n.children if id(c) in final]

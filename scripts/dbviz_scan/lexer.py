@@ -1,11 +1,11 @@
 """
-A tolerant lexer for the brace languages.
+A tolerant lexer for every language the scanner reads but Python.
 
 Python gets a real syntax tree because the standard library hands one over.
-Rust, Go, C, C++, Java, JavaScript and TypeScript would each need a parser of
-their own, which is not a thing to keep in a repository about drawing
-databases — so they get this instead: something that knows comments, strings,
-numbers, words and punctuation, and nothing else.
+Rust, Go, C, C++, Java, JavaScript, TypeScript, Perl and the shell would each
+need a parser of their own, which is not a thing to keep in a repository about
+drawing databases — so they get this instead: something that knows comments,
+strings, numbers, words and punctuation, and nothing else.
 
 That is less than a parser and more than a regex, and the difference from a
 regex is the point. A `SELECT` inside a comment is a comment, a brace inside a
@@ -20,8 +20,17 @@ reader works out which of them declare a function.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
+
+#: `<<'SQL'`, `<<"SQL"`, `<<SQL`, and the indented `<<~SQL` / `<<-SQL`.
+#: How Perl and the shell write the multi-line string a query usually is.
+HEREDOC = re.compile(r"""<<([-~]?)(?:'([A-Za-z_]\w*)'|"([A-Za-z_]\w*)"|([A-Za-z_]\w*))""")
+
+#: The languages whose comments start at a `#` and whose strings interpolate a
+#: `$name` — which is the same pair, and not a coincidence.
+SIGIL_LANGS = ('perl', 'shell')
 
 #: Punctuation that is one token rather than two, because the reader looks at
 #: it: a path separator, a member access through a pointer, an arrow function.
@@ -63,6 +72,9 @@ class Lexer:
         self.leading: Optional[str] = None
         self._comment: Optional[tuple[list[str], int, int]] = None
         self._bang = False
+        #: A heredoc's body, which was read at its marker and must not be read
+        #: again as code when the scan reaches the lines it sits on.
+        self._skip: Optional[tuple[int, int]] = None
         self._run()
 
     # -- helpers ------------------------------------------------------------
@@ -120,11 +132,29 @@ class Lexer:
         src = self.src
         n = len(src)
         while self.i < n:
+            # The lines a heredoc's body sits on: already read, as the string
+            # token emitted where the `<<TAG` was.
+            if self._skip is not None and self.i >= self._skip[0]:
+                self._advance_to(self._skip[1])
+                self._skip = None
+                continue
             ch = src[self.i]
             if ch in ' \t\r\n':
                 self._advance_to(self.i + 1)
                 continue
             start = self.i
+
+            # Perl and the shell comment with a hash. Only at the start of a
+            # word, which is the shell's own rule and keeps `$#array` in Perl
+            # and `${#list[@]}` in bash from eating the rest of the line.
+            if ch == '#' and self.lang in SIGIL_LANGS and (self.i == 0 or src[self.i - 1] in ' \t\n'):
+                end = src.find('\n', self.i)
+                end = n if end == -1 else end
+                line = self.line
+                text = src[self.i:end]
+                self._advance_to(end)
+                self._comment_block(text, line, line)
+                continue
 
             # Line comments, block comments, and C's preprocessor, which is
             # read as one token per line so a #define holding a brace cannot
@@ -238,6 +268,11 @@ class Lexer:
         n = len(src)
         ch = src[start]
 
+        if self.lang in SIGIL_LANGS and src.startswith('<<', start):
+            found = self._heredoc_at(start)
+            if found is not None:
+                return found
+
         if self.lang == 'cpp' and ch == 'R' and src.startswith('R"', start):
             open_paren = src.find('(', start + 2)
             if open_paren != -1:
@@ -274,6 +309,7 @@ class Lexer:
             return (body if self.lang == 'go' else _template_holes(body)), end
 
         if ch == '"' or (ch == "'" and not self._is_lifetime(start)):
+            interpolates = ch == '"' and self.lang in SIGIL_LANGS
             i = start + 1
             out: list[str] = []
             while i < n:
@@ -291,9 +327,58 @@ class Lexer:
                     break
                 out.append(c)
                 i += 1
-            return ''.join(out), i
+            text = ''.join(out)
+            return (_sigil_holes(text) if interpolates else text), i
 
         return None
+
+    def _heredoc_at(self, start: int) -> Optional[tuple[str, int]]:
+        """
+        A heredoc, read at its `<<TAG` and skipped where it actually sits.
+
+        Read there because that is where the value belongs: `my $SQL = <<'SQL';`
+        is one statement, and a string token arriving after the semicolon would
+        not be part of it. The body's lines are remembered in `_skip` so the
+        walk above steps over them rather than reading the query as code.
+        """
+        m = HEREDOC.match(self.src, start)
+        if m is None:
+            return None
+        tag = m.group(2) or m.group(3) or m.group(4)
+        if not tag:
+            return None
+        raw = m.group(2) is not None          # <<'SQL': no interpolation
+        indented = m.group(1) in ('-', '~')   # <<~SQL and <<-SQL
+        # A second heredoc on the same line starts after the first one's body.
+        after_line = self._skip[1] if self._skip is not None else None
+        if after_line is None:
+            nl = self.src.find('\n', m.end())
+            if nl == -1:
+                return None
+            after_line = nl + 1
+        body_start = after_line
+        i = body_start
+        end_body = len(self.src)
+        after = len(self.src)
+        while i <= len(self.src):
+            nxt = self.src.find('\n', i)
+            line = self.src[i:nxt if nxt != -1 else len(self.src)]
+            if (line.strip() if indented else line.rstrip('\r')) == tag:
+                end_body, after = i, (nxt + 1 if nxt != -1 else len(self.src))
+                break
+            if nxt == -1:
+                # No terminator: an unterminated heredoc runs to the end of the
+                # file, which is what the shell and Perl both do with one.
+                end_body = after = len(self.src)
+                break
+            i = nxt + 1
+        body = self.src[body_start:end_body]
+        if indented:
+            body = _text_block(body)
+        if not raw:
+            body = _sigil_holes(body)
+        self._skip = (self._skip[0] if self._skip is not None else body_start, after)
+        return body, m.end()
 
     def _is_lifetime(self, start: int) -> bool:
         """Rust writes `'static` for a lifetime and `'a'` for a character."""
@@ -347,6 +432,47 @@ def _template_holes(body: str) -> str:
     return ''.join(out)
 
 
+def _sigil_holes(text: str) -> str:
+    """
+    `$table` and `${table}` become `{table}`: a hole, said the way the rest of
+    the scanner says it.
+
+    Without this a query built by interpolation would read as one naming a
+    table called `$table`, which is worse than knowing there is a hole — the
+    whole point of `has_hole` is that a query nobody can point at is reported
+    rather than drawn.
+    """
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        if text[i] == '$' and i + 1 < n:
+            if text[i + 1] == '{':
+                depth = 0
+                j = i + 1
+                while j < n:
+                    if text[j] == '{':
+                        depth += 1
+                    elif text[j] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            break
+                    j += 1
+                out.append('{' + text[i + 2:j] + '}')
+                i = j + 1
+                continue
+            if _ident_start(text[i + 1]):
+                j = i + 1
+                while j < n and _ident_part(text[j]):
+                    j += 1
+                out.append('{' + text[i + 1:j] + '}')
+                i = j
+                continue
+        out.append(text[i])
+        i += 1
+    return ''.join(out)
+
+
 def _text_block(body: str) -> str:
     """A Java text block, minus the incidental indentation the compiler strips."""
     lines = body.split('\n')
@@ -362,6 +488,13 @@ def clean_doc(text: str) -> list[str]:
     lines: list[str] = []
     for raw in text.split('\n'):
         line = raw.strip()
+        # A shebang is not prose about anything; it is how the file is run.
+        if line.startswith('#!'):
+            continue
+        if line.startswith('##'):
+            line = line.lstrip('#')
+        elif line.startswith('#'):
+            line = line[1:]
         if line.startswith('/**'):
             line = line[3:]
         elif line.startswith('/*'):

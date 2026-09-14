@@ -89,7 +89,8 @@ def report_lines(report: Report, scan: Scanner, schema: Schema, dropped: int, op
     lines = [
         f'{count(report.nodes, "node")} ({count(report.functions, "function")}), '
         f'{count(report.reads, "read")}, {count(report.writes, "write")}, '
-        f'{count(report.calls, "call")}, {count(report.imports, "import or inheritance", "imports and inheritances")}.'
+        f'{count(report.calls, "call")}, {count(report.imports, "import or inheritance", "imports and inheritances")}'
+        + (f', {count(report.loads, "data file read")}.' if report.loads else '.')
     ]
     read = sorted(scan.languages.items(), key=lambda kv: (-kv[1], kv[0]))
     if len(read) > 1:
