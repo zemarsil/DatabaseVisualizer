@@ -336,12 +336,15 @@ work SQL cannot do — a fit, a render, a model call, a request to somebody else
 for the round trip around it.
 
 - `language` is one of `python`, `rust`, `go`, `cpp`, `c`, `java`, `javascript`,
-  `typescript`, `csharp`, `ruby`, `shell`, `other`. Anything unrecognised loads as
+  `typescript`, `perl`, `shell`, `yaml`, `json`, `other`. Anything unrecognised loads as
   `other`, which still gets a node and highlighting, only no generated starter.
+  `yaml` and `json` are not languages anything runs: a node written in one is a
+  **data file**, which is a `kind` rather than a program (see below).
 - `role` is optional: `service` (long-lived), `job` (scheduled), `script` (run by hand)
   or `etl` (bulk movement). It changes the badge and the wording, never the code.
 - `steps` are **ordered, and the order is the point**: it is what makes a round trip
-  legible on the canvas. `op` is `read`, `write` or `compute`.
+  legible on the canvas. `op` is `read`, `write` or `compute` — plus the four that name
+  another node, below.
 - A `compute` step must have **no** `tableId`, no `sql` and an empty `columnIds` — it is
   defined by not touching the database. A `read` or `write` step should name a `tableId`;
   `columnIds` narrows it to specific columns, and leaving it empty means the whole row.
@@ -367,14 +370,23 @@ The code map inside a program uses the same object, plus `kind` and `parentId`:
   ] }
 ```
 
-- `kind` is `module`, `class` or `function`; leave it out for a program. `parentId` names
-  the node this one sits inside: a module inside a program or a module, a class inside a
-  program, a module or a class, a function inside any of those. A function holds nothing.
-  Every node is a top-level entry of `programs`, whatever it sits inside — there is no
-  nesting in the JSON.
-- Three more `op`s name code rather than a table: `call` (a function, class or program it
-  hands control to), `import` (a module it depends on), `extends` (the class it inherits
-  from). Each carries `codeId`, the id of that node, and never a `tableId` or `sql`.
+- `kind` is `module`, `class`, `function` or `data`; leave it out for a program.
+  `parentId` names the node this one sits inside: a module inside a program or a module, a
+  class inside a program, a module or a class, a function inside any of those, a data file
+  inside a program or a module. A function holds nothing. Every node is a top-level entry
+  of `programs`, whatever it sits inside — there is no nesting in the JSON.
+- Four more `op`s name another node rather than a table: `call` (a function, class or
+  program it hands control to), `import` (a module it depends on), `extends` (the class it
+  inherits from) and `load` (a data file it reads values out of). Each carries `codeId`,
+  the id of that node, and never a `tableId` or `sql`.
+- A `"kind": "data"` node is a YAML or JSON file — settings, fixtures, a lookup table —
+  and it is the one node that is not code. Write it with `"language": "yaml"` or
+  `"json"`, an `entrypoint` holding its path, and **`"steps": []`**: nothing runs in it,
+  so it does nothing in order, and steps written on one are dropped on load. The only
+  arrow it may be on the end of is a `load`; a `call`, `import` or `extends` naming one is
+  reported by Problems. Use it when the recommendation is that a value belongs in a
+  config file rather than in the code or the schema — a rate, a threshold, a feature
+  flag — and draw the load from the function that reads it.
 - Put the statements on the **functions**, not on the modules: a module's steps are its
   imports, a function's steps are what it reads, writes and calls. Give every function a
   `position` inside its file's area; the regions for modules and classes are drawn around

@@ -64,7 +64,7 @@ import {
   X,
   type LucideIcon,
 } from 'lucide-react';
-import { CODE_KINDS, RELATIONSHIP_KINDS, canContain, codeKindMeta, codeKindOf, kindMeta, programLanguageMeta, type CodeKind, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
+import { CODE_KINDS, RELATIONSHIP_KINDS, canContain, codeKindMeta, codeKindOf, isDataNode, kindMeta, programLanguageMeta, type CodeKind, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
 import { codeChildren, codeDescendantIds, codePath } from '@/lib/codemap';
 import { generateProgramCode, hasStarter } from '@/lib/code/generate';
 import { flowDerivations, matchColumnsByName } from '@/lib/derivation';
@@ -193,7 +193,7 @@ function inGroup(store: Store, kind: 'table' | 'note' | 'program', id: string): 
   return kind === 'note' ? sel.noteIds.includes(id) : kind === 'program' ? sel.programIds.includes(id) : sel.tableIds.includes(id);
 }
 
-const KIND_ICONS: Record<CodeKind, LucideIcon> = { program: Cpu, module: FileCode, class: Box, function: SquareFunction };
+const KIND_ICONS: Record<CodeKind, LucideIcon> = { program: Cpu, module: FileCode, class: Box, function: SquareFunction, data: Braces };
 
 /* ------------------------------------------------------------------ */
 /* Shared rows: collapse modes and arrange                             */
@@ -803,7 +803,7 @@ function programMenu(programId: string, env: MenuEnv): MenuNode[] {
     {
       kind: 'action',
       id: 'edit',
-      label: 'Edit steps',
+      label: isDataNode(prg) ? 'Edit this file' : 'Edit steps',
       icon: Pencil,
       run: () => {
         selectOnly(s, { programIds: [prg.id] });
@@ -811,7 +811,8 @@ function programMenu(programId: string, env: MenuEnv): MenuNode[] {
       },
     },
     { kind: 'action', id: 'rename-inline', label: 'Rename in place', icon: TextCursorInput, hint: 'F2', run: () => ui.setRenamingNodeId(prg.id) },
-    { kind: 'action', id: 'add-step', label: 'Add a step', icon: Plus, run: () => s.addProgramStep(prg.id) },
+    // A data file has no steps to add: nothing runs in one.
+    ...(isDataNode(prg) ? [] : [{ kind: 'action' as const, id: 'add-step', label: 'Add a step', icon: Plus, run: () => s.addProgramStep(prg.id) }]),
     ...memberKinds.map((k) => ({
       kind: 'action' as const,
       id: `add-member-${k.id}`,

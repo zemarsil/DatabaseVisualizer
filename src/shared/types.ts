@@ -653,6 +653,9 @@ export interface Note {
  * catalogue every language there is. Anything not here is 'other', which still
  * gets a node, steps, prose and highlighting — only the generated skeleton
  * falls back to plain comments around the SQL.
+ *
+ * The last two are not languages anything runs. YAML and JSON hold values, so
+ * a node written in one is a data file rather than code: see `data` below.
  */
 export type ProgramLanguage =
   | 'python'
@@ -663,9 +666,10 @@ export type ProgramLanguage =
   | 'java'
   | 'javascript'
   | 'typescript'
-  | 'csharp'
-  | 'ruby'
+  | 'perl'
   | 'shell'
+  | 'yaml'
+  | 'json'
   | 'other';
 
 export interface ProgramLanguageMeta {
@@ -675,6 +679,12 @@ export interface ProgramLanguageMeta {
   extension: string;
   /** Line-comment marker, used by the generated skeleton and the code scanner. */
   comment: string;
+  /**
+   * Values, not instructions: nothing computes in this language, so a node
+   * written in it can only be a data file something else loads. Set on YAML
+   * and JSON, and the reason `CodeKind` has a 'data' member.
+   */
+  data?: boolean;
 }
 
 export const PROGRAM_LANGUAGES: ProgramLanguageMeta[] = [
@@ -686,14 +696,30 @@ export const PROGRAM_LANGUAGES: ProgramLanguageMeta[] = [
   { id: 'java', label: 'Java', extension: 'java', comment: '//' },
   { id: 'javascript', label: 'JavaScript', extension: 'js', comment: '//' },
   { id: 'typescript', label: 'TypeScript', extension: 'ts', comment: '//' },
-  { id: 'csharp', label: 'C#', extension: 'cs', comment: '//' },
-  { id: 'ruby', label: 'Ruby', extension: 'rb', comment: '#' },
+  { id: 'perl', label: 'Perl', extension: 'pl', comment: '#' },
   { id: 'shell', label: 'Shell', extension: 'sh', comment: '#' },
+  { id: 'yaml', label: 'YAML', extension: 'yaml', comment: '#', data: true },
+  // JSON proper has no comment syntax at all. The marker is what the editor's
+  // comment key writes and what the outline falls back to, and `//` is what
+  // every editor and every JSONC-tolerant parser reads, so it is the least
+  // wrong answer to a question the format does not have one for.
+  { id: 'json', label: 'JSON', extension: 'json', comment: '//', data: true },
   { id: 'other', label: 'Other', extension: 'txt', comment: '#' },
 ];
 
 export function isProgramLanguage(v: unknown): v is ProgramLanguage {
   return typeof v === 'string' && PROGRAM_LANGUAGES.some((l) => l.id === v);
+}
+
+/** The languages that hold values rather than code, in the order they are offered. */
+export const DATA_LANGUAGES: ProgramLanguage[] = PROGRAM_LANGUAGES.filter((l) => l.data).map((l) => l.id);
+
+/** The one a data file falls back to when something has to pick. */
+export const DEFAULT_DATA_LANGUAGE: ProgramLanguage = 'yaml';
+
+/** Whether nothing runs in this language: YAML and JSON, and nothing else. */
+export function isDataLanguage(v: unknown): v is ProgramLanguage {
+  return typeof v === 'string' && PROGRAM_LANGUAGES.some((l) => l.id === v && l.data === true);
 }
 
 const LANGUAGE_FALLBACK = PROGRAM_LANGUAGES[PROGRAM_LANGUAGES.length - 1];
@@ -744,12 +770,16 @@ export function programRoleMeta(id: ProgramRole): ProgramRoleMeta {
  *            separately from a call because "this file needs that file" is a
  *            fact about the build, not about what happens at run time.
  * extends -> the class this one inherits from.
+ * load    -> it reads values out of a data file: a YAML or JSON file of
+ *            settings, fixtures or a lookup table. Separate from an import
+ *            because it happens at run time and the thing it names runs
+ *            nothing, and separate from a read because a file is not a table.
  *
- * The last three name a code node rather than a table, and they are what turns
+ * The last four name a code node rather than a table, and they are what turns
  * a program into a map of a codebase: a function body is a list of the things
  * it does, and a call is a row that names another function.
  */
-export type ProgramStepOp = 'read' | 'write' | 'compute' | 'call' | 'import' | 'extends';
+export type ProgramStepOp = 'read' | 'write' | 'compute' | 'call' | 'import' | 'extends' | 'load';
 
 export interface ProgramStepOpMeta {
   id: ProgramStepOp;
@@ -770,13 +800,27 @@ export const PROGRAM_STEP_OPS: ProgramStepOpMeta[] = [
   { id: 'call', label: 'Call', short: 'call', hint: 'Hands control or data to another function, class or program.', touchesDatabase: false, namesCode: true },
   { id: 'import', label: 'Import', short: 'import', hint: 'Depends on another module, or on a name defined in one.', touchesDatabase: false, namesCode: true },
   { id: 'extends', label: 'Extends', short: 'extends', hint: 'Inherits from another class.', touchesDatabase: false, namesCode: true },
+  { id: 'load', label: 'Load', short: 'load', hint: 'Reads values out of a YAML or JSON file: settings, fixtures, a lookup table.', touchesDatabase: false, namesCode: true },
 ];
 
 /** The ops that name a code node rather than a table. */
-export const CODE_STEP_OPS: ProgramStepOp[] = ['call', 'import', 'extends'];
+export const CODE_STEP_OPS: ProgramStepOp[] = ['call', 'import', 'extends', 'load'];
 
-export function isCodeStepOp(op: ProgramStepOp): op is 'call' | 'import' | 'extends' {
-  return op === 'call' || op === 'import' || op === 'extends';
+export function isCodeStepOp(op: ProgramStepOp): op is 'call' | 'import' | 'extends' | 'load' {
+  return op === 'call' || op === 'import' || op === 'extends' || op === 'load';
+}
+
+/**
+ * Whether a step of this op may name a node of this kind.
+ *
+ * The one hard rule the data files bring with them: a data file is loaded and
+ * never anything else — it cannot be called, imported or inherited from,
+ * because there is nothing in it to run — and a load names a data file and
+ * nothing else, because reading values out of a function is not a thing.
+ */
+export function canStepName(op: ProgramStepOp, kind: CodeKind): boolean {
+  if (!isCodeStepOp(op)) return false;
+  return op === 'load' ? kind === 'data' : kind !== 'data';
 }
 
 export function isProgramStepOp(v: unknown): v is ProgramStepOp {
@@ -785,6 +829,26 @@ export function isProgramStepOp(v: unknown): v is ProgramStepOp {
 
 export function programStepOpMeta(id: ProgramStepOp): ProgramStepOpMeta {
   return PROGRAM_STEP_OPS.find((o) => o.id === id) ?? PROGRAM_STEP_OPS[0];
+}
+
+/**
+ * The op as the verb a sentence about it uses: "place_order *loads* config.yaml".
+ *
+ * Here rather than in the four places that were each spelling it out, because
+ * a fifth op arriving should not mean finding them all again.
+ */
+const STEP_VERBS: Record<ProgramStepOp, string> = {
+  read: 'reads',
+  write: 'writes',
+  compute: 'computes',
+  call: 'calls',
+  import: 'imports',
+  extends: 'extends',
+  load: 'loads',
+};
+
+export function stepVerb(op: ProgramStepOp): string {
+  return STEP_VERBS[op] ?? op;
 }
 
 /**
@@ -826,17 +890,23 @@ export interface ProgramStep {
 }
 
 /**
- * What a code node is: a runnable program, or one of the things a program is
- * made of.
+ * What a code node is: a runnable program, one of the things a program is
+ * made of, or the data file one of them reads.
  *
- * The four kinds are the four levels a person drawing a codebase by hand
+ * The first four kinds are the four levels a person drawing a codebase by hand
  * reaches for — files as the big boxes, classes inside them, functions as the
  * nodes — plus the program that runs it all as the root. Anything finer
  * (a method is a function inside a class; a package is a module inside a
  * module) is nesting, not a new kind, which keeps the vocabulary short enough
  * to read off a badge.
+ *
+ * 'data' is the one that is not code at all: a YAML or JSON file a program
+ * pulls settings, fixtures or a lookup table out of. It is a kind of its own
+ * rather than a module written in YAML because the difference is real and
+ * worth enforcing — no computation happens in there, so it holds nothing, does
+ * nothing, and the only arrow that may touch it is a load.
  */
-export type CodeKind = 'program' | 'module' | 'class' | 'function';
+export type CodeKind = 'program' | 'module' | 'class' | 'function' | 'data';
 
 export interface CodeKindMeta {
   id: CodeKind;
@@ -855,6 +925,7 @@ export const CODE_KINDS: CodeKindMeta[] = [
   { id: 'module', label: 'Module', plural: 'modules', hint: 'A file or a package: the big box the classes and functions live in.', container: true, parents: ['program', 'module'] },
   { id: 'class', label: 'Class', plural: 'classes', hint: 'A class, a struct, a type with methods.', container: true, parents: ['program', 'module', 'class'] },
   { id: 'function', label: 'Function', plural: 'functions', hint: 'A function or a method: the node whose steps say what it does.', container: false, parents: ['program', 'module', 'class'] },
+  { id: 'data', label: 'Data file', plural: 'data files', hint: 'A YAML or JSON file other code loads. Nothing runs in it, so it has no steps.', container: false, parents: ['program', 'module'] },
 ];
 
 export function isCodeKind(v: unknown): v is CodeKind {
@@ -873,6 +944,42 @@ export function codeKindOf(p: Pick<Program, 'kind'>): CodeKind {
 /** Whether a node of `child` kind may sit inside one of `parent` kind. */
 export function canContain(parent: CodeKind, child: CodeKind): boolean {
   return codeKindMeta(parent).container && codeKindMeta(child).parents.includes(parent);
+}
+
+/** A node that holds values rather than code: a YAML or JSON file. */
+export function isDataNode(p: Pick<Program, 'kind'>): boolean {
+  return codeKindOf(p) === 'data';
+}
+
+/**
+ * The language a node of this kind may keep, or the one it has to take instead.
+ *
+ * Kind and language are two halves of one fact for the data files, so changing
+ * either moves the other rather than leaving a YAML function or a data file
+ * written in Go on the canvas. This is the "the kind was just changed" half;
+ * `kindForLanguage` is the other, and `settleCodeNode` is for a file that
+ * arrives disagreeing with itself.
+ */
+export function languageForKind(kind: CodeKind, language: ProgramLanguage): ProgramLanguage {
+  if (kind === 'data') return isDataLanguage(language) ? language : DEFAULT_DATA_LANGUAGE;
+  return isDataLanguage(language) ? 'other' : language;
+}
+
+/** The kind a node written in this language may keep, or the one it has to take. */
+export function kindForLanguage(language: ProgramLanguage, kind: CodeKind): CodeKind {
+  if (isDataLanguage(language)) return 'data';
+  return kind === 'data' ? 'module' : kind;
+}
+
+/**
+ * Kind and language settled against each other, for a file or a paste that may
+ * claim both. Either side saying "data file" is taken at its word, because a
+ * node nothing runs is the safer reading of a disagreement: it loses no code,
+ * since a data node never had any.
+ */
+export function settleCodeNode(kind: CodeKind, language: ProgramLanguage): { kind: CodeKind; language: ProgramLanguage } {
+  if (kind !== 'data' && !isDataLanguage(language)) return { kind, language };
+  return { kind: 'data', language: isDataLanguage(language) ? language : DEFAULT_DATA_LANGUAGE };
 }
 
 /**
@@ -921,6 +1028,7 @@ export interface Program {
   color: string;
   /** What the program is for. */
   comment?: string;
+  /** Always empty on a data file, which runs nothing and so does nothing in order. */
   steps: ProgramStep[];
 }
 

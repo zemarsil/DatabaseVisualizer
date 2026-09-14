@@ -8,6 +8,7 @@ import {
   isWindowFunction,
   normalizeVerb,
   programStepOpMeta,
+  settleCodeNode,
   type AggregateFunction,
   type CustomType,
   type Derivation,
@@ -101,9 +102,15 @@ function parsePrograms(v: unknown): Program[] {
     const p = rp as Record<string, unknown>;
     if (typeof p.id !== 'string' || typeof p.name !== 'string') continue;
     const pos = (p.position ?? {}) as Record<string, unknown>;
-    const kind = isCodeKind(p.kind) ? p.kind : undefined;
+    // Kind and language are settled against each other on the way in, so a
+    // file claiming a YAML function — or a data file written in Go — loads as
+    // the one thing it can be.
+    const settled = settleCodeNode(isCodeKind(p.kind) ? p.kind : 'program', isProgramLanguage(p.language) ? p.language : 'other');
+    const kind = settled.kind;
     const steps: ProgramStep[] = [];
-    for (const rs of Array.isArray(p.steps) ? p.steps : []) {
+    // A data file runs nothing, so any steps written on one are dropped here
+    // rather than loaded into a node that could never perform them.
+    for (const rs of kind === 'data' ? [] : Array.isArray(p.steps) ? p.steps : []) {
       if (!rs || typeof rs !== 'object') continue;
       const s = rs as Record<string, unknown>;
       const op = isProgramStepOp(s.op) ? s.op : 'read';
@@ -124,11 +131,11 @@ function parsePrograms(v: unknown): Program[] {
       name: p.name,
       // 'program' is the default and is left unwritten, so a file that never
       // heard of kinds reads back byte for byte as it was written.
-      ...(kind && kind !== 'program' ? { kind } : {}),
+      ...(kind !== 'program' ? { kind } : {}),
       ...(typeof p.parentId === 'string' && p.parentId ? { parentId: p.parentId } : {}),
       ...(p.collapsed === true ? { collapsed: true } : {}),
-      language: isProgramLanguage(p.language) ? p.language : 'other',
-      ...(isProgramRole(p.role) && (kind ?? 'program') === 'program' ? { role: p.role } : {}),
+      language: settled.language,
+      ...(isProgramRole(p.role) && kind === 'program' ? { role: p.role } : {}),
       ...(typeof p.entrypoint === 'string' && p.entrypoint ? { entrypoint: p.entrypoint } : {}),
       position: { x: num(pos.x), y: num(pos.y) },
       color: str(p.color, 'slate'),

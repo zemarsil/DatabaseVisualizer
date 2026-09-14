@@ -55,6 +55,14 @@ DRIVER_METHODS = {
     'fetch_all', 'fetch_one', 'fetch_optional', 'exec', 'all', 'run', 'push', 'println',
     'printf', 'sprintf', 'fprintf', 'malloc', 'free', 'strcmp', 'unwrap', 'expect',
     'to_string', 'into', 'clone', 'await', 'then', 'catch', 'map', 'filter', 'forEach',
+    # Perl's DBI and the shell's own vocabulary: every one of these reads as a
+    # call, and none of them is ever a function in the map.
+    'prepare_cached', 'fetchrow_hashref', 'fetchrow_array', 'fetchrow_arrayref', 'fetchall_arrayref',
+    'fetchall_hashref', 'selectall_arrayref', 'selectrow_array', 'selectrow_hashref', 'do', 'disconnect',
+    'bind_param', 'finish', 'quote', 'last_insert_id', 'err', 'errstr', 'connect_cached',
+    'echo', 'printf', 'read', 'local', 'export', 'source', 'eval', 'exit', 'shift', 'jq', 'yq',
+    'psql', 'mysql', 'mariadb', 'sqlite3', 'duckdb', 'cat', 'sed', 'awk', 'grep', 'cut', 'tr', 'sort',
+    'uniq', 'head', 'tail', 'wc', 'date', 'mkdir', 'rm', 'cp', 'mv', 'touch', 'test', 'true', 'false',
 }
 
 
@@ -162,6 +170,9 @@ class Language:
     #: Suffixes that declare rather than define. A header and the source beside
     #: it are two halves of one module, and are read into one node.
     header_suffixes: tuple[str, ...] = ()
+    #: Values rather than code. Nothing runs in a YAML or JSON file, so it is
+    #: never read for queries or calls: it becomes a data node other code loads.
+    data: bool = False
 
 
 LANGUAGES: tuple[Language, ...] = (
@@ -191,9 +202,25 @@ LANGUAGES: tuple[Language, ...] = (
              entry_files=('main.c',),
              package_is_directory=True, vendor_dirs=('build',),
              header_suffixes=('.h',)),
+    Language('perl', 'Perl', ('.pl', '.pm'),
+             entry_files=('main.pl', 'app.pl', 'run.pl'),
+             vendor_dirs=('blib', 'local', '_build')),
+    Language('shell', 'Shell', ('.sh', '.bash'),
+             entry_files=('main.sh', 'run.sh', 'entrypoint.sh')),
+    # The two that hold values. They are walked for the files themselves and
+    # never read: there is nothing in one to read.
+    Language('yaml', 'YAML', ('.yaml', '.yml'), data=True),
+    Language('json', 'JSON', ('.json',), data=True),
 )
 
 LANGUAGE_BY_ID = {lang.id: lang for lang in LANGUAGES}
+
+#: The suffixes a load step's path may end in, which is the data languages'
+#: suffixes and nothing else.
+DATA_SUFFIXES = tuple(suffix for lang in LANGUAGES if lang.data for suffix in lang.suffixes)
+
+#: The ids of the languages that hold values rather than code.
+DATA_LANGUAGES = tuple(lang.id for lang in LANGUAGES if lang.data)
 
 #: Suffix -> language, first one wins, which is why C++ is listed before C.
 SUFFIXES: dict[str, Language] = {}
@@ -225,14 +252,23 @@ def language_of(path: Path, prefer: Optional[str] = None) -> Optional[Language]:
 
 # Directories that are never someone's own code, or never the code that talks
 # to the database, and would only make the map longer.
-DEFAULT_EXCLUDES = ['.*', 'migrations', 'alembic', '__pycache__', '*.egg-info']
+#
+# The JSON names are the second half of that: a lockfile and a manifest are a
+# build tool's, not a file the program reads, and now that JSON is walked at
+# all they would otherwise turn up in every map of a Node or Rust tree.
+DEFAULT_EXCLUDES = [
+    '.*', 'migrations', 'alembic', '__pycache__', '*.egg-info',
+    'package.json', 'package-lock.json', 'tsconfig*.json', 'jsconfig.json',
+    'composer.json', 'composer.lock', '*.lock.json', 'Cargo.lock',
+]
 for _lang in LANGUAGES:
     DEFAULT_EXCLUDES.extend(_lang.vendor_dirs)
 DEFAULT_EXCLUDES = sorted(set(DEFAULT_EXCLUDES))
 
 TEST_DIRS = {'tests', 'test', 'testing', '__tests__', 'spec'}
 # Filenames that are a language's own test convention rather than a directory.
-TEST_FILE_PATTERNS = ['*_test.go', '*.test.ts', '*.test.js', '*.spec.ts', '*.spec.js', 'test_*.py', '*_test.py']
+TEST_FILE_PATTERNS = ['*_test.go', '*.test.ts', '*.test.js', '*.spec.ts', '*.spec.js', 'test_*.py', '*_test.py',
+                      '*.t', '*_test.pl', '*_test.sh', 'test_*.sh']
 
 
 # ---------------------------------------------------------------------------

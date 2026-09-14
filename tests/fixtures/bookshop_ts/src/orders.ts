@@ -1,6 +1,7 @@
 // Everything about taking an order.
 
 import type { Pool } from 'pg';
+import rates from './rates.json' with { type: 'json' };
 import { reserveStock } from './inventory.js';
 import { toCents } from './money.js';
 

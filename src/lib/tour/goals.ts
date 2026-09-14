@@ -906,6 +906,7 @@ export const GOALS: Record<string, GoalSpec> = {
   calls: codeLinkSpec('calls', 'call'),
   imports: codeLinkSpec('imports', 'import'),
   extends: codeLinkSpec('extends', 'extends'),
+  loads: codeLinkSpec('loads', 'load'),
   'reads table': tableStepSpec('reads table', 'read'),
   'writes table': tableStepSpec('writes table', 'write'),
 
@@ -1052,8 +1053,8 @@ export const GOALS: Record<string, GoalSpec> = {
 /* Code-map spec builders                                              */
 /* ------------------------------------------------------------------ */
 
-/** `calls | a -> b`, `imports | a -> b`, `extends | a -> b`: a step on a naming b. */
-function codeLinkSpec(verb: 'calls' | 'imports' | 'extends', op: 'call' | 'import' | 'extends'): GoalSpec {
+/** `calls | a -> b`, `imports | a -> b`, `extends | a -> b`, `loads | a -> b`: a step on a naming b. */
+function codeLinkSpec(verb: 'calls' | 'imports' | 'extends' | 'loads', op: 'call' | 'import' | 'extends' | 'load'): GoalSpec {
   return {
     arg: 'from -> to, as code paths',
     check: (arg, ctx) => {
@@ -1232,7 +1233,7 @@ const CONNECTION_VERBS = new Set(['fk', 'flow', 'embed', 'dependency', 'reads', 
 /** Verbs whose subject is a table. */
 const TABLE_VERBS = new Set(['table', 'view', 'column', 'no column', 'flags', 'default', 'check', 'schema', 'collapsed', 'materialized', 'viewsql', 'index', 'unique index', 'select table']);
 /** Verbs whose subject is a code node: the one the step is about, or the one a call leaves. */
-const CODE_VERBS = new Set(['code', 'calls', 'imports', 'extends', 'reads table', 'writes table', 'code collapsed', 'select code']);
+const CODE_VERBS = new Set(['code', 'calls', 'imports', 'extends', 'loads', 'reads table', 'writes table', 'code collapsed', 'select code']);
 
 export type Subject = { kind: 'table'; id: string } | { kind: 'relationship'; id: string } | { kind: 'code'; id: string };
 

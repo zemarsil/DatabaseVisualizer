@@ -33,6 +33,10 @@ interface LanguageSyntax {
   types: Set<string>;
   /** Literals coloured apart from keywords: true, nil, None. */
   constants: Set<string>;
+  /** A word beginning with a sigil is a variable: Perl's `$dbh`, the shell's `$HOME`. */
+  sigils?: boolean;
+  /** A word or string followed by a colon is a field name: what a key is in YAML and JSON. */
+  keys?: boolean;
 }
 
 const words = (s: string) => new Set(s.split(/\s+/).filter(Boolean));
@@ -128,27 +132,19 @@ const JS: LanguageSyntax = {
   constants: words(`true false null undefined NaN Infinity console process`),
 };
 
-const RUBY: LanguageSyntax = {
+const PERL: LanguageSyntax = {
   line: ['#'],
-  quotes: ['"', "'"],
-  keywords: words(`alias and begin break case class def defined do else elsif end ensure for if in module next not or
-    redo rescue retry return self super then undef unless until when while yield require require_relative attr_accessor
-    attr_reader attr_writer`),
-  types: words(`Array Hash String Symbol Integer Float Range Struct Proc Time`),
-  constants: words(`true false nil __FILE__ __LINE__`),
-};
-
-const CSHARP: LanguageSyntax = {
-  line: ['//'],
-  block: C_BLOCK,
-  quotes: ['"', "'"],
-  keywords: words(`abstract as async await base break case catch checked class const continue default delegate do else
-    enum event explicit extern finally fixed for foreach get goto if implicit in interface internal is lock namespace
-    new operator out override params private protected public readonly record ref return sealed set sizeof stackalloc
-    static struct switch this throw try typeof unchecked unsafe using var virtual void volatile while yield`),
-  types: words(`bool byte char decimal double float int long object sbyte short string uint ulong ushort dynamic List
-    Dictionary Task IEnumerable`),
-  constants: words(`true false null value`),
+  quotes: ['"', "'", '`'],
+  sigils: true,
+  keywords: words(`and bless cmp do else elsif eq eval for foreach ge given goto gt if last le local lt my ne next no
+    not or our package redo ref require return state sub unless until use wantarray when while xor BEGIN END
+    __PACKAGE__ __END__ __DATA__ q qq qw qr tr`),
+  // Perl declares no types, so this set is the handful of module names a
+  // generated starter and most database code actually mention.
+  types: words(`DBI DBD JSON YAML Carp Exporter POSIX Encode Storable`),
+  constants: words(`print printf say open close chomp chop push pop shift unshift splice split join map grep sort keys
+    values each exists delete defined undef scalar reverse sprintf length substr index uc lc die warn croak confess
+    STDIN STDOUT STDERR`),
 };
 
 const SHELL: LanguageSyntax = {
@@ -160,6 +156,35 @@ const SHELL: LanguageSyntax = {
   constants: words(`true false echo printf cd test cat grep sed awk psql mysql sqlite3 duckdb`),
 };
 
+/**
+ * YAML and JSON are not languages anything runs, and the colouring says so:
+ * no keyword is claimed, because there is no control flow to claim one for.
+ * What a reader wants told apart is a key from a value, which is what `keys`
+ * does — the same class the SQL highlighter gives a column name, because a key
+ * is the same kind of thing: the name of a field somebody will read out.
+ */
+const YAML: LanguageSyntax = {
+  line: ['#'],
+  quotes: ['"', "'"],
+  keys: true,
+  keywords: new Set<string>(),
+  types: new Set<string>(),
+  constants: words(`true false null yes no on off True False Null TRUE FALSE NULL`),
+};
+
+const JSON_SYNTAX: LanguageSyntax = {
+  // JSON itself has no comments. These are here because the editor's comment
+  // key writes `//`, and a marker that colours as code would be a lie about
+  // what the line does — every JSONC-tolerant reader treats it as a comment.
+  line: ['//'],
+  block: C_BLOCK,
+  quotes: ['"'],
+  keys: true,
+  keywords: new Set<string>(),
+  types: new Set<string>(),
+  constants: words(`true false null`),
+};
+
 const SYNTAX: Record<ProgramLanguage, LanguageSyntax> = {
   python: PYTHON,
   rust: RUST,
@@ -169,13 +194,27 @@ const SYNTAX: Record<ProgramLanguage, LanguageSyntax> = {
   java: JAVA,
   javascript: JS,
   typescript: JS,
-  csharp: CSHARP,
-  ruby: RUBY,
+  perl: PERL,
   shell: SHELL,
+  yaml: YAML,
+  json: JSON_SYNTAX,
   // Unknown language: comments and strings still read correctly, and no word is
   // claimed to be a keyword, which is the honest thing to do.
   other: { line: ['#', '//'], block: C_BLOCK, quotes: ['"', "'"], keywords: new Set(), types: new Set(), constants: new Set() },
 };
+
+/**
+ * Whether what ends at `end` is a key: the next thing after it is a colon.
+ *
+ * Only asked in the data languages, where it is the one distinction worth
+ * drawing. A colon in Perl or the shell means something else entirely, which
+ * is why this is a per-language rule rather than a general one.
+ */
+function isKey(text: string, end: number): boolean {
+  let j = end;
+  while (j < text.length && (text[j] === ' ' || text[j] === '\t')) j++;
+  return text[j] === ':';
+}
 
 const WORD_START = /[A-Za-z_$@#\u0080-\uFFFF]/;
 const WORD_PART = /[A-Za-z0-9_$\u0080-\uFFFF]/;
@@ -267,7 +306,9 @@ export function highlightCode(text: string, language: ProgramLanguage): Highligh
         if (text[j] === '\n' && ch !== '`') break;
         j++;
       }
-      push('string', j);
+      // A quoted JSON key is a key, not a value, and the difference is the
+      // whole of what there is to read in a data file.
+      push(syn.keys && isKey(text, j) ? 'column' : 'string', j);
       continue;
     }
 
@@ -294,9 +335,13 @@ export function highlightCode(text: string, language: ProgramLanguage): Highligh
           ? 'type'
           : syn.constants.has(bare)
             ? 'number'
-            : callish
-              ? 'function'
-              : 'text';
+            : syn.sigils && (ch === '$' || ch === '@')
+              ? 'param'
+              : syn.keys && isKey(text, j)
+                ? 'column'
+                : callish
+                  ? 'function'
+                  : 'text';
       push(cls, j);
       continue;
     }

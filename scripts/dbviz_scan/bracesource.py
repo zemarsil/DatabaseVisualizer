@@ -1,13 +1,21 @@
 """
-The front end for Rust, Go, C, C++, Java, JavaScript and TypeScript.
+The front end for every language but Python: Rust, Go, C, C++, Java,
+JavaScript, TypeScript, Perl and the shell.
 
-Seven languages, one reader, because the differences between them are smaller
-than they look from inside any one of them. Every one of these declares a type
-and then a block, declares a function and then a block, imports by name at the
-top of the file, and writes its queries as string literals. What changes is the
-spelling: `fn` or `func` or `function`, `::` or `.` or `->`, `impl Trait for
-Type` or `class X extends Y`. So the shapes live in the table at the top of this
-file and the walk below is shared.
+Nine languages, one reader, because the differences between them are smaller
+than they look from inside any one of them. Every one of these declares a
+function and then a block, brings in other files by name near the top, and
+writes its queries as string literals. What changes is the spelling: `fn` or
+`func` or `function` or `sub` or nothing at all, `::` or `.` or `->`, `impl
+Trait for Type` or `class X extends Y` or `use parent`. So the shapes live in
+the table at the top of this file and the walk below is shared.
+
+The shell is the one that stretches the name: its blocks are `then … fi` and
+`do … done` rather than braces, and it has no nesting worth the word. What it
+does have is a function that opens with `name() {` and closes with `}`, which
+is all the walk actually needs, and a call that is a bare word — read only when
+the word names a function this same file defines, since otherwise every `echo`
+in the script would invent one.
 
 The walk is a block walk, not a parse. It keeps the tokens since the last
 `;`, `{` or `}` — the *header* — and when a `{` arrives it asks what that header
@@ -27,12 +35,13 @@ says how many of the first kind it noticed.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
 from .lexer import Lexer, Tok
-from .model import ModuleInfo, Node, Step, Sym, reached_through, summary
+from .model import DRIVER_METHODS, ModuleInfo, Node, Step, Sym, reached_through, summary
 from .reader import SourceReader
 
 # ---------------------------------------------------------------------------
@@ -50,6 +59,10 @@ CONTROL = {
             'sizeof', 'new', 'delete', 'throw', 'goto', 'co_await', 'co_return'},
     'javascript': {'if', 'else', 'for', 'while', 'do', 'switch', 'try', 'catch', 'finally', 'return',
                    'new', 'case', 'default', 'with', 'throw', 'await', 'yield'},
+    'perl': {'if', 'elsif', 'else', 'unless', 'while', 'until', 'for', 'foreach', 'do', 'eval', 'given',
+             'when', 'return', 'last', 'next', 'redo', 'my', 'our', 'local'},
+    'shell': {'if', 'then', 'elif', 'else', 'fi', 'for', 'while', 'until', 'do', 'done', 'case', 'esac',
+              'select', 'in', 'return', 'time'},
 }
 CONTROL['typescript'] = CONTROL['javascript']
 
@@ -63,14 +76,33 @@ CONTAINERS = {
     'cpp': {'class': 'class', 'struct': 'class', 'union': 'class', 'namespace': 'module'},
     'javascript': {'class': 'class'},
     'typescript': {'class': 'class', 'interface': 'class', 'enum': 'class', 'namespace': 'module', 'module': 'module'},
+    # `package Orders { … }`. The commoner `package Orders;` has no block and
+    # is read as the file's own name, in `declaration` below.
+    'perl': {'package': 'class'},
+    'shell': {},
 }
 
-#: The keyword that introduces a function, where there is one.
-FUNCTION_WORD = {'rust': 'fn', 'go': 'func', 'javascript': 'function', 'typescript': 'function'}
+#: The keyword that introduces a function, where there is one. The shell's is
+#: optional — `name() { … }` is the commoner form — and `classify_shell` reads
+#: that one off the parentheses.
+FUNCTION_WORD = {'rust': 'fn', 'go': 'func', 'javascript': 'function', 'typescript': 'function',
+                 'perl': 'sub', 'shell': 'function'}
 
 #: Languages where an unqualified call inside a method is a method of the same
 #: class. Java and C++ resolve it that way; JavaScript does not.
 IMPLICIT_SELF = {'java', 'cpp'}
+
+#: Languages whose names carry a sigil that is not part of the name: `$self`
+#: and `$dbh` are `self` and `dbh` to everything downstream.
+SIGIL_LANGS = {'perl', 'shell'}
+
+#: What `use parent 'Base'` and `use base 'Base'` say: inheritance, written as
+#: an import. Perl's only way of spelling `extends`.
+PERL_PARENT_PRAGMAS = {'parent', 'base'}
+
+#: Perl pragmas that bring in no module of this program's own.
+PERL_PRAGMAS = {'strict', 'warnings', 'utf8', 'feature', 'lib', 'constant', 'vars', 'overload',
+                'integer', 'bytes', 'open', 'if', 'version', 'diagnostics', 'sigtrap', 'subs'}
 
 #: Words that may sit in front of a declaration without changing what it is.
 MODIFIERS = {
@@ -101,7 +133,9 @@ class BraceReader(SourceReader):
         self.fn_word = FUNCTION_WORD.get(language)
         # Go and the two JavaScripts end a statement at the end of a line, so
         # the walk has to as well or a file of constants reads as one statement.
-        self.asi = language in ('go', 'javascript', 'typescript')
+        # Go and the two JavaScripts end a statement at the end of a line; the
+        # shell does too, and far more strictly.
+        self.asi = language in ('go', 'javascript', 'typescript', 'shell')
 
     # -- the walk -----------------------------------------------------------
 
@@ -270,9 +304,28 @@ class BraceReader(SourceReader):
 
         if lang in ('javascript', 'typescript'):
             return self.classify_js(ts, words, frame)
+        if lang == 'shell':
+            return self.classify_shell(ts)
         if lang in ('java', 'c', 'cpp'):
             return self.classify_signature(ts, words, frame)
         return None
+
+    def classify_shell(self, ts: list[Tok]):
+        """
+        `place_order() {`: a name, an empty pair of parentheses, a block.
+
+        The shell's parentheses are always empty — arguments arrive as `$1` —
+        so this shape is unambiguous, which is why it can be read off three
+        tokens with no risk of taking a subshell for a declaration.
+        """
+        if len(ts) < 3:
+            return None
+        name, opener, closer = ts[-3], ts[-2], ts[-1]
+        if name.kind != 'word' or opener.text != '(' or closer.text != ')':
+            return None
+        if name.text in self.control:
+            return None
+        return ('function', name.text, None, [], None)
 
     def classify_go(self, ts: list[Tok], words: list[str], frame: Frame):
         if words and words[0] == 'type' and len(words) > 1 and ('struct' in words or 'interface' in words):
@@ -395,7 +448,7 @@ class BraceReader(SourceReader):
         ts = [t for t in header if t.kind != 'attr']
         if not ts:
             return
-        if self.declaration(ts, info):
+        if self.declaration(ts, info, frame):
             return
         if self.query_constant(ts, info):
             return
@@ -442,10 +495,14 @@ class BraceReader(SourceReader):
         parent.children.append(node)
         return node
 
-    def declaration(self, ts: list[Tok], info: ModuleInfo) -> bool:
+    def declaration(self, ts: list[Tok], info: ModuleInfo, frame: Optional[Frame] = None) -> bool:
         """An import, a module declaration or a package line. True when handled."""
         first = ts[0].text if ts[0].kind == 'word' else ''
         lang = self.language
+        if lang == 'perl':
+            return self.perl_declaration(ts, info, first, frame)
+        if lang == 'shell':
+            return self.shell_declaration(ts, info, first)
         if lang == 'java':
             if first == 'package':
                 dotted = _dotted(ts[1:])
@@ -498,9 +555,12 @@ class BraceReader(SourceReader):
                 return True
         if lang in ('javascript', 'typescript'):
             if first == 'import' or (first == 'export' and any(t.text == 'from' for t in ts if t.kind == 'word')):
-                source = next((t.text for t in reversed(ts) if t.kind == 'string'), None)
+                source = _import_source(ts)
                 if source:
-                    names = [t.text for t in ts[1:] if t.kind == 'word' and t.text not in ('from', 'as', 'type', 'import', 'export', 'default')]
+                    # `with`, `assert` and the words inside an import attribute
+                    # are syntax rather than names the file took out of the file.
+                    at = next((i for i, t in enumerate(ts) if t.kind == 'word' and t.text in ('with', 'assert')), len(ts))
+                    names = [t.text for t in ts[1:at] if t.kind == 'word' and t.text not in ('from', 'as', 'type', 'import', 'export', 'default')]
                     self.bind(info, _module_path(source, info.dotted), names, ts[0].at)
                 return True
             if any(t.kind == 'word' and t.text == 'require' for t in ts):
@@ -510,6 +570,64 @@ class BraceReader(SourceReader):
                     self.bind(info, _module_path(source, info.dotted), names, ts[0].at)
                 return True
         return False
+
+    def perl_declaration(self, ts: list[Tok], info: ModuleInfo, first: str, frame: Optional[Frame]) -> bool:
+        """
+        `package Orders;`, `use Bookshop::Inventory;`, `use parent 'Base';`.
+
+        The package line is the file's own name, exactly as Java's is: a file
+        called Orders.pm that says `package Bookshop::Orders` is reachable by
+        both, and registering what it said is what makes a `use` elsewhere find
+        it. `use parent` is Perl's spelling of inheritance — but only inside a
+        `package … { }` block is there a class node for it to be about, so
+        anywhere else it is read as what it also is, a dependency on that file.
+        """
+        if first == 'package':
+            dotted = _perl_package(ts[1:])
+            if dotted:
+                info.dotted = dotted
+            return True
+        if first not in ('use', 'no', 'require'):
+            return False
+        name = _perl_package(ts[1:])
+        if not name or name.split('.')[0] in PERL_PRAGMAS:
+            return True
+        if name in PERL_PARENT_PRAGMAS:
+            # `use parent -norequire, 'Bookshop::Base'` — the bases are quoted.
+            for t in ts:
+                if t.kind != 'string':
+                    continue
+                base = t.text.replace('::', '.')
+                if frame is not None and frame.class_node is not None:
+                    frame.class_node.steps.append(Step(op='extends', order=ts[0].at, ref=base))
+                else:
+                    self.want(info, base, [], ts[0].at)
+                    info.symbols.setdefault(base.rsplit('.', 1)[-1], Sym(base))
+            return True
+        # `use Bookshop::Inventory qw(reserve_stock);`
+        names = _qw_names(ts)
+        self.bind(info, name, names, ts[0].at)
+        return True
+
+    def shell_declaration(self, ts: list[Tok], info: ModuleInfo, first: str) -> bool:
+        """
+        `source lib/db.sh` and its one-character spelling, `. lib/db.sh`.
+
+        A sourced file is the shell's whole import system: every function in it
+        arrives at once, under its own name, which is why nothing but the file
+        is bound here.
+        """
+        dot = ts[0].kind == 'punct' and ts[0].text == '.'
+        if first != 'source' and not dot:
+            return False
+        if len(ts) < 2:
+            return False
+        raw = self.src[ts[1].pos:ts[-1].end]
+        dotted = _shell_module(raw)
+        if dotted:
+            info.symbols.setdefault(dotted.rsplit('.', 1)[-1], Sym(dotted))
+            self.want(info, dotted, [], ts[0].at)
+        return True
 
     def directive(self, tok: Tok, info: ModuleInfo) -> None:
         """`#include "store/orders.h"`: C's import, quotes and all."""
@@ -584,8 +702,19 @@ class BraceReader(SourceReader):
         t = toks[i]
         if t.kind == 'string':
             text, nxt = self.fold(toks, i)
-            if text is not None and self.maybe_sql(text):
-                self.emit_sql(text, t.at, frame.node)
+            if text is not None:
+                hole = _lone_hole(text)
+                if hole and (hole in self.scan.query_names or hole in info.queries):
+                    # `psql "$LOCK"` and `` db.query(`${LOCK}`) ``: a string
+                    # that is nothing but one name is that name being used, and
+                    # in the shell it is the only way to use one.
+                    self.emit_named_query(hole, t.at, frame.node, info)
+                elif self.maybe_sql(text):
+                    self.emit_sql(text, t.at, frame.node)
+                else:
+                    # A string naming a YAML or JSON file is the code saying it
+                    # reads one, which is the only thing a data file is here for.
+                    self.emit_data_load(text, t.at, frame.node)
             return nxt
         if t.kind == 'word':
             after = toks[i + 1] if i + 1 < len(toks) else None
@@ -595,6 +724,11 @@ class BraceReader(SourceReader):
                 ref = self.name_chain(toks, i, frame, bare=fresh)
                 if ref:
                     frame.node.steps.append(Step(op='call', order=t.at, ref=ref))
+            elif self.language == 'shell' and _starts_command(toks, i) and t.text not in self.control and t.text not in DRIVER_METHODS:
+                # A call in the shell is a word at the start of a command. Most
+                # of them are `grep` and `psql`; the resolver keeps only the
+                # ones that name a function the map actually holds.
+                frame.node.steps.append(Step(op='call', order=t.at, ref=t.text))
             elif t.text in self.scan.query_names or t.text in info.queries:
                 self.emit_named_query(t.text, t.at, frame.node, info)
         return i + 1
@@ -609,14 +743,21 @@ class BraceReader(SourceReader):
         template literal or an f-string leaves, because that is the whole of
         what the scanner knows about it and pretending otherwise would invent a
         table called `table`.
+
+        Only C and C++ join two literals by writing them side by side. In the
+        shell `psql "$DSN" <<SQL` is a command and its heredoc, and folding
+        those two into one string would lose the query inside the second.
         """
         if i >= len(toks) or toks[i].kind != 'string':
             return None, i + 1
         parts = [toks[i].text]
         j = i + 1
+        adjacent = self.language in ('c', 'cpp')
         while j < len(toks):
             t = toks[j]
             if t.kind == 'string':
+                if not adjacent:
+                    break
                 parts.append(t.text)
                 j += 1
                 continue
@@ -666,6 +807,12 @@ class BraceReader(SourceReader):
                 continue
             break
         parts.reverse()
+        if self.language in SIGIL_LANGS:
+            # `$self->repo->load` is `self.repo.load`: the sigil says what kind
+            # of thing the variable is, not what it is called.
+            parts = [p.lstrip('$@%&') for p in parts]
+        if not parts[0]:
+            return None
         if parts[0] in ('this', 'Self') or (frame.receiver and parts[0] == frame.receiver):
             parts[0] = 'self'
         elif len(parts) == 1 and not bare and frame.class_node is not None and self.language in IMPLICIT_SELF:
@@ -699,7 +846,10 @@ VALUE_BEFORE_PUNCT = {'=', '(', ',', ':', '[', '::', '?'}
 #: `const x = {…}` is an object, and emphatically not for C++, where a trailing
 #: `const` is the last thing before a method's body.
 VALUE_BEFORE_WORD = {
-    'javascript': {'import', 'export', 'const', 'let', 'var', 'return', 'from'},
+    # `with` and `assert` are the import attribute a JSON import carries:
+    # `import rates from './rates.json' with { type: 'json' }`. Without them
+    # here that brace opens a block and takes the import statement with it.
+    'javascript': {'import', 'export', 'const', 'let', 'var', 'return', 'from', 'with', 'assert'},
     'rust': {'use', 'return'},
     'java': {'return'},
     'go': {'return'},
@@ -838,6 +988,93 @@ def _sibling(dotted: str, name: str) -> str:
     return f'{dotted}.{name}' if dotted else name
 
 
+def _import_source(ts: list[Tok]) -> Optional[str]:
+    """
+    The file an import names: the string after `from`, or the only one there is.
+
+    Not simply the last string in the statement, which an import attribute —
+    `import rates from './rates.json' with { type: 'json' }` — would make
+    `json`.
+    """
+    at = next((i for i, t in enumerate(ts) if t.kind == 'word' and t.text == 'from'), None)
+    if at is not None:
+        return next((t.text for t in ts[at + 1:] if t.kind == 'string'), None)
+    return next((t.text for t in ts if t.kind == 'string'), None)
+
+
+def _lone_hole(text: str) -> Optional[str]:
+    """The name in a string that is nothing but one interpolated name."""
+    m = re.fullmatch(r'\{(\w+)\}', text.strip())
+    return m.group(1) if m else None
+
+
+def _perl_package(ts: list[Tok]) -> str:
+    """
+    `Bookshop::Inventory` out of `use Bookshop::Inventory qw(reserve_stock);`.
+
+    Not `_dotted`, which joins every word it meets: what follows a Perl module
+    name is an import list rather than more of the name, so the name ends at
+    the first word that is not preceded by a `::`.
+    """
+    out: list[str] = []
+    want_sep = False
+    for t in ts:
+        if t.kind == 'word':
+            if want_sep:
+                break
+            out.append(t.text)
+            want_sep = True
+            continue
+        if t.kind == 'punct' and t.text in ('::', '.'):
+            if not want_sep:
+                break
+            want_sep = False
+            continue
+        break
+    return '.'.join(out)
+
+
+def _qw_names(ts: list[Tok]) -> list[str]:
+    """The names inside a `qw(reserve_stock restock)`, or a list of quoted ones."""
+    out: list[str] = []
+    for i, t in enumerate(ts):
+        if t.kind == 'word' and t.text in ('qw', 'qw()'):
+            for nxt in ts[i + 1:]:
+                if nxt.kind == 'word':
+                    out.append(nxt.text)
+                elif nxt.kind == 'punct' and nxt.text == ')':
+                    break
+            break
+        if t.kind == 'string' and t.text.isidentifier():
+            out.append(t.text)
+    return out
+
+
+def _shell_module(raw: str) -> str:
+    """
+    The module a `source` names: "$(dirname "$0")/lib/db.sh" is `lib.db`.
+
+    Only the path's tail is ever a file the scan has seen, and everything in
+    front of it is the script working out where it is, so the tail is what is
+    kept and the resolver matches it by suffix the way it does a Go import.
+    """
+    m = re.search(r'([\w.\-/]+)\.(?:sh|bash)\s*$', raw.strip().strip('"\''))
+    if not m:
+        return ''
+    parts = [part for part in m.group(1).split('/') if part not in ('', '.', '..')]
+    return '.'.join(parts)
+
+
+def _starts_command(toks: list[Tok], i: int) -> bool:
+    """Whether this token opens a command: the shell's answer to "is this a call"."""
+    if i == 0:
+        return True
+    before = toks[i - 1]
+    if before.kind == 'punct' and before.text in (';', '|', '&', '&&', '||', '(', ')', '{', '}'):
+        return True
+    return before.line < toks[i].line
+
+
 def _dotted(ts: list[Tok]) -> str:
     out: list[str] = []
     for t in ts:
@@ -895,7 +1132,9 @@ def _rust_use(ts: list[Tok]) -> list[tuple[str, Optional[list[str]]]]:
 def _module_path(source: str, from_dotted: str) -> str:
     """`./orders.js` next to `api/main.ts` is `api.orders`."""
     text = source
-    for suffix in ('.js', '.ts', '.mjs', '.cjs', '.jsx', '.tsx'):
+    # `.json` belongs here too: importing one is how JavaScript reads a data
+    # file, and the resolver turns that import into the read it really is.
+    for suffix in ('.js', '.ts', '.mjs', '.cjs', '.jsx', '.tsx', '.json'):
         if text.endswith(suffix):
             text = text[: -len(suffix)]
             break

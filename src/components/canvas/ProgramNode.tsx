@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
-import { ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Box, ChevronsUpDown, Cpu, FileCode, Import, Layers, SquareFunction, Terminal, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Box, Braces, ChevronsUpDown, Cpu, FileCode, FileInput, Import, Layers, SquareFunction, Terminal, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { codeKindMeta, codeKindOf, programLanguageMeta, programRoleMeta, type CodeKind, type Program, type ProgramStepOp } from '@shared/types';
 import { paletteHue } from '@/lib/palette';
 import { useStore } from '@/store/useStore';
@@ -14,7 +14,7 @@ import '@/styles/programs.css';
 export interface ProgramStepView {
   id: string;
   op: ProgramStepOp;
-  /** Table name on a read or write, code node name on a call, import or extends, null on a compute step. */
+  /** Table name on a read or write, code node name on a call, import, extends or load, null on a compute step. */
   target: string | null;
   columns: string[];
   /** The step names something the diagram no longer has. */
@@ -50,6 +50,7 @@ export const KIND_ICON: Record<CodeKind, LucideIcon> = {
   module: FileCode,
   class: Box,
   function: SquareFunction,
+  data: Braces,
 };
 
 const OP_ICON: Record<ProgramStepOp, LucideIcon> = {
@@ -59,6 +60,7 @@ const OP_ICON: Record<ProgramStepOp, LucideIcon> = {
   call: ArrowUpRight,
   import: Import,
   extends: Layers,
+  load: FileInput,
 };
 
 /** The in-place rename box, the same one a table header gets. */

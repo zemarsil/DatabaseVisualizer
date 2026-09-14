@@ -680,9 +680,9 @@ describe('the starter a container writes', () => {
     const c = generateProgramCode(d, { ...ordersPy, language: 'c' });
     expect(c).toContain('static int order_service_place_order(PGconn *conn) {');
     // And a language with no template still walks the tree in comments.
-    const csharp = generateProgramCode(d, { ...ordersPy, language: 'csharp' });
-    expect(csharp).toContain('// OrderService/place_order —');
-    expect(csharp.split('\n').filter((l) => l.trim() && !l.trim().startsWith('//'))).toEqual([]);
+    const outline = generateProgramCode(d, { ...ordersPy, language: 'other' });
+    expect(outline).toContain('# OrderService/place_order —');
+    expect(outline.split('\n').filter((l) => l.trim() && !l.trim().startsWith('#'))).toEqual([]);
   });
 
   it('names the file after the node, without doubling the extension', () => {

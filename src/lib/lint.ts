@@ -9,6 +9,7 @@
  */
 import {
   canContain,
+  canStepName,
   codeKindMeta,
   codeKindOf,
   engineName,
@@ -16,6 +17,7 @@ import {
   kindMeta,
   programLanguageMeta,
   programStepOpMeta,
+  stepVerb,
   type Column,
   type Diagram,
   type Program,
@@ -690,6 +692,15 @@ export function lintDiagram(d: Diagram): LintFinding[] {
       }
     }
 
+    if (kind === 'data' && !d.programs.some((x) => x.steps.some((s) => s.op === 'load' && s.codeId === prg.id))) {
+      push({
+        rule: 'code-data-unread',
+        severity: 'info',
+        message: `Nothing in the map loads ${prg.name}. A data file is only on the canvas because something reads it, so either that step has not been drawn or the file is no longer used.`,
+        programId: prg.id,
+      });
+    }
+
     if (kind === 'function' && anyCall && !called.has(prg.id)) {
       push({
         rule: 'code-uncalled-function',
@@ -715,7 +726,7 @@ export function lintDiagram(d: Diagram): LintFinding[] {
           push({
             rule: 'code-step-missing-target',
             severity: 'error',
-            message: `Step ${i + 1} of ${prg.name} ${s.op === 'call' ? 'calls' : s.op === 'import' ? 'imports' : 'extends'} something that is no longer in the diagram. Its code is still here; point it at another node or remove the step.`,
+            message: `Step ${i + 1} of ${prg.name} ${stepVerb(s.op)} something that is no longer in the diagram. Its code is still here; point it at another node or remove the step.`,
             programId: prg.id,
             fix: {
               label: 'Remove the step',
@@ -733,6 +744,29 @@ export function lintDiagram(d: Diagram): LintFinding[] {
             severity: 'warning',
             message: `Step ${i + 1} of ${prg.name} ${s.op}s ${prg.name} itself, which cannot be what was meant.`,
             programId: prg.id,
+          });
+        } else if (!canStepName(s.op, codeKindOf(codeById.get(s.codeId)!))) {
+          // The one pairing rule the data files bring: a data file is loaded,
+          // and a load loads a data file. Either way round, what the step says
+          // happens cannot happen, and the fix is to change the op rather than
+          // to throw away whatever the step carries.
+          const target = codeById.get(s.codeId)!;
+          const wrongWay = s.op === 'load';
+          push({
+            rule: 'code-step-op-mismatch',
+            severity: 'warning',
+            message: wrongWay
+              ? `Step ${i + 1} of ${prg.name} loads ${target.name}, which is ${codeNoun(target) === 'program' ? 'a program' : `a ${codeNoun(target)}`} rather than a data file. Only a YAML or JSON file holds values to load.`
+              : `Step ${i + 1} of ${prg.name} ${stepVerb(s.op)} ${target.name}, which is a data file. Nothing runs in one, so it can only be loaded.`,
+            programId: prg.id,
+            fix: {
+              label: wrongWay ? 'Make it a call' : 'Make it a load',
+              safe: false,
+              apply: (dd) => {
+                const step = dd.programs.find((x) => x.id === prg.id)?.steps.find((x) => x.id === s.id);
+                if (step) step.op = wrongWay ? 'call' : 'load';
+              },
+            },
           });
         }
         return;

@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
-from .model import ModuleInfo, Node, Step, tidy_sql
+from .model import DATA_SUFFIXES, ModuleInfo, Node, Step, tidy_sql
 from .sqlread import has_hole, looks_like_sql, read_sql
 
 if TYPE_CHECKING:  # pragma: no cover - import for types only
@@ -44,6 +44,24 @@ class SourceReader:
                 self.scan.dynamic += 1
             for access in accesses:
                 owner.steps.append(Step(op=access.op, order=order, access=access, sql=tidy_sql(statement)))
+
+    def emit_data_load(self, text: str, order: tuple[int, int], owner: Node) -> bool:
+        """
+        A string naming a YAML or JSON file, as the step that reads it.
+
+        The same move `emit_sql` makes and for the same reason: a string
+        literal is the one place a file this program opens is written down in
+        full. What it names may not be in the scan at all — a path to somewhere
+        else on the machine, a template — and the resolver drops a load whose
+        file it never saw, so nothing here has to decide that.
+        """
+        name = text.strip()
+        if not name or '\n' in name or len(name) > 200:
+            return False
+        if not name.lower().endswith(DATA_SUFFIXES):
+            return False
+        owner.steps.append(Step(op='load', order=order, ref=name))
+        return True
 
     def emit_named_query(self, name: str, order: tuple[int, int], owner: Node, module: ModuleInfo) -> None:
         """A reference to a query constant, here or in a file this one imported."""

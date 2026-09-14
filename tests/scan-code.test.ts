@@ -19,10 +19,11 @@ import { lintDiagram } from '@/lib/lint';
  * accepts.
  *
  * The same service is then written again in Rust, Go, Java, TypeScript,
- * JavaScript, C and C++, and asserted against the same schema. One reader
- * covers all seven, so the point of scanning each is that the shapes they
- * spell differently — a receiver, an `impl` block, a header and its source, a
- * template literal — all arrive as the same nodes and the same steps.
+ * JavaScript, C, C++, Perl and the shell, and asserted against the same
+ * schema. One reader covers all nine, so the point of scanning each is that
+ * the shapes they spell differently — a receiver, an `impl` block, a header
+ * and its source, a template literal, a `package` line, a heredoc — all arrive
+ * as the same nodes and the same steps.
  */
 
 const SOURCE = 'tests/fixtures/bookshop_api';
@@ -347,6 +348,22 @@ const CASES: LanguageCase[] = [
     inventory: 'bookshop_cpp/inventory.cpp',
     importer: 'bookshop_cpp/orders.cpp',
   },
+  {
+    name: 'bookshop_pl',
+    language: 'perl',
+    place: 'bookshop_pl/lib/Bookshop/Orders.pm/place_order',
+    reserve: 'bookshop_pl/lib/Bookshop/Inventory.pm/reserve_stock',
+    inventory: 'bookshop_pl/lib/Bookshop/Inventory.pm',
+    importer: 'bookshop_pl/lib/Bookshop/Orders.pm',
+  },
+  {
+    name: 'bookshop_sh',
+    language: 'shell',
+    place: 'bookshop_sh/lib/orders.sh/place_order',
+    reserve: 'bookshop_sh/lib/inventory.sh/reserve_stock',
+    inventory: 'bookshop_sh/lib/inventory.sh',
+    importer: 'bookshop_sh/lib/orders.sh',
+  },
 ];
 
 /** The paths this scan added, as opposed to the ones the target diagram already had. */
@@ -354,7 +371,7 @@ function own(d: Diagram, program: string): string[] {
   return d.programs.map((p) => codePath(d, p)).filter((p) => p === program || p.startsWith(`${program}/`));
 }
 
-describe.skipIf(!python)('scripts/scan_code.py, on the brace languages', () => {
+describe.skipIf(!python)('scripts/scan_code.py, on the languages that are not Python', () => {
   const scans = new Map<string, ReturnType<typeof scanOf>>();
   for (const one of CASES) scans.set(one.name, scanOf(`tests/fixtures/${one.name}`, '--into', SCHEMA));
 
@@ -395,9 +412,13 @@ describe.skipIf(!python)('scripts/scan_code.py, on the brace languages', () => {
     it('says which language every node it drew is written in', () => {
       // The target diagram already holds a Python map drawn by hand, so the
       // question is what this scan added, not what the file ends up holding.
+      // The data files are left out: a YAML file is YAML in any program, which
+      // is the whole of why it is a kind of its own.
       const drew = own(mapped().diagram, one.name);
       const languages = new Set(
-        mapped().diagram.programs.filter((p) => drew.includes(codePath(mapped().diagram, p))).map((p) => p.language),
+        mapped()
+          .diagram.programs.filter((p) => drew.includes(codePath(mapped().diagram, p)) && p.kind !== 'data')
+          .map((p) => p.language),
       );
       expect([...languages]).toEqual([one.language]);
     });
@@ -431,6 +452,39 @@ describe.skipIf(!python)('scripts/scan_code.py, on the brace languages', () => {
     expect(steps(diagram, 'bookshop_go/orders/orders.go/Service/PlaceOrder')).toContain(
       'call bookshop_go/inventory/inventory.go/ReserveStock',
     );
+  });
+
+  it('reads a YAML file as a data file: a node with a language, a kind, and nothing it does', () => {
+    const map = scans.get('bookshop_sh')!.diagram;
+    const settings = at(map, 'bookshop_sh/config/settings.yaml');
+    expect(settings.kind).toBe('data');
+    expect(settings.language).toBe('yaml');
+    // Nothing runs in it, so there is nothing it does in order.
+    expect(settings.steps).toEqual([]);
+    // And the function that names its path is the one that reads it.
+    expect(steps(map, 'bookshop_sh/main.sh/main')).toContain('load bookshop_sh/config/settings.yaml');
+    expect(steps(map, 'bookshop_sh/main.sh/main')).toContain('load bookshop_sh/config/rates.json');
+    expect(at(map, 'bookshop_sh/config/rates.json').language).toBe('json');
+    // The directory holding them is not "written in YAML": a container never
+    // takes a language nothing runs in.
+    expect(at(map, 'bookshop_sh/config').language).toBe('shell');
+  });
+
+  it('keeps a data file only while something in the map reads it', () => {
+    const map = scans.get('bookshop_sh')!.diagram;
+    // config/logging.yaml sits in the same directory and nothing loads it.
+    expect(own(map, 'bookshop_sh')).not.toContain('bookshop_sh/config/logging.yaml');
+    const all = scanOf('tests/fixtures/bookshop_sh', '--into', SCHEMA, '--all');
+    expect(own(all.diagram, 'bookshop_sh')).toContain('bookshop_sh/config/logging.yaml');
+  });
+
+  it('reads an import of a JSON file as the read of a file it really is', () => {
+    const map = scans.get('bookshop_ts')!.diagram;
+    // `import rates from './rates.json'` is an import in the source and a file
+    // read at run time; nothing in a data file can be imported.
+    expect(steps(map, 'bookshop_ts/src/orders.ts')).toContain('load bookshop_ts/src/rates.json');
+    expect(steps(map, 'bookshop_ts/src/orders.ts')).not.toContain('import bookshop_ts/src/rates.json');
+    expect(at(map, 'bookshop_ts/src/rates.json').kind).toBe('data');
   });
 
   it('merges a Rust struct with the impl blocks that give it its methods', () => {
@@ -468,6 +522,21 @@ describe.skipIf(!python)('scripts/scan_code.py, on the brace languages', () => {
     ]);
     // The raw string literal keeps its newlines and loses its R"sql( … )sql".
     expect(at(all.diagram, CASES[6].reserve).steps[0].sql).toContain('\nWHERE book_id = $1');
+  });
+
+  it('reads a Perl heredoc and a shell one as the query they hold', () => {
+    // Both fixtures write their INSERT as a heredoc, which is the shape the
+    // lexer has to read at the `<<SQL` and skip where the body actually sits.
+    const perl = at(scans.get('bookshop_pl')!.diagram, CASES[7].place).steps.find((x) => x.sql?.startsWith('INSERT INTO orders'));
+    expect(perl?.sql).toContain("VALUES (?, 'pending', ?) RETURNING id");
+    const shell = at(scans.get('bookshop_sh')!.diagram, CASES[8].place).steps.find((x) => x.sql?.startsWith('INSERT INTO order_items'));
+    expect(shell?.sql).toContain('INSERT INTO order_items (order_id, book_id, quantity, unit_price_cents)');
+  });
+
+  it('reads a shell function called by name, and a file it sources, as a call and an import', () => {
+    const map = scans.get('bookshop_sh')!.diagram;
+    expect(steps(map, 'bookshop_sh/lib/orders.sh')).toContain('import bookshop_sh/lib/inventory.sh');
+    expect(steps(map, 'bookshop_sh/lib/inventory.sh/reserve_stock')).toContain('call bookshop_sh/lib/inventory.sh/audit');
   });
 
   it('keeps the hole where a table name was pasted in, rather than inventing a table', () => {

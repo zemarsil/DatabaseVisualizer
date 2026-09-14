@@ -19,7 +19,7 @@ from .model import Node, slug
 from .sqlread import Access, TableRef, add_name
 
 
-ID_PREFIX = {'program': 'prg_', 'module': 'mod_', 'class': 'cls_', 'function': 'fn_'}
+ID_PREFIX = {'program': 'prg_', 'module': 'mod_', 'class': 'cls_', 'function': 'fn_', 'data': 'dat_'}
 
 PROGRAM_WIDTH = 260
 PROGRAM_HEADER_HEIGHT = 44
@@ -34,7 +34,7 @@ COLUMN_HEIGHT = 1100
 ROW_GAP = 30
 COLUMN_GAP = 60
 
-COLOR_OF_KIND = {'program': 'pink', 'module': 'indigo', 'class': 'indigo', 'function': 'pink'}
+COLOR_OF_KIND = {'program': 'pink', 'module': 'indigo', 'class': 'indigo', 'function': 'pink', 'data': 'slate'}
 
 
 def assign_ids(programs: list[Node], taken: Optional[set[str]] = None) -> None:
@@ -228,6 +228,7 @@ class Report:
     writes: int = 0
     calls: int = 0
     imports: int = 0
+    loads: int = 0
     dropped: int = 0
     missing_tables: dict[str, int] = field(default_factory=dict)
     missing_columns: dict[str, int] = field(default_factory=dict)
@@ -324,6 +325,7 @@ def build_steps(node: Node, schema: Schema, report: Report) -> list[dict]:
             entry['codeId'] = step.target.node_id
             report.calls += step.op == 'call'
             report.imports += step.op in ('import', 'extends')
+            report.loads += step.op == 'load'
         if step.note:
             entry['note'] = step.note
         ordered = {'id': entry['id'], 'op': entry['op']}

@@ -35,6 +35,7 @@ import {
   isWindowFunction,
   normalizeVerb,
   programStepOpMeta,
+  settleCodeNode,
   type AggregateFunction,
   type CodeKind,
   type Diagram,
@@ -377,16 +378,19 @@ function program(v: unknown): AnnotatedProgram | null {
   const o = v as Record<string, unknown>;
   const name = str(o.name);
   if (!name) return null;
+  // Settled the same way the file loader settles it, so a block pasted from
+  // one script into another cannot smuggle in a data file that runs.
+  const settled = settleCodeNode(isCodeKind(o.kind) ? o.kind : 'program', isProgramLanguage(o.language) ? o.language : 'other');
   return {
     name: name.trim(),
-    ...(isCodeKind(o.kind) && o.kind !== 'program' ? { kind: o.kind } : {}),
+    ...(settled.kind !== 'program' ? { kind: settled.kind } : {}),
     ...(str(o.parent) ? { parent: str(o.parent)!.trim() } : {}),
     ...(o.collapsed === true ? { collapsed: true } : {}),
-    language: isProgramLanguage(o.language) ? o.language : 'other',
-    ...(isProgramRole(o.role) ? { role: o.role } : {}),
+    language: settled.language,
+    ...(isProgramRole(o.role) && settled.kind === 'program' ? { role: o.role } : {}),
     ...(str(o.entrypoint) ? { entrypoint: str(o.entrypoint) } : {}),
     ...(str(o.comment) ? { comment: str(o.comment) } : {}),
-    steps: (Array.isArray(o.steps) ? o.steps : []).map(programStep).filter((s): s is AnnotatedProgramStep => s !== null),
+    steps: settled.kind === 'data' ? [] : (Array.isArray(o.steps) ? o.steps : []).map(programStep).filter((s): s is AnnotatedProgramStep => s !== null),
   };
 }
 

@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Box, Boxes, Cpu, Database, Eye, FileCode, PanelLeftClose, Plus, Search, SquareFunction, StickyNote, type LucideIcon } from 'lucide-react';
+import { Box, Boxes, Braces, Cpu, Database, Eye, FileCode, PanelLeftClose, Plus, Search, SquareFunction, StickyNote, type LucideIcon } from 'lucide-react';
 import { codeKindOf, type CodeKind, type Program, type Table } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { codeChildren } from '@/lib/codemap';
@@ -7,7 +7,7 @@ import { paletteHue } from '@/lib/palette';
 import { openContextMenu } from '@/components/ui/ContextMenu';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
-const KIND_ICON: Record<CodeKind, LucideIcon> = { program: Cpu, module: FileCode, class: Box, function: SquareFunction };
+const KIND_ICON: Record<CodeKind, LucideIcon> = { program: Cpu, module: FileCode, class: Box, function: SquareFunction, data: Braces };
 
 export function Sidebar() {
   const tables = useStore((s) => s.diagram.tables);

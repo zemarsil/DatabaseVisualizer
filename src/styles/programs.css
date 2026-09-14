@@ -369,12 +369,14 @@
 }
 .program-node__step--call .program-node__op,
 .program-node__step--import .program-node__op,
-.program-node__step--extends .program-node__op {
+.program-node__step--extends .program-node__op,
+.program-node__step--load .program-node__op {
   color: var(--program);
 }
 .program-node__step--call .program-node__label,
 .program-node__step--import .program-node__label,
-.program-node__step--extends .program-node__label {
+.program-node__step--extends .program-node__label,
+.program-node__step--load .program-node__label {
   flex: 1;
   max-width: none;
 }

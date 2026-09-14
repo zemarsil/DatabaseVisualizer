@@ -6,9 +6,11 @@ import {
   PROGRAM_ROLES,
   PROGRAM_STEP_OPS,
   canContain,
+  canStepName,
   codeKindMeta,
   codeKindOf,
   isCodeStepOp,
+  isDataNode,
   programLanguageMeta,
   programStepOpMeta,
   type CodeKind,
@@ -56,6 +58,16 @@ export function ProgramEditor({ program }: { program: Program }) {
   const kind = codeKindOf(program);
   const kindMeta = codeKindMeta(kind);
   const lang = programLanguageMeta(program.language);
+  // A data file is the one node with nothing to run: no steps, no driver, and
+  // a starter that is the file itself rather than a program.
+  const isData = isDataNode(program);
+  // Only the languages that suit what this node is: a data file is YAML or
+  // JSON, and nothing else may be, since a node written in one *is* a data file.
+  const languages = useMemo(() => PROGRAM_LANGUAGES.filter((l) => Boolean(l.data) === isData), [isData]);
+  const loaders = useMemo(
+    () => (isData ? diagram.programs.filter((x) => x.steps.some((st) => st.op === 'load' && st.codeId === program.id)) : []),
+    [diagram, program.id, isData],
+  );
   const starter = useMemo(() => generateProgramCode(diagram, program), [diagram, program]);
   const templated = hasDriver(program.language, diagram.dialect);
   // A container with no steps of its own still has a starter: the file it
@@ -94,6 +106,24 @@ export function ProgramEditor({ program }: { program: Program }) {
 
   const memberKinds = CODE_KINDS.filter((k) => canContain(kind, k.id));
 
+  /**
+   * Turning a node into a data file drops its steps, because nothing runs in
+   * one. That is the only kind change that loses anything, so it is the only
+   * one that asks first.
+   */
+  const changeKind = async (next: CodeKind) => {
+    if (next === 'data' && program.steps.length > 0) {
+      const ok = await confirmDialog({
+        title: `Make ${program.name} a data file?`,
+        message: `Nothing runs in a YAML or JSON file, so the ${program.steps.length} step${program.steps.length === 1 ? '' : 's'} on this node — and the SQL and code they carry — will be removed. This can be undone with Ctrl+Z.`,
+        confirmLabel: 'Make it a data file',
+        danger: true,
+      });
+      if (!ok) return;
+    }
+    updateProgram(program.id, { kind: next });
+  };
+
   return (
     <div>
       <div className="field">
@@ -102,7 +132,7 @@ export function ProgramEditor({ program }: { program: Program }) {
           className="input input--mono"
           value={program.name}
           onChange={(e) => updateProgram(program.id, { name: e.target.value })}
-          placeholder={kind === 'module' ? 'e.g. orders.py' : kind === 'class' ? 'e.g. OrderService' : kind === 'function' ? 'e.g. place_order' : 'e.g. ingest_worker'}
+          placeholder={kind === 'module' ? 'e.g. orders.py' : kind === 'class' ? 'e.g. OrderService' : kind === 'function' ? 'e.g. place_order' : kind === 'data' ? `e.g. settings.${lang.extension}` : 'e.g. ingest_worker'}
           autoFocus
         />
       </div>
@@ -110,7 +140,7 @@ export function ProgramEditor({ program }: { program: Program }) {
       <div className="row">
         <label className="field grow">
           <span className="field__label">Kind</span>
-          <select className="select" value={kind} onChange={(e) => updateProgram(program.id, { kind: e.target.value as CodeKind })} title={kindMeta.hint}>
+          <select className="select" value={kind} onChange={(e) => void changeKind(e.target.value as CodeKind)} title={kindMeta.hint}>
             {CODE_KINDS.map((k) => (
               <option key={k.id} value={k.id}>
                 {k.label}
@@ -135,7 +165,7 @@ export function ProgramEditor({ program }: { program: Program }) {
         <label className="field grow">
           <span className="field__label">Language</span>
           <select className="select" value={program.language} onChange={(e) => updateProgram(program.id, { language: e.target.value as Program['language'] })}>
-            {PROGRAM_LANGUAGES.map((l) => (
+            {languages.map((l) => (
               <option key={l.id} value={l.id}>
                 {l.label}
               </option>
@@ -162,12 +192,22 @@ export function ProgramEditor({ program }: { program: Program }) {
       </div>
 
       <div className="field">
-        <span className="field__label">{kind === 'program' ? 'Where the code lives' : kind === 'module' ? 'Path' : 'Signature or location'}</span>
+        <span className="field__label">{kind === 'program' ? 'Where the code lives' : kind === 'module' || kind === 'data' ? 'Path' : 'Signature or location'}</span>
         <input
           className="input input--mono"
           value={program.entrypoint ?? ''}
           onChange={(e) => updateProgram(program.id, { entrypoint: e.target.value || undefined })}
-          placeholder={kind === 'program' ? 'e.g. services/worker/main.py' : kind === 'module' ? 'e.g. src/orders.py' : kind === 'class' ? 'e.g. class OrderService(BaseService)' : 'e.g. def place_order(cart, customer) -> Order'}
+          placeholder={
+            kind === 'program'
+              ? 'e.g. services/worker/main.py'
+              : kind === 'module'
+                ? 'e.g. src/orders.py'
+                : kind === 'data'
+                  ? `e.g. config/settings.${lang.extension}`
+                  : kind === 'class'
+                    ? 'e.g. class OrderService(BaseService)'
+                    : 'e.g. def place_order(cart, customer) -> Order'
+          }
         />
       </div>
 
@@ -178,7 +218,7 @@ export function ProgramEditor({ program }: { program: Program }) {
           rows={2}
           value={program.comment ?? ''}
           onChange={(e) => updateProgram(program.id, { comment: e.target.value || undefined })}
-          placeholder={kind === 'function' ? 'Validates the cart and writes the order.' : 'Scores every pending job and writes the result back.'}
+          placeholder={kind === 'function' ? 'Validates the cart and writes the order.' : kind === 'data' ? 'The rates and thresholds the pricing code reads.' : 'Scores every pending job and writes the result back.'}
         />
       </div>
 
@@ -251,33 +291,64 @@ export function ProgramEditor({ program }: { program: Program }) {
 
       <div className="divider" />
 
-      <div className="field">
-        <span className="field__label">Steps, in order</span>
-        <span className="field__hint">{describeProgram(diagram, program)}</span>
-      </div>
-
-      <div className="program-steps">
-        {program.steps.map((step, i) => (
-          <StepRow key={step.id} program={program} step={step} index={i} open={step.id === activeStepId} />
-        ))}
-        {program.steps.length === 0 && (
-          <div className="faint small">
-            {kind === 'function'
-              ? 'Nothing yet. A function is its steps: what it reads, what it calls, what it writes back.'
-              : kindMeta.container
-                ? 'Nothing yet. A container can have steps of its own — a module its imports, a class what it extends — or leave the steps to the functions inside it.'
-                : 'Nothing yet. A program is its steps: what it reads, what it works out, what it writes back.'}
+      {isData ? (
+        <div className="field">
+          <span className="field__label">Loaded by</span>
+          <span className="field__hint">{describeProgram(diagram, program)}</span>
+          {loaders.length > 0 ? (
+            <div className="chip-list">
+              {loaders.map((c) => (
+                <button
+                  key={c.id}
+                  className="chip"
+                  title={codePath(diagram, c)}
+                  onClick={() => {
+                    setSelection({ programIds: [c.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+                    focusTable(c.id);
+                  }}
+                >
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="faint small">Nothing loads it yet. Add a <strong>Load</strong> step to the function that reads it, or drag an arrow from that node to this one.</div>
+          )}
+          <span className="field__hint">
+            No steps: nothing runs in a {lang.label} file, so it has nothing it does in order. What is in it is the code that reads it, and that is drawn from the other end.
+          </span>
+        </div>
+      ) : (
+        <>
+          <div className="field">
+            <span className="field__label">Steps, in order</span>
+            <span className="field__hint">{describeProgram(diagram, program)}</span>
           </div>
-        )}
-      </div>
 
-      <div className="row row--wrap">
-        {PROGRAM_STEP_OPS.map((op) => (
-          <button key={op.id} className="btn btn--sm" title={op.hint} onClick={() => addProgramStep(program.id, { op: op.id })}>
-            <Plus /> {op.label}
-          </button>
-        ))}
-      </div>
+          <div className="program-steps">
+            {program.steps.map((step, i) => (
+              <StepRow key={step.id} program={program} step={step} index={i} open={step.id === activeStepId} />
+            ))}
+            {program.steps.length === 0 && (
+              <div className="faint small">
+                {kind === 'function'
+                  ? 'Nothing yet. A function is its steps: what it reads, what it calls, what it writes back.'
+                  : kindMeta.container
+                    ? 'Nothing yet. A container can have steps of its own — a module its imports, a class what it extends — or leave the steps to the functions inside it.'
+                    : 'Nothing yet. A program is its steps: what it reads, what it works out, what it writes back.'}
+              </div>
+            )}
+          </div>
+
+          <div className="row row--wrap">
+            {PROGRAM_STEP_OPS.map((op) => (
+              <button key={op.id} className="btn btn--sm" title={op.hint} onClick={() => addProgramStep(program.id, { op: op.id })}>
+                <Plus /> {op.label}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className="divider" />
 
@@ -291,9 +362,13 @@ export function ProgramEditor({ program }: { program: Program }) {
           </button>
         </div>
         <span className="field__hint">
-          {templated
-            ? `Written from the steps above, against ${diagram.dialect}${members.length ? `, with the ${members.length === 1 ? 'node' : 'nodes'} inside written out as definitions` : ''}. A starting point, not a finished program: the compute steps and the calls come out as stubs.`
-            : `No driver template for ${lang.label} on ${diagram.dialect} yet, so the starter is the plan in comments rather than runnable code.`}
+          {isData
+            ? program.language === 'json'
+              ? 'An empty document. JSON cannot carry a comment, so what the diagram knows about this file stays on the canvas rather than going in the file.'
+              : 'The file, with what the diagram knows written above it: what it is for, and what loads it. The keys are yours to add.'
+            : templated
+              ? `Written from the steps above, against ${diagram.dialect}${members.length ? `, with the ${members.length === 1 ? 'node' : 'nodes'} inside written out as definitions` : ''}. A starting point, not a finished program: the compute steps and the calls come out as stubs.`
+              : `No driver template for ${lang.label} on ${diagram.dialect} yet, so the starter is the plan in comments rather than runnable code.`}
         </span>
       </div>
 
@@ -326,9 +401,15 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
   const setActiveStep = useUi((s) => s.setActiveProgramStepId);
   const [expanded, setExpanded] = useState(open);
   const scope = useMemo(() => diagramScope(diagram), [diagram]);
+  // A load names a data file and a call, import or extends names code, so the
+  // picker only offers what the op could actually mean.
   const codeOptions = useMemo(
-    () => diagram.programs.filter((p) => p.id !== program.id).map((p) => ({ id: p.id, label: codePath(diagram, p) })).sort((a, b) => a.label.localeCompare(b.label)),
-    [diagram, program.id],
+    () =>
+      diagram.programs
+        .filter((p) => p.id !== program.id && canStepName(step.op, codeKindOf(p)))
+        .map((p) => ({ id: p.id, label: codePath(diagram, p) }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [diagram, program.id, step.op],
   );
 
   const meta = programStepOpMeta(step.op);
@@ -373,9 +454,14 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
             ))}
           </select>
         )}
+        {meta.namesCode && codeOptions.length === 0 && step.op === 'load' && (
+          <span className="faint small">No data file on the canvas yet — add one, then point this step at it.</span>
+        )}
         {meta.namesCode && (
           <select className="select select--sm" value={step.codeId ?? ''} onChange={(e) => updateProgramStep(program.id, step.id, { codeId: e.target.value || undefined })}>
-            <option value="">{step.op === 'call' ? 'Pick what it calls…' : step.op === 'import' ? 'Pick what it imports…' : 'Pick the base class…'}</option>
+            <option value="">
+              {step.op === 'call' ? 'Pick what it calls…' : step.op === 'import' ? 'Pick what it imports…' : step.op === 'load' ? 'Pick the data file…' : 'Pick the base class…'}
+            </option>
             {codeOptions.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.label}
@@ -489,7 +575,7 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
               onChange={(v) => updateProgramStep(program.id, step.id, { code: v || undefined })}
               language={program.language}
               rows={5}
-              placeholder={step.op === 'compute' ? 'The part the database never sees.' : isCodeStepOp(step.op) ? 'The line that makes the call.' : 'The code around this statement.'}
+              placeholder={step.op === 'compute' ? 'The part the database never sees.' : step.op === 'load' ? 'The line that reads the file.' : isCodeStepOp(step.op) ? 'The line that makes the call.' : 'The code around this statement.'}
               ariaLabel="Step code"
             />
           </div>

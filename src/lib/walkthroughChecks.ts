@@ -181,8 +181,9 @@ export function runWalkthroughCheck(raw: string, d: Diagram, opts: CheckOptions 
     }
     case 'calls':
     case 'imports':
-    case 'extends': {
-      const op = verb === 'calls' ? 'call' : verb === 'imports' ? 'import' : 'extends';
+    case 'extends':
+    case 'loads': {
+      const op = verb === 'calls' ? 'call' : verb === 'imports' ? 'import' : verb === 'loads' ? 'load' : 'extends';
       const [fromRef, toRef] = splitArrow(arg);
       const from = findCodeRef(d, fromRef);
       const to = findCodeRef(d, toRef);
