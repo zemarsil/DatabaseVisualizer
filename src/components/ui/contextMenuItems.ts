@@ -66,7 +66,7 @@ import {
 } from 'lucide-react';
 import { CODE_KINDS, RELATIONSHIP_KINDS, canContain, codeKindMeta, codeKindOf, kindMeta, programLanguageMeta, type CodeKind, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
 import { codeChildren, codeDescendantIds, codePath } from '@/lib/codemap';
-import { generateProgramCode } from '@/lib/code/generate';
+import { generateProgramCode, hasStarter } from '@/lib/code/generate';
 import { flowDerivations, matchColumnsByName } from '@/lib/derivation';
 import { buildLineage, columnOrigin, derivedColumnIds, type Lineage } from '@/lib/lineage';
 import { createGroup, customTypeByName, relationshipKindPatch, uniqueGroupName } from '@/lib/model';
@@ -864,7 +864,9 @@ function programMenu(programId: string, env: MenuEnv): MenuNode[] {
       id: 'copy-code',
       label: `Copy the ${lang.label} starter`,
       icon: Code2,
-      disabled: prg.steps.length === 0,
+      // A container's starter is the file it stands for, so what it holds
+      // counts as much as what it does itself.
+      disabled: !hasStarter(s.diagram, prg),
       run: () => env.copy(starter, `Copied the ${lang.label} starter for ${prg.name}.`),
     },
     { kind: 'action', id: 'copy', label: `Copy ${noun}`, icon: ClipboardCopy, hint: 'Ctrl+C', run: () => void copySelectionToClipboard([], [prg.id]) },

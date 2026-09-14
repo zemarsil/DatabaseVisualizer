@@ -79,7 +79,7 @@ docker compose up --build
 | Derived columns | On a data-flow edge, add one entry per target column: target column, aggregate, source expression, group-by keys, filter, and optionally a **sequence** operation (previous / next value, change since the previous row, running total or average, row number, rank) with its order-by and partition-by keys. Expressions are SQL and may name a column of any table the source points at through foreign keys as `table.column` (`orders.status` from `order_items`). The edge shows a `Σ` count and a per-column summary, and the script gets an `INSERT ... SELECT` skeleton with the `JOIN`s and window functions written for the current dialect |
 | See what is computed | Any column a data flow fills carries a **Σ** mark, and its table a **Σ n** badge that survives collapsing. `D` (or **View → Derived-column lens**) turns that into a way of reading the whole canvas: computed columns take the green rail, the columns feeding them the flow colour, foreign keys step back. The **Derived** drawer tab lists every one with its formula; pick a column — there, or by right-clicking it → *Show where this comes from* — and the canvas narrows to that column's chain: every column read to produce it, and everything computed from it in turn. `Esc` widens the chain back, then puts the lens away |
 | One source, several look-alike targets | On a data-flow edge, **Match by name** adds a plain passthrough derivation for every target column a source column of the same name can fill (case and underscores ignored; columns already derived are left alone). *Feed other tables the same way* then ticks off the other tables that share those column names and draws the same flow into each, its derivations re-pointed at the columns each table spells the same way. Five tables fed from one is five edges either way — a connection joins two tables — but not five sets of derivations typed by hand |
-| Say what talks to the database from outside | Right-click the canvas → **Add program here** (or `Ctrl+K` → *Add program*). Name it, pick its language, then add steps in the order they happen: read a table, compute something the database never sees, write the answer back. Each step naming a table draws a numbered arrow, and the node says *round trip: jobs* when it both reads and writes one. Every step holds the statement it runs and the code around it; **Show the … starter** writes a runnable skeleton from the steps with the right driver for your language and engine |
+| Say what talks to the database from outside | Right-click the canvas → **Add program here** (or `Ctrl+K` → *Add program*). Name it, pick its language, then add steps in the order they happen: read a table, compute something the database never sees, write the answer back. Each step naming a table draws a numbered arrow, and the node says *round trip: jobs* when it both reads and writes one. Every step holds the statement it runs and the code around it; **Show the … starter** writes a runnable skeleton from the steps with the right driver for your language and engine, and on a module or a class it writes the whole file, definitions and all |
 | Map the code behind a program | With a program selected, the `▾` beside **+ Table** adds a **Module**, **Class** or **Function** inside it (or right-click the canvas → **Add module here**, or the **+ Module** buttons in the inspector's *Inside* section). A container is drawn as a region around its members; drag a node into or out of one to move it. Give a function read and write steps as you would a program, drag the handle on its header onto another node for a **call** (an **import** between modules, an **extends** between classes), and drag from a table's column handle onto a node for a read on that column. Right-click a region → **Collapse to one node** folds it and gathers its arrows; **Trace** accepts a code node at either end |
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express. The menu above the box offers queries written for this connection from what the diagram knows — the `JOIN` of a foreign key, its orphan check, an `INSERT … SELECT` with columns paired by name or a dialect-correct upsert for a data flow, the statement built from the derivations, JSON unpacking for a serialized one — as a starting point; `Ctrl+Enter` runs the query in the Query tab, and the expand button opens it in a bigger window |
@@ -244,7 +244,7 @@ src/lib/sql/annotations.ts  the connections a script carries in its comments, so
 src/lib/groups.ts        table groups: region geometry, membership, external tables
 src/lib/programs.ts      programs: the arrows derived from their steps, round-trip detection, prose summaries
 src/lib/codemap.ts       code maps: the containment tree, what a collapsed container stands in for, gathered arrows, container regions, paths
-src/lib/code/           drivers.ts: which package each language reaches each engine with; generate.ts: the starter; highlight.ts: a lexer per host language
+src/lib/code/           drivers.ts: which package each language reaches each engine with; generate.ts: the starter, one file per container; highlight.ts: a lexer per host language
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
 src/lib/lineage.ts       which columns are computed rather than stored, what each one reads, and the chain in both directions
@@ -354,6 +354,25 @@ because the work outside the database is exactly what the diagram cannot know.
 C#, Ruby, Shell and *Other* have no driver template, so they get the plan in
 comments rather than code pretending to compile.
 
+Ask a **container** for its starter and you get the whole file, not one step
+list. A module is a file, so its classes and the functions in them are written
+out as real definitions, nested the way the canvas nests them, sharing one
+namespace so two functions can never collide over a constant. A class is a
+definition wherever you select it, so you get the class and its methods. The
+one line the file does not cross is the file boundary: a module inside a module
+gets a starter of its own and is named in the header instead of being inlined,
+which is the same reason a program does not swallow the modules under it.
+
+Two more things come from the node rather than from a guess. An **import** step
+becomes an import line at the top of the file — `import inventory`, `use
+crate::inventory`, `import * as inventory from './inventory.js'` — and an
+**extends** step becomes the base class in the declaration, or a comment where
+the language has no inheritance. And *Signature or location* is used as the
+signature when what you typed reads as one in the file's own language, so
+`def place_order(self, email, cart) -> int` is the signature you get; a
+signature that already names the connection is handed it, and one that does not
+opens its own, because the diagram cannot say where yours comes from.
+
 ### Where they show up
 
 Programs are documentation, so they never reach the `CREATE TABLE` script — but
@@ -400,9 +419,11 @@ one carrying a count, so a whole service reads as one node with one arrow per
 table, exactly as a plain program would. Only the outermost collapsed
 container counts, so folding a program hides its folded modules too.
 
-The map goes everywhere a program goes. The SQL annotation block names nodes
-by **path** (`bookshop_api/orders.py/OrderService/place_order`) rather than
-id, so it survives a re-import; the Markdown export's `## Code` section walks
+The map goes everywhere a program goes, the generated starter included: a
+module's starter is the file, holding the classes and functions drawn inside
+it. The SQL annotation block names nodes by **path**
+(`bookshop_api/orders.py/OrderService/place_order`) rather than id, so it
+survives a re-import; the Markdown export's `## Code` section walks
 the tree; Mermaid and DBML carry each node; copying a container copies its
 members; **Problems** adds the rules a map needs — a container holding a kind
 it cannot, a call to something that is gone (the step and its code are kept,
@@ -438,6 +459,12 @@ draft to correct. Running it again updates the map in place rather than growing
 a second copy, keeping where you dragged each node and what you renamed.
 [`docs/CODE_MAP_FORMAT.md`](docs/CODE_MAP_FORMAT.md#scanning-a-python-codebase)
 has the flags and the full list of what it reads and what it cannot.
+
+The scanner and the starter are the same road in both directions: one reads a
+module into the map, the other writes the map back out as the module. What
+survives the round trip is what the diagram is *for* — the files, the classes,
+the functions, the statements and the order they run in — and what does not is
+the work outside the database, which is the part the map never claimed to know.
 
 ## Several diagrams in one workspace
 
