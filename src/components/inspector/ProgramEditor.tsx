@@ -21,7 +21,7 @@ import { useUi } from '@/store/useUi';
 import { diagramScope } from '@/lib/sqlScope';
 import { describeProgram } from '@/lib/programs';
 import { callersOf, codeChildren, codeDescendantIds, codePath, wouldNestInItself } from '@/lib/codemap';
-import { generateProgramCode, programCodeFilename } from '@/lib/code/generate';
+import { generateProgramCode, hasStarter, programCodeFilename } from '@/lib/code/generate';
 import { hasDriver } from '@/lib/code/drivers';
 import { SqlEditor } from '@/components/ui/SqlEditor';
 import { CodeBlock, CodeEditor } from '@/components/ui/CodeEditor';
@@ -58,6 +58,9 @@ export function ProgramEditor({ program }: { program: Program }) {
   const lang = programLanguageMeta(program.language);
   const starter = useMemo(() => generateProgramCode(diagram, program), [diagram, program]);
   const templated = hasDriver(program.language, diagram.dialect);
+  // A container with no steps of its own still has a starter: the file it
+  // stands for, holding what the diagram draws inside it.
+  const starterReady = hasStarter(diagram, program);
   const members = useMemo(() => codeChildren(diagram).get(program.id) ?? [], [diagram, program.id]);
   const descendants = useMemo(() => codeDescendantIds(diagram, program.id).length, [diagram, program.id]);
   const callers = useMemo(() => callersOf(diagram, program.id), [diagram, program.id]);
@@ -280,21 +283,21 @@ export function ProgramEditor({ program }: { program: Program }) {
 
       <div className="field">
         <div className="row">
-          <button className="btn btn--sm" onClick={() => setShowCode((v) => !v)} disabled={program.steps.length === 0}>
+          <button className="btn btn--sm" onClick={() => setShowCode((v) => !v)} disabled={!starterReady}>
             <Code2 /> {showCode ? 'Hide' : 'Show'} the {lang.label} starter
           </button>
-          <button className="btn btn--sm" onClick={copyStarter} disabled={program.steps.length === 0}>
+          <button className="btn btn--sm" onClick={copyStarter} disabled={!starterReady}>
             <ClipboardCopy /> Copy
           </button>
         </div>
         <span className="field__hint">
           {templated
-            ? `Written from the steps above, against ${diagram.dialect}. A starting point, not a finished program: the compute steps and the calls come out as stubs.`
+            ? `Written from the steps above, against ${diagram.dialect}${members.length ? `, with the ${members.length === 1 ? 'node' : 'nodes'} inside written out as definitions` : ''}. A starting point, not a finished program: the compute steps and the calls come out as stubs.`
             : `No driver template for ${lang.label} on ${diagram.dialect} yet, so the starter is the plan in comments rather than runnable code.`}
         </span>
       </div>
 
-      {showCode && program.steps.length > 0 && <CodeBlock code={starter} language={program.language} className="program-starter" />}
+      {showCode && starterReady && <CodeBlock code={starter} language={program.language} className="program-starter" />}
 
       <div className="divider" />
       <div className="row row--wrap">

@@ -72,7 +72,7 @@ already there.
 | `collapsed` | no | `true` folds a container to a single node on the canvas. See [Collapsing](#collapsing-what-a-folded-container-stands-in-for). Meaningless on a function. |
 | `language` | no | Same list as a program: `python`, `rust`, `go`, `cpp`, `c`, `java`, `javascript`, `typescript`, `csharp`, `ruby`, `shell`, `other`. Defaults to `other`. A member added in the app inherits its container's language. |
 | `role` | no | `service`, `job`, `script` or `etl`. **Programs only**; on any other kind it is dropped on load, because a file is not scheduled. |
-| `entrypoint` | no | Free text with a per-kind meaning: where a program starts, a module's path, a class's declaration, a function's signature. The inspector labels the box accordingly. |
+| `entrypoint` | no | Free text with a per-kind meaning: where a program starts, a module's path, a class's declaration, a function's signature. The inspector labels the box accordingly. A function's, when it reads as a signature in the node's own language, is the signature the generated starter writes. |
 | `comment` | no | What it is for. Travels into the SQL annotation block, the Markdown export and the DBML note. |
 | `color`, `position` | no | As for a table. For an **expanded container** the position is only an anchor — see [What is derived](#what-is-derived-never-stored). |
 | `steps` | no | Ordered. What the node does, in the order it does it. |
@@ -245,6 +245,15 @@ that is missing does. Nothing is silently dropped.
   outside the database* list on every table something reads or writes.
   **Mermaid** draws each node as an entity carrying a `%% kind: name in
   container` comment; **DBML**, which has only tables, keeps each as a `Note`.
+- **The generated starter.** Asking a container for one gets the file it
+  stands for: the classes and functions drawn inside it written out as real
+  definitions, nested where the language can nest them and hoisted with a
+  comment where it cannot, all sharing one namespace so two functions never
+  collide over a constant. A **module** ends the file — one inside another gets
+  a starter of its own and is only named in the header — which is why a program
+  never swallows its modules. `import` steps become import lines, `extends`
+  steps become the base class in the declaration, and `entrypoint` becomes the
+  signature whenever what it holds reads as one in the file's own language.
 - **Copy and paste.** Copying a container copies everything inside it; a paste
   into another diagram re-points the steps at the pasted copies of their tables
   and keeps the ones whose tables did not come along.
