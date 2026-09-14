@@ -380,7 +380,7 @@ export async function openDroppedFiles(files: File[], at?: { x: number; y: numbe
         await engine.load(new Uint8Array(await file.arrayBuffer()));
         const res = await engine.introspect();
         const converted = introspectionToDiagram(res, 'duckdb', s.diagram.tables.length ? s.diagram : null);
-        useConnection.getState().setDialect('duckdb');
+        useConnection.getState().setMainDialect('duckdb');
         if (s.diagram.tables.length === 0) s.setDialect('duckdb', false);
         s.importTables(converted.tables, converted.relationships, s.diagram.tables.length ? 'merge' : 'replace', { customTypes: converted.customTypes, extensions: converted.extensions });
         s.toast('success', `Opened ${file.name} in the browser and imported ${converted.tables.length} table${converted.tables.length === 1 ? '' : 's'}.`);
@@ -391,7 +391,7 @@ export async function openDroppedFiles(files: File[], at?: { x: number; y: numbe
         await engine.load(new Uint8Array(await file.arrayBuffer()));
         const res = await engine.introspect();
         const converted = introspectionToDiagram(res, 'sqlite', s.diagram.tables.length ? s.diagram : null);
-        useConnection.getState().setDialect('sqlite');
+        useConnection.getState().setMainDialect('sqlite');
         if (s.diagram.tables.length === 0) s.setDialect('sqlite', false);
         s.importTables(converted.tables, converted.relationships, s.diagram.tables.length ? 'merge' : 'replace', { customTypes: converted.customTypes });
         s.toast('success', `Opened ${file.name} in the browser and imported ${converted.tables.length} table${converted.tables.length === 1 ? '' : 's'}.`);

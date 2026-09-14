@@ -446,6 +446,11 @@ a {
   color: var(--accent);
   border-color: transparent;
 }
+.badge--muted {
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border-color: transparent;
+}
 .badge--flow {
   background: rgba(224, 175, 104, 0.16);
   color: var(--flow);
@@ -1792,6 +1797,62 @@ a {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* A database connected alongside the main one, in the Database tab. */
+.conn-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  margin-bottom: 6px;
+  padding: 6px 8px;
+}
+.conn-card__row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.conn-card__state {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+.conn-card__state--ok {
+  background: var(--success);
+  box-shadow: 0 0 0 3px rgba(158, 206, 106, 0.2);
+}
+.conn-card__state--bad {
+  background: var(--danger);
+}
+.conn-card__meta {
+  flex: 1;
+  min-width: 120px;
+}
+.conn-card__name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-card__sub {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-card__result {
+  margin-top: 4px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conn-card__fields {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
 }
 .form-grid {
   display: grid;

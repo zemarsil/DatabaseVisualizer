@@ -47,11 +47,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.badge--muted {
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  border-color: transparent;
-}
 .script-preview {
   flex: none;
   max-height: 240px;

@@ -34,7 +34,7 @@ export function ExtensionSources() {
   const toast = useStore((s) => s.toast);
   const addExtension = useStore((s) => s.addExtension);
   const enabled = useStore((s) => s.diagram.extensions);
-  const conn = useConnection((s) => s.conn);
+  const conn = useConnection((s) => s.main.config);
   const backend = useMemo(() => backendFor(conn), [conn]);
   useExtensionCatalog();
 

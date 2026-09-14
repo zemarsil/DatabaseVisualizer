@@ -30,7 +30,7 @@ export function MigrateSection() {
   const diagram = useStore((s) => s.diagram);
   const setDialect = useStore((s) => s.setDialect);
   const toast = useStore((s) => s.toast);
-  const conn = useConnection((s) => s.conn);
+  const conn = useConnection((s) => s.main.config);
   const backend = useMemo(() => backendFor(conn), [conn]);
   const [cmp, setCmp] = useState<Comparison | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());

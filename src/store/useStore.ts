@@ -367,6 +367,7 @@ interface Actions {
   focusColumn: (id: string | null) => void;
   /** Point the table inspector at one of its fields; it clears the request once the cursor is there. */
   focusInspectorField: (field: InspectorField | null) => void;
+  /** Returns the id of the group everything landed in, or null when the import made no group. */
   importTables: (
     tables: Table[],
     relationships: Relationship[],
@@ -377,9 +378,21 @@ interface Actions {
       /** Programs an annotated script brought with it. */
       programs?: Program[];
       /** Wrap everything imported in a new group, e.g. the database it came from. */
-      group?: { name: string; external: boolean; note?: string };
+      group?: {
+        name: string;
+        external: boolean;
+        note?: string;
+        /**
+         * Re-reading a database that was already read once: the tables of this
+         * group are replaced in place, so the region keeps its id, its colour
+         * and wherever it sits, and one undo puts the old reading back. Ignored
+         * in 'replace' mode, which clears the diagram anyway, and when the group
+         * is no longer there.
+         */
+        refreshId?: string;
+      };
     },
-  ) => void;
+  ) => string | null;
 
   // selection
   setSelection: (sel: Partial<Selection>) => void;
@@ -1598,16 +1611,41 @@ export const useStore = create<Store>()(
         // as "another database" still brings them: they are how that database is
         // reached, which is the point of recording it.
         const importedPrograms = opts?.programs ?? [];
-        const newGroup = group
-          ? createGroup({
-              name: uniqueGroupName(mode === 'replace' ? { ...diagram, groups: [] } : diagram, group.name.trim() || 'Imported'),
-              external: group.external,
-              note: group.note,
-              color: PALETTE_KEYS[(mode === 'replace' ? 0 : diagram.groups.length) % PALETTE_KEYS.length],
-            })
-          : null;
-        if (newGroup) for (const t of tables) t.groupId = newGroup.id;
+        // Reading a database a second time refreshes the group it already went
+        // into instead of stacking a second copy of it beside the first.
+        const refreshed = group?.refreshId && mode === 'merge' ? (diagram.groups.find((g) => g.id === group.refreshId) ?? null) : null;
+        const replacedTableIds = refreshed ? new Set(diagram.tables.filter((t) => t.groupId === refreshed.id).map((t) => t.id)) : new Set<string>();
+        const newGroup =
+          group && !refreshed
+            ? createGroup({
+                name: uniqueGroupName(mode === 'replace' ? { ...diagram, groups: [] } : diagram, group.name.trim() || 'Imported'),
+                external: group.external,
+                note: group.note,
+                color: PALETTE_KEYS[(mode === 'replace' ? 0 : diagram.groups.length) % PALETTE_KEYS.length],
+              })
+            : null;
+        const groupId = newGroup?.id ?? refreshed?.id ?? null;
+        if (groupId) for (const t of tables) t.groupId = groupId;
         mutate((d) => {
+          if (replacedTableIds.size) {
+            d.tables = d.tables.filter((t) => !replacedTableIds.has(t.id));
+            // Whatever pointed at the old reading (including a foreign key from
+            // your own schema into it) goes with it; the new tables have new ids.
+            const pruned = pruneRelationships(d as Diagram);
+            d.relationships = pruned.relationships;
+            d.tables = pruned.tables;
+            d.programs = pruned.programs;
+          }
+          if (refreshed && group) {
+            const g = d.groups.find((x) => x.id === refreshed.id);
+            // A re-read restates what the import options say about the database
+            // it came from. The name, the colour and where the region sits are
+            // the user's, and a re-read is not the moment to take them back.
+            if (g) {
+              g.external = group.external;
+              if (group.note) g.note = group.note;
+            }
+          }
           if (mode === 'replace') {
             d.tables = tables;
             d.relationships = relationships;
@@ -1652,6 +1690,7 @@ export const useStore = create<Store>()(
           invalidateTrace(s);
           s.fitViewNonce++;
         });
+        return groupId;
       },
 
       /* ---------------- selection ---------------- */

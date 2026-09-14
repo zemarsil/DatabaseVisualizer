@@ -212,10 +212,13 @@ function HelpContent() {
       </p>
       <h4>Database</h4>
       <p>
-        The Database tab talks to the local API server: it can start a PostgreSQL or MariaDB container through Docker, run the generated schema against any
-        reachable database, and pull an existing schema into the diagram. <em>Migrate</em> compares the diagram with the live database and writes the ALTER
-        statements that bring it up to date; <em>Seed</em> generates INSERT rows that respect foreign keys, uniqueness and enums. With the SQLite or DuckDB
-        dialect selected the database runs inside the browser instead, no server needed, and the Query tab runs read-only SELECTs against whichever one is connected.
+        The Database tab talks to the local API server: it can start a PostgreSQL or MariaDB container through Docker, run the generated schema against the{' '}
+        <em>main database</em> — the one the diagram is designed for — and pull an existing schema into the diagram. <em>Migrate</em> compares the diagram with
+        the live database and writes the ALTER statements that bring it up to date; <em>Seed</em> generates INSERT rows that respect foreign keys, uniqueness and
+        enums. Under <em>Other databases</em> connect as many more as you like — another container, a replica, somebody else&apos;s service — and{' '}
+        <em>Read schema</em> brings each one&apos;s tables, keys and foreign keys in as a group marked as another database, so nothing generated tries to create
+        them; <em>Re-read</em> refreshes that group in place. With the SQLite or DuckDB dialect selected the database runs inside the browser instead, no server
+        needed, and the Query tab runs read-only SELECTs against whichever connected database you point it at.
       </p>
       <h4>Saving</h4>
       <p>
