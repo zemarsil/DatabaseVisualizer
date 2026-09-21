@@ -3,7 +3,9 @@
  *
  * A Diagram is the unit that gets saved/loaded (.dbviz.json). Everything the
  * canvas shows is derived from it: tables become nodes, relationships become
- * edges.
+ * edges, and the code map's programs, modules, classes and functions become
+ * nodes of their own. Both halves are optional — a diagram holding only code is
+ * as complete as one holding only tables.
  */
 
 export type Dialect = 'postgresql' | 'mariadb' | 'sqlite' | 'duckdb';
@@ -1035,6 +1037,22 @@ export interface Program {
 export interface Diagram {
   version: 1;
   name: string;
+  /**
+   * What this diagram leans towards: 'code' a code map, 'data' a schema, 'both'
+   * no preference. Absent means nobody has said — on an empty canvas that is
+   * what puts the opening choice in front of you, and everywhere else it is
+   * read off what has been drawn. The rules live in src/lib/emphasis.ts, which
+   * is the only place that should read this field directly: what is on the
+   * canvas outranks it, so the raw value answers fewer questions than it looks
+   * like it does. An emphasis never removes a feature, so nothing may branch on
+   * it for anything but what to put on screen.
+   */
+  emphasis?: 'code' | 'data' | 'both';
+  /**
+   * The engine a schema is written for. Always set, including on a code map
+   * that will never generate a line of DDL, because a code map that later
+   * grows a table should not have to be asked which engine it meant.
+   */
   dialect: Dialect;
   tables: Table[];
   relationships: Relationship[];

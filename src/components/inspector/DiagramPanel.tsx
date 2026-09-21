@@ -1,7 +1,7 @@
-import { Boxes, Code2, Database, FileDown, Plus, Route, Shuffle } from 'lucide-react';
-import { DIALECTS, RELATIONSHIP_KINDS, verbsForKind, type RelationshipKind } from '@shared/types';
+import { Boxes, Code2, Cpu, Database, FileDown, Plus, Route, Shuffle } from 'lucide-react';
+import { DIALECTS, RELATIONSHIP_KINDS, isCodeStepOp, verbsForKind, type RelationshipKind } from '@shared/types';
 import { flowDerivations } from '@/lib/derivation';
-import { useStore } from '@/store/useStore';
+import { selectShowsDatabaseTools, useStore } from '@/store/useStore';
 import { Checkpoints } from './Checkpoints';
 
 const GLYPH_COLOR: Record<RelationshipKind, string> = {
@@ -39,7 +39,10 @@ function KindGlyph({ kind }: { kind: RelationshipKind }) {
 
 export function DiagramPanel() {
   const diagram = useStore((s) => s.diagram);
+  const dbTools = useStore(selectShowsDatabaseTools);
   const addTable = useStore((s) => s.addTable);
+  const addProgram = useStore((s) => s.addProgram);
+  const setInspectorOpen = useStore((s) => s.setInspectorOpen);
   const applyLayout = useStore((s) => s.applyLayout);
   const openDrawer = useStore((s) => s.openDrawer);
   const setTracePicking = useStore((s) => s.setTracePicking);
@@ -58,6 +61,14 @@ export function DiagramPanel() {
   const derived = diagram.relationships.reduce((n, r) => n + flowDerivations(r).length, 0);
   const dialect = DIALECTS.find((d) => d.id === diagram.dialect)?.label ?? diagram.dialect;
   const externalTables = diagram.tables.filter((t) => diagram.groups.some((g) => g.id === t.groupId && g.external)).length;
+  // The code half's own numbers, so a code map's panel is not five zeroes about
+  // foreign keys. Steps are the code equivalent of columns: the detail inside.
+  const steps = diagram.programs.reduce((n, p) => n + p.steps.length, 0);
+  const codeLinks = diagram.programs.reduce((n, p) => n + p.steps.filter((st) => isCodeStepOp(st.op) && st.codeId).length, 0);
+  const addCode = () => {
+    addProgram();
+    setInspectorOpen(true);
+  };
 
   return (
     <div>
@@ -66,26 +77,44 @@ export function DiagramPanel() {
         <input className="input" value={diagram.name} onChange={(e) => setDiagramName(e.target.value)} />
       </div>
       <div className="stat-grid" style={{ marginBottom: 14 }}>
-        <div className="stat">
-          <div className="stat__value">{diagram.tables.length}</div>
-          <div className="stat__label">tables · {columns} columns</div>
-        </div>
-        <div className="stat">
-          <div className="stat__value">{fks}</div>
-          <div className="stat__label">foreign keys</div>
-        </div>
-        <div className="stat">
-          <div className="stat__value">{documented}</div>
-          <div className="stat__label">{breakdown || 'documented links'}</div>
-        </div>
-        <div className="stat">
-          <div className="stat__value">{tagged}</div>
-          <div className="stat__label">tagged queries</div>
-        </div>
-        <div className="stat">
-          <div className="stat__value">{derived}</div>
-          <div className="stat__label">derived columns</div>
-        </div>
+        {/* The schema numbers where there is a schema, the code numbers where
+            there is code. A code map used to get five zeroes about foreign keys. */}
+        {dbTools && (
+          <>
+            <div className="stat">
+              <div className="stat__value">{diagram.tables.length}</div>
+              <div className="stat__label">tables · {columns} columns</div>
+            </div>
+            <div className="stat">
+              <div className="stat__value">{fks}</div>
+              <div className="stat__label">foreign keys</div>
+            </div>
+            <div className="stat">
+              <div className="stat__value">{documented}</div>
+              <div className="stat__label">{breakdown || 'documented links'}</div>
+            </div>
+            <div className="stat">
+              <div className="stat__value">{tagged}</div>
+              <div className="stat__label">tagged queries</div>
+            </div>
+            <div className="stat">
+              <div className="stat__value">{derived}</div>
+              <div className="stat__label">derived columns</div>
+            </div>
+          </>
+        )}
+        {diagram.programs.length > 0 && (
+          <>
+            <div className="stat">
+              <div className="stat__value">{diagram.programs.length}</div>
+              <div className="stat__label">code nodes · {steps} steps</div>
+            </div>
+            <div className="stat">
+              <div className="stat__value">{codeLinks}</div>
+              <div className="stat__label">calls, imports and loads</div>
+            </div>
+          </>
+        )}
         {diagram.groups.length > 0 && (
           <div className="stat">
             <div className="stat__value">{diagram.groups.length}</div>
@@ -114,19 +143,30 @@ export function DiagramPanel() {
           <span className="section__title">Quick actions</span>
         </div>
         <div className="stack">
-          <button className="btn" onClick={() => addTable()}>
-            <Plus /> Add a table
+          <button className="btn" onClick={addCode}>
+            <Cpu /> Add a program
           </button>
+          {dbTools && (
+            <button className="btn" onClick={() => addTable()}>
+              <Plus /> Add a table
+            </button>
+          )}
           <button className="btn" onClick={() => addGroup()}>
             <Boxes /> Add a group
           </button>
-          <button className="btn" onClick={() => openDrawer('import')}>
-            <FileDown /> Import CREATE TABLE statements
-          </button>
-          <button className="btn" onClick={() => openDrawer('sql')}>
-            <Code2 /> View the {dialect} script
-          </button>
-          <button className="btn" onClick={() => applyLayout()} disabled={diagram.tables.length < 2}>
+          {dbTools && (
+            <>
+              <button className="btn" onClick={() => openDrawer('import')}>
+                <FileDown /> Import CREATE TABLE statements
+              </button>
+              <button className="btn" onClick={() => openDrawer('sql')}>
+                <Code2 /> View the {dialect} script
+              </button>
+            </>
+          )}
+          {/* Both halves lay out and trace, so both count towards "is there
+              enough here to bother". */}
+          <button className="btn" onClick={() => applyLayout()} disabled={diagram.tables.length + diagram.programs.length < 2}>
             <Shuffle /> Detangle the layout
           </button>
           <button
@@ -135,47 +175,60 @@ export function DiagramPanel() {
               openDrawer('trace');
               setTracePicking(true);
             }}
-            disabled={diagram.tables.length < 2}
+            disabled={diagram.tables.length + diagram.programs.length < 2}
           >
-            <Route /> Trace a path between two tables
+            <Route /> Trace a path between two nodes
           </button>
-          <button className="btn" onClick={() => openDrawer('database')}>
-            <Database /> Docker &amp; database
-          </button>
+          {dbTools && (
+            <button className="btn" onClick={() => openDrawer('database')}>
+              <Database /> Docker &amp; database
+            </button>
+          )}
         </div>
       </div>
-      <div className="section">
-        <div className="section__head">
-          <span className="section__title">Connection types</span>
-        </div>
-        <div className="legend">
-          {RELATIONSHIP_KINDS.map((k) => (
-            <div key={k.id} className="legend__row">
-              <KindGlyph kind={k.id} />
-              <div>
-                <div className="legend__name">
-                  {k.label}
-                  {!k.emitsDdl && <span className="legend__tag">no DDL</span>}
+      {/* The legend is about connections between tables; a code map's arrows are
+          explained by the steps that make them, on the node itself. */}
+      {dbTools && (
+        <div className="section">
+          <div className="section__head">
+            <span className="section__title">Connection types</span>
+          </div>
+          <div className="legend">
+            {RELATIONSHIP_KINDS.map((k) => (
+              <div key={k.id} className="legend__row">
+                <KindGlyph kind={k.id} />
+                <div>
+                  <div className="legend__name">
+                    {k.label}
+                    {!k.emitsDdl && <span className="legend__tag">no DDL</span>}
+                  </div>
+                  <div className="legend__verbs">{verbsForKind(k.id).map((v) => `${v.forward} / ${v.inverse}`).join(' · ')}</div>
                 </div>
-                <div className="legend__verbs">{verbsForKind(k.id).map((v) => `${v.forward} / ${v.inverse}`).join(' · ')}</div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+          <div className="faint small" style={{ marginTop: 6 }}>
+            Select a connection to switch its kind and pick how it reads. "has", "contains" and "used by" are the reverse readings of "belongs to", "is part
+            of" and "uses", so they are the same connection seen from the other table.
+          </div>
         </div>
-        <div className="faint small" style={{ marginTop: 6 }}>
-          Select a connection to switch its kind and pick how it reads. "has", "contains" and "used by" are the reverse readings of "belongs to", "is part of"
-          and "uses", so they are the same connection seen from the other table.
-        </div>
-      </div>
+      )}
       <div className="section">
         <div className="section__head">
           <span className="section__title">Tips</span>
         </div>
         <ul className="hint-list small">
-          <li>Click a table to edit it here; shift-click to select several.</li>
-          <li>Drag a column handle onto another table's column to add a foreign key.</li>
-          <li>Drag the orange header handle to another table for a table-to-table link, then set its kind in the inspector.</li>
-          <li>Group tables into a region to keep a second database's tables apart; mark the group external and the script stops creating them.</li>
+          <li>Click anything to edit it here; shift-click to select several.</li>
+          <li>
+            <strong>C</strong> adds a code node — inside the selected container, if that container can hold one. Drag a node's header handle onto another for a
+            call, an import or a load.
+          </li>
+          {dbTools && <li>Drag a column handle onto another table's column to add a foreign key.</li>}
+          {dbTools && <li>Drag the orange header handle to another table for a table-to-table link, then set its kind in the inspector.</li>}
+          {dbTools && <li>Group tables into a region to keep a second database's tables apart; mark the group external and the script stops creating them.</li>}
+          {!dbTools && (
+            <li>This diagram is about code, so the database tooling is out of the way. Add a table and it all comes back — or say so in View → This diagram is about.</li>
+          )}
           <li>Everything autosaves in this browser; use File → Save to keep a portable .dbviz.json file.</li>
         </ul>
       </div>

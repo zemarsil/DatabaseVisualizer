@@ -1,6 +1,6 @@
 # Extension packs
 
-An **extension pack** is one JSON file that tells Database Visualizer what a set of
+An **extension pack** is one JSON file that tells Coditect what a set of
 database extensions provides. Loading one teaches the app about extensions it does
 not ship with — a niche one, an in-house one, a new release of an existing one —
 without waiting for a new version of the app.

@@ -4,19 +4,7 @@ import { dialectLabel } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { downloadText, FILE_EXTENSION, fileSlug } from '@/lib/io';
-import {
-  deleteWorkspace,
-  flushCurrentWorkspace,
-  getCurrentWorkspaceId,
-  listWorkspaces,
-  newWorkspaceId,
-  putWorkspace,
-  recordToWorkspace,
-  relativeTime,
-  setCurrentWorkspaceId,
-  workspaceRecord,
-  type WorkspaceRecord,
-} from '@/lib/library';
+import { countLabel, deleteWorkspace, flushCurrentWorkspace, getCurrentWorkspaceId, listWorkspaces, newWorkspaceId, putWorkspace, recordToWorkspace, relativeTime, setCurrentWorkspaceId, type WorkspaceRecord, workspaceRecord } from '@/lib/library';
 import { confirmDialog, Modal, promptDialog } from './ui/Modal';
 
 /** "Open recent": every workspace this browser has worked on, with thumbnails. */
@@ -125,7 +113,7 @@ export function LibraryDialog() {
               </div>
               <div className="library__meta">
                 {dialectLabel(r.dialect).replace(' (in browser)', '')}
-                {r.sheetCount > 1 && ` · ${r.sheetCount} diagrams`} · {r.tableCount} table{r.tableCount === 1 ? '' : 's'} · {relativeTime(r.updatedAt)}
+                {r.sheetCount > 1 && ` · ${r.sheetCount} diagrams`} · {countLabel(r.tableCount, r.codeCount)} · {relativeTime(r.updatedAt)}
               </div>
               <div className="library__actions">
                 <button className="btn btn--sm" onClick={() => openRecord(r)} disabled={r.id === currentId}>

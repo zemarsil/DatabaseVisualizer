@@ -1,8 +1,8 @@
-# Handing recommendations to Database Visualizer
+# Handing recommendations to Coditect
 
 This document is written to be pasted (whole, or from "## The contract" down) into
 the instructions of a database advisor agent, so that whatever it recommends can be
-dropped straight into the Database Visualizer instead of being retyped by hand.
+dropped straight into the Coditect instead of being retyped by hand.
 
 Two input channels exist. Pick one per recommendation; do not mix them in one file.
 

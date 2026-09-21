@@ -69,7 +69,7 @@ function tableBlock(t: Table): string {
 
 export function exportDbml(d: Diagram): string {
   const parts: string[] = [];
-  const projectNote = [`Exported from Database Visualizer (${dialectLabel(d.dialect)}).`, d.tables.some((t) => t.kind === 'view') ? 'Views appear as tables whose note carries the SELECT.' : '']
+  const projectNote = [`Exported from Coditect (${dialectLabel(d.dialect)}).`, d.tables.some((t) => t.kind === 'view') ? 'Views appear as tables whose note carries the SELECT.' : '']
     .filter(Boolean)
     .join(' ');
   parts.push(`Project ${ident(fileSlug(d.name).replace(/-/g, '_'))} {\n  database_type: ${str(dialectLabel(d.dialect).replace(' (in browser)', ''))}\n  Note: ${str(projectNote)}\n}`);

@@ -25,6 +25,7 @@ import {
   type TableKind,
   type Workspace,
 } from '@shared/types';
+import { isEmphasis } from './emphasis';
 import { pruneGroupIds } from './groups';
 import { emptyDiagram, newSheetId, singleSheetWorkspace } from './model';
 import { newId } from './ids';
@@ -189,13 +190,20 @@ export function parseDiagramFile(text: string): Diagram {
 function parseDiagramValue(raw: unknown): Diagram {
   if (!raw || typeof raw !== 'object') throw new InvalidFile('The file does not contain a diagram.');
   const o = raw as Record<string, unknown>;
-  if (!Array.isArray(o.tables)) throw new InvalidFile('The file has no "tables" array; is this a Database Visualizer file?');
+  // Either half is enough to be a diagram: a schema with no code map and a code
+  // map with no schema are both whole files. Requiring "tables" would have made
+  // a pure code map unopenable, which is exactly the assumption this app is not
+  // supposed to make any more.
+  if (!Array.isArray(o.tables) && !Array.isArray(o.programs)) throw new InvalidFile('The file has neither a "tables" nor a "programs" array; is this a Coditect file?');
 
   const dialect = o.dialect === 'mariadb' ? 'mariadb' : o.dialect === 'sqlite' ? 'sqlite' : o.dialect === 'duckdb' ? 'duckdb' : 'postgresql';
   const d = emptyDiagram(dialect, str(o.name, 'Untitled diagram'));
+  // Absent is meaningful — it is what every file written before emphasis existed
+  // says, and it means "read it off what is in here" rather than "no preference".
+  if (isEmphasis(o.emphasis)) d.emphasis = o.emphasis;
 
   const tables: Table[] = [];
-  for (const rt of o.tables as unknown[]) {
+  for (const rt of (Array.isArray(o.tables) ? o.tables : []) as unknown[]) {
     if (!rt || typeof rt !== 'object') continue;
     const t = rt as Record<string, unknown>;
     if (typeof t.id !== 'string' || typeof t.name !== 'string') continue;

@@ -42,6 +42,7 @@ import '@/styles/programs.css';
  */
 export function ProgramEditor({ program }: { program: Program }) {
   const diagram = useStore((s) => s.diagram);
+  const noTables = diagram.tables.length === 0;
   const updateProgram = useStore((s) => s.updateProgram);
   const deleteProgram = useStore((s) => s.deleteProgram);
   const duplicateProgram = useStore((s) => s.duplicateProgram);
@@ -341,7 +342,10 @@ export function ProgramEditor({ program }: { program: Program }) {
           </div>
 
           <div className="row row--wrap">
-            {PROGRAM_STEP_OPS.map((op) => (
+            {/* A read or a write has to name a table, so on a diagram with no
+                tables those buttons would add a step with nothing to point at.
+                The moment one table exists they are back. */}
+            {PROGRAM_STEP_OPS.filter((op) => !(programStepOpMeta(op.id).touchesDatabase && noTables)).map((op) => (
               <button key={op.id} className="btn btn--sm" title={op.hint} onClick={() => addProgramStep(program.id, { op: op.id })}>
                 <Plus /> {op.label}
               </button>

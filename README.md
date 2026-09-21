@@ -1,6 +1,24 @@
-# Database Visualizer
+# Coditect
 
-A locally hosted web app for designing relational schemas visually.
+A locally hosted web app for drawing what a system is made of — its code, its data, or both on one canvas.
+
+Two kinds of diagram live here, and you never have to want both:
+
+- A **code map** is programs, modules, classes, functions and data files, and what each one calls, imports, loads and computes. There is no database anywhere in it.
+- A **database schema** is tables, columns, keys and the connections between them, with SQL written as you draw and a real engine to run it on.
+
+Drawn together they answer the question neither can alone: *which function reads which column*. An empty canvas asks which one you are starting, and the answer only decides what the workbench leads with — see [Two halves, one canvas](#two-halves-one-canvas).
+
+## What it does
+
+### Code
+
+- **Code maps**: modules as regions, classes inside them, functions as the nodes whose steps say what each one reads, writes, calls and loads, plus the YAML and JSON files it reads settings out of. Every arrow and every region is derived from the steps and the containment, never stored; collapse a module and its arrows gather onto it. Trace and focus work across the map, so *what reaches this function* is one click.
+- **Scan a codebase into a map**: `npm run scan:code` reads Python, Rust, Go, C, C++, Java, JavaScript, TypeScript, Perl, shell, YAML and JSON, and writes the map somebody was otherwise going to draw by hand.
+- **Programs**: the work that happens outside a database gets a node of its own — an ordered list of steps, each carrying the statement it runs and the host-language code around it, with the app writing a starter for your language and engine.
+- **Problems** reads code as well as schemas: containment that cannot hold, import cycles, a data file nothing loads, a function nothing calls.
+
+### Data
 
 - Draw tables and their connections on a pan/zoom canvas: crow's-foot foreign keys plus three kinds the database cannot enforce — data flows, serialized copies, and plain dependencies. Views are nodes too, fed by the tables their `SELECT` reads.
 - Say how a connection *reads*: "orders **contains** order_items", "customers **has** addresses", "orders **uses** addresses". The verb is documentation, so it never changes the DDL.
@@ -12,8 +30,6 @@ A locally hosted web app for designing relational schemas visually.
 - **Trace**: pick two tables and get the shortest chain of connections between them, highlighted on the canvas, plus the `JOIN` query for that path.
 - **Simulate**: pick a table and watch sample rows flow into it. Every data flow upstream runs once, stage by stage: dots travel the connections on the canvas, the columns being read and written light up, and a grid shows each produced row with the rows it came from and how every value was computed. Edit a raw input cell and the change propagates.
 - **Describe how data moves**: a data-flow connection carries one derivation per target column: an expression, an aggregate over a grouping, a filter, and, for sequences, an operation over rows in order (change since the previous row, running total, rank…). Expressions may read columns of other tables as `table.column`; the diagram's own foreign keys say how they join. The same description drives the edge summary, the generated `INSERT … SELECT` (window functions and joins included, per dialect) and the simulation.
-- **Programs**: the work that happens *outside* the database gets a node of its own. A program is an ordered list of steps — read a table, compute something the database never sees, write the answer back — and each step that names a table draws a numbered arrow, so a round trip reads straight off the canvas. Steps carry the statement they run and the host-language code around it, and the app writes a starter for you: the real driver for your language and engine, your table and column names, parameters spelled the way that driver expects.
-- **Code maps**: a program can open up into the codebase behind it — modules as regions, classes inside them, functions as the nodes whose steps say what each one reads, writes, calls and loads, plus the YAML and JSON files it reads settings out of — so *this function reads that table* is one arrow in the same picture as the schema, and a rename or a drop can be traced into the code that would break. Every arrow and every region is derived from the steps and the containment, never stored; collapse a module and its arrows gather onto it. The whole map rides in the SQL script's annotation block, the Markdown export and the clipboard.
 - **Read a big diagram**: collapse tables to keys or headers (automatically when zoomed out), focus on one table and its neighbours, cardinality labels on every connection, and one-click grouping by schema.
 - **Command palette** (`Ctrl+K`): jump to any table or run any action by typing a few letters.
 - **Migrate and seed**: diff the diagram against a live database and get the `ALTER` statements that bring it up to date; generate deterministic seed rows that respect foreign keys, uniqueness and enums.
@@ -57,13 +73,35 @@ docker compose up --build
 
 `docker-compose.yml` mounts the Docker socket into the container so the "create a database container" feature keeps working. Databases it creates are bound to `127.0.0.1` on the host, so from inside the app container point connections at `host.docker.internal` (already the default there).
 
+## Two halves, one canvas
+
+A diagram has an **emphasis** — code, data, or both — and it decides what the workbench leads with, never what it can do.
+
+On an empty canvas you are asked once. **Code map** tidies the database tooling away: no SQL dialect picker, no SQL / Types / Import SQL / Query / Simulate / Derived / Database tabs, and the toolbar's one-click button becomes **+ Code**. **Database schema** is the workbench as it has always been, with the code map still a menu away. **Blank canvas** says nothing and shows everything.
+
+Nothing is ever removed. What is on the canvas outranks the choice, in the one direction that can only add:
+
+| The diagram holds | Emphasis | Database tooling |
+| --- | --- | --- |
+| Nothing, nothing chosen | you are asked | shown |
+| Only code | code | hidden |
+| Only tables | data | shown |
+| Both | both | shown |
+| Anything, after choosing **Blank canvas** | both | shown |
+
+So adding one table to a code map brings the whole database half straight back, and there is no state to get out of. To change the answer by hand: **View → This diagram is about**, or `Ctrl+K` → *This diagram is about…*. The choice is saved with the diagram, in an optional `emphasis` field; a file written without one is read off its contents, which is why every diagram saved before this existed still opens exactly as it did.
+
+A file with no `tables` array at all is a valid diagram, as long as it has `programs`. A pure code map is a whole file, not a schema with a piece missing.
+
 ## Using it
 
 | What | How |
 | --- | --- |
 | Several diagrams at once | The tabs above the canvas are the diagrams of this workspace, like the worksheets of a spreadsheet: **+** adds one, double-click a tab to rename it, drag to reorder, right-click for duplicate / move / close, `Ctrl+PgUp` / `Ctrl+PgDn` steps between them. Each tab keeps its own dialect, undo history, selection and viewport; `Ctrl+C` in one and `Ctrl+V` in another copies tables across; **File → Save** writes every tab into one `.dbviz.json` |
 | Find anything | `Ctrl+K` opens the command palette: type a table name to jump to it, or the first letters of an action (export, detangle, collapse, switch dialect…) |
-| Add a table | Double-click the canvas, press `T`, or use the **+ Table** button; the menu next to it adds a view, a note, a group or an enum type |
+| Add a table | Double-click the canvas, press `T`, or use the **+ Table** button (on a diagram about data); the **Add** menu holds tables, views, enum and composite types under *Data* |
+| Add a piece of code | Press `C`, or use the **+ Code** button (on a diagram about code); the **Add** menu holds program, module, class, function and data file under *Code*. `C` adds it inside the selected container when that container can hold one |
+| Change what a diagram is about | **View → This diagram is about** → *Code* / *Data* / *Both*, or `Ctrl+K` and type *about* |
 | Select a group | `Shift` + drag a box over the canvas — every table and note it touches is selected; drag any of them (or the dashed box) to move the group, `Delete` removes it in one undo step |
 | Right-click anything | Every target has its own menu: the canvas (add a table or note right here, select all, detangle, undo, open a drawer), a table (rename, duplicate, colour, **Copy as** SQL / Markdown / Markdown + SQL / diagram JSON, trace, delete), a column row inside a table (toggle PK / NN / UQ / AI, add a column below, index it, reorder, delete), a connection (swap direction, switch its kind, copy the tagged query), a note, a group region (copy all of its tables in any format), and the entries in the table list. Right-clicking inside a selected group acts on the whole group |
 | Edit columns | Select a table; the inspector on the right has the column grid (PK / NN / UQ / AI toggles, expand a row for default, check, comment) plus indexes and table checks. `Enter` anywhere in a row adds the next one, `Shift+Enter` inserts above, `Alt+P` / `Alt+N` / `Alt+U` / `Alt+I` tick PK / NN / UQ / AI without the cursor leaving the box, the arrow keys walk the rows, `Ctrl+Backspace` on an empty name deletes; drag the grip to reorder |
@@ -80,7 +118,7 @@ docker compose up --build
 | See what is computed | Any column a data flow fills carries a **Σ** mark, and its table a **Σ n** badge that survives collapsing. `D` (or **View → Derived-column lens**) turns that into a way of reading the whole canvas: computed columns take the green rail, the columns feeding them the flow colour, foreign keys step back. The **Derived** drawer tab lists every one with its formula; pick a column — there, or by right-clicking it → *Show where this comes from* — and the canvas narrows to that column's chain: every column read to produce it, and everything computed from it in turn. `Esc` widens the chain back, then puts the lens away |
 | One source, several look-alike targets | On a data-flow edge, **Match by name** adds a plain passthrough derivation for every target column a source column of the same name can fill (case and underscores ignored; columns already derived are left alone). *Feed other tables the same way* then ticks off the other tables that share those column names and draws the same flow into each, its derivations re-pointed at the columns each table spells the same way. Five tables fed from one is five edges either way — a connection joins two tables — but not five sets of derivations typed by hand |
 | Say what talks to the database from outside | Right-click the canvas → **Add program here** (or `Ctrl+K` → *Add program*). Name it, pick its language, then add steps in the order they happen: read a table, compute something the database never sees, write the answer back. Each step naming a table draws a numbered arrow, and the node says *round trip: jobs* when it both reads and writes one. Every step holds the statement it runs and the code around it; **Show the … starter** writes a runnable skeleton from the steps with the right driver for your language and engine, and on a module or a class it writes the whole file, definitions and all |
-| Map the code behind a program | With a program selected, the `▾` beside **+ Table** adds a **Module**, **Class**, **Function** or **Data file** inside it (or right-click the canvas → **Add module here**, or the **+ Module** buttons in the inspector's *Inside* section). A container is drawn as a region around its members; drag a node into or out of one to move it. Give a function read and write steps as you would a program, drag the handle on its header onto another node for a **call** (an **import** between modules, an **extends** between classes, a **load** onto a data file), and drag from a table's column handle onto a node for a read on that column. Right-click a region → **Collapse to one node** folds it and gathers its arrows; **Trace** accepts a code node at either end |
+| Map the code behind a program | With a program selected, the **Add** menu's *Code* section adds a **Module**, **Class**, **Function** or **Data file** inside it (or right-click the canvas → **Add module here**, or the **+ Module** buttons in the inspector's *Inside* section). A container is drawn as a region around its members; drag a node into or out of one to move it. Give a function read and write steps as you would a program, drag the handle on its header onto another node for a **call** (an **import** between modules, an **extends** between classes, a **load** onto a data file), and drag from a table's column handle onto a node for a read on that column. Right-click a region → **Collapse to one node** folds it and gathers its arrows; **Trace** accepts a code node at either end |
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
 | Tag a query on any edge | Click the edge, fill in **Tagged query**; a badge appears on the edge and the query is added as a comment block in the generated script. Free text and derived columns coexist — use the query for joins and conditions the structured form cannot express. The menu above the box offers queries written for this connection from what the diagram knows — the `JOIN` of a foreign key, its orphan check, an `INSERT … SELECT` with columns paired by name or a dialect-correct upsert for a data flow, the statement built from the derivations, JSON unpacking for a serialized one — as a starting point; `Ctrl+Enter` runs the query in the Query tab, and the expand button opens it in a bigger window |
 | Write SQL anywhere | Every SQL box is the same editor: the diagram's table and column names are coloured (so a typo shows up as plain text), `Ctrl+Space` completes tables, columns, keywords and functions — `orders.` or an alias's `o.` narrows to that table's columns — and problems show under the box as you type: an expression the simulator cannot parse, a column the source table does not have (with the `table.column` spelling that would reach it), a table the diagram does not have, an unclosed string or parenthesis. `Enter` keeps the indentation, `(` and `'` close themselves, `Tab` / `Shift+Tab` indent, `Ctrl+/` comments lines out, `Ctrl+Shift+F` formats |

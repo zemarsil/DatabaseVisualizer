@@ -1,8 +1,8 @@
 {
-  "name": "database-visualizer",
+  "name": "coditect",
   "version": "0.1.0",
   "license": "Apache-2.0",
-  "description": "Design database schemas visually: diagram tables, tag connections with queries, generate or import CREATE TABLE DDL, auto-untangle, trace paths, and push the schema into a Docker-hosted PostgreSQL or MariaDB.",
+  "description": "Draw what your system is made of: map code as programs, modules, classes and functions, design database schemas as tables and keys, or both on one canvas — with SQL generated, codebases scanned, paths traced and the schema pushed to a Docker-hosted PostgreSQL or MariaDB.",
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n web,api -c cyan,magenta \"vite\" \"tsx watch server/index.ts\"",

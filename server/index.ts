@@ -216,7 +216,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
 });
 
 app.listen(PORT, HOST, () => {
-  console.log(`Database Visualizer API listening on http://${HOST}:${PORT}`);
+  console.log(`Coditect API listening on http://${HOST}:${PORT}`);
   if (process.env.NODE_ENV === 'production') {
     console.log(fs.existsSync(distDir) ? `Serving the client from ${distDir}` : 'dist/ not found: run "npm run build" to serve the client from here.');
   }

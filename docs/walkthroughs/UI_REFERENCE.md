@@ -11,21 +11,33 @@ below carries where it came from so you can re-check it after the app changes.
 
 ```
 ┌──────────────────────────────────────────────────────── TopBar.tsx ─────────┐
-│ DB Visualizer · [workspace name] · [dialect ▾] · undo/redo · + Table ▾ · …  │
+│ Coditect · [name] · [dialect ▾]* · undo/redo · + Table ▾ * · …              │
 ├───────────┬───────────────────────────────────────────┬─────────────────────┤
 │ Sidebar   │ Sheet tabs: one per diagram · +           │ Inspector           │
-│ table     ├───────────────────────────────────────────┤ (selection-driven)  │
-│ list      │              Canvas (pan / zoom)          │                     │
+│ outline   ├───────────────────────────────────────────┤ (selection-driven)  │
+│ (tables + │              Canvas (pan / zoom)          │                     │
+│  code)    │                                           │                     │
 ├───────────┴───────────────────────────────────────────┴─────────────────────┤
-│ Drawer: Walkthrough · SQL · Types · Import SQL · Trace · Simulate · … · DB   │
+│ Drawer: Walkthrough · SQL* · Types* · Import SQL* · Trace · Simulate* · …    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
+`*` marks chrome that is only on screen on a diagram about **data** or about
+**both**. A diagram holding nothing but code hides the dialect picker and the
+database-only drawer tabs, and its one-click add button reads **+ Code**
+instead of **+ Table** (`src/lib/emphasis.ts`). A blank canvas counts as
+"both", so nothing is hidden before you have drawn anything — but a walkthrough
+whose steps name any of those targets must not be written against a diagram
+that holds only code.
+
 The **inspector** on the right always shows whatever is selected: a table, a
 connection, a note, a group region, or a code node (a program, a module, a
-class or a function). The **bottom drawer** holds the ten
-tabs. The **sidebar** on the left is the table list. All three toggle from the
-**View** menu or the icon buttons at the far right of the top bar.
+class or a function). The **bottom drawer** holds up to ten tabs — three of
+them (Walkthrough, Trace, Problems) on every diagram, the other seven only
+where there is a schema. The **sidebar** on the left is the outline: the
+diagram's tables and its code map, the one this diagram is about listed first.
+All three toggle from the **View** menu or the icon buttons at the far right of
+the top bar.
 
 The **sheet tabs** between the top bar and the canvas are the diagrams of this
 workspace — one per database, saved together in one file. Everything else on

@@ -46,6 +46,7 @@ import { CODE_KINDS, DIALECTS, codeKindMeta, codeKindOf, type Dialect } from '@s
 import { codePath } from '@/lib/codemap';
 import { sheetDiagram, useStore, type DrawerTab } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
+import { diagramEmphasis, showsDatabaseTools } from '@/lib/emphasis';
 import { useSimulation } from '@/store/useSimulation';
 import { simulationTargets } from '@/lib/simulate/engine';
 import { fuzzyFilter } from '@/lib/fuzzy';
@@ -111,16 +112,17 @@ function isEditable(el: EventTarget | null): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
-const TABS: { id: DrawerTab; label: string; icon: LucideIcon }[] = [
-  { id: 'sql', label: 'SQL', icon: Code2 },
-  { id: 'types', label: 'Types', icon: Shapes },
-  { id: 'import', label: 'Import SQL', icon: FileDown },
+/** `database` mirrors the drawer's own marker; see the note on TABS in Drawer.tsx. */
+const TABS: { id: DrawerTab; label: string; icon: LucideIcon; database?: boolean }[] = [
+  { id: 'sql', label: 'SQL', icon: Code2, database: true },
+  { id: 'types', label: 'Types', icon: Shapes, database: true },
+  { id: 'import', label: 'Import SQL', icon: FileDown, database: true },
   { id: 'trace', label: 'Trace', icon: Route },
-  { id: 'simulate', label: 'Simulate', icon: Play },
-  { id: 'derived', label: 'Derived', icon: Sigma },
+  { id: 'simulate', label: 'Simulate', icon: Play, database: true },
+  { id: 'derived', label: 'Derived', icon: Sigma, database: true },
   { id: 'problems', label: 'Problems', icon: ShieldAlert },
-  { id: 'query', label: 'Query', icon: Terminal },
-  { id: 'database', label: 'Database', icon: Database },
+  { id: 'query', label: 'Query', icon: Terminal, database: true },
+  { id: 'database', label: 'Database', icon: Database, database: true },
 ];
 
 function buildItems(): PaletteItem[] {
@@ -128,6 +130,10 @@ function buildItems(): PaletteItem[] {
   const ui = useUi.getState();
   const bridge = getBridge();
   const d = s.diagram;
+  // A code map's palette should not be two thirds SQL. Everything hidden here
+  // comes back the moment the diagram grows a table.
+  const dbTools = showsDatabaseTools(d);
+  const emphasis = diagramEmphasis(d);
   const items: PaletteItem[] = [];
   const act = (id: string, group: string, label: string, run: () => void, extra: Partial<PaletteItem> = {}) => items.push({ id, group, label, run, ...extra });
 
@@ -178,10 +184,14 @@ function buildItems(): PaletteItem[] {
   act('sample', 'File', 'Load example diagram', () => bridge.loadSample?.(), { icon: Sparkles });
   act('export-png', 'Export', 'Export PNG', () => bridge.exportImage?.('png'), { icon: FileImage });
   act('export-svg', 'Export', 'Export SVG', () => bridge.exportImage?.('svg'), { icon: FileImage });
-  act('export-sql', 'Export', 'Export SQL script', () => bridge.exportAs?.('sql'), { icon: Download });
+  // Markdown writes up a code map too; the other three are ER formats with
+  // nothing to say about one.
   act('export-md', 'Export', 'Export Markdown data dictionary', () => bridge.exportAs?.('markdown'), { icon: Download });
-  act('export-mermaid', 'Export', 'Export Mermaid ER diagram', () => bridge.exportAs?.('mermaid'), { icon: Download });
-  act('export-dbml', 'Export', 'Export DBML', () => bridge.exportAs?.('dbml'), { icon: Download });
+  if (dbTools) {
+    act('export-sql', 'Export', 'Export SQL script', () => bridge.exportAs?.('sql'), { icon: Download });
+    act('export-mermaid', 'Export', 'Export Mermaid ER diagram', () => bridge.exportAs?.('mermaid'), { icon: Download });
+    act('export-dbml', 'Export', 'Export DBML', () => bridge.exportAs?.('dbml'), { icon: Download });
+  }
   act('share', 'Export', 'Copy share link', () => bridge.shareLink?.(), { icon: Link });
   if (selected.length) {
     const what = `${selected.length} selected table${selected.length === 1 ? '' : 's'}`;
@@ -202,41 +212,34 @@ function buildItems(): PaletteItem[] {
     );
   }
 
-  act('add-table', 'Edit', 'Add table', () => s.addTable(), { icon: Plus, hint: 'T' });
-  act('add-view', 'Edit', 'Add view', () => s.addTable(undefined, { kind: 'view' }), { icon: Eye });
+  if (dbTools) {
+    act('add-table', 'Edit', 'Add table', () => s.addTable(), { icon: Table2, hint: 'T' });
+    act('add-view', 'Edit', 'Add view', () => s.addTable(undefined, { kind: 'view' }), { icon: Eye });
+  }
   act('add-note', 'Edit', 'Add note', () => s.addNote(), { icon: StickyNote, hint: 'N' });
-  act(
-    'add-program',
-    'Edit',
-    'Add program (something outside the database)',
-    () => {
-      s.addProgram();
-      s.setInspectorOpen(true);
-    },
-    { icon: Cpu },
-  );
   for (const k of CODE_KINDS) {
-    if (k.id === 'program') continue;
     act(
       `add-${k.id}`,
       'Edit',
-      `Add ${k.label.toLowerCase()} (a box in the code map)`,
+      `Add ${k.label.toLowerCase()}`,
       () => {
-        s.addProgram({ kind: k.id, parentId: s.selection.programIds.length === 1 ? s.selection.programIds[0] : undefined });
+        s.addProgram({ kind: k.id, parentId: k.id === 'program' || s.selection.programIds.length !== 1 ? undefined : s.selection.programIds[0] });
         s.setInspectorOpen(true);
       },
-      { icon: Cpu, keywords: ['code', 'map', k.label] },
+      { icon: Cpu, hint: k.id === 'program' ? 'C' : undefined, keywords: ['code', 'map', k.label] },
     );
   }
   act('add-group', 'Edit', selected.length > 1 ? `Group the ${selected.length} selected tables` : 'Add a group region', () => s.addGroup({ tableIds: selected }), { icon: Boxes, hint: 'G' });
-  act('add-enum', 'Edit', 'Add enum type', () => {
-    s.addCustomType('enum');
-    s.openDrawer('types');
-  }, { icon: Shapes });
-  act('add-composite', 'Edit', 'Add composite type', () => {
-    s.addCustomType('composite');
-    s.openDrawer('types');
-  }, { icon: Shapes });
+  if (dbTools) {
+    act('add-enum', 'Edit', 'Add enum type', () => {
+      s.addCustomType('enum');
+      s.openDrawer('types');
+    }, { icon: Shapes });
+    act('add-composite', 'Edit', 'Add composite type', () => {
+      s.addCustomType('composite');
+      s.openDrawer('types');
+    }, { icon: Shapes });
+  }
   act('undo', 'Edit', 'Undo', () => s.undo(), { icon: Undo2, hint: 'Ctrl+Z' });
   act('redo', 'Edit', 'Redo', () => s.redo(), { icon: Redo2, hint: 'Ctrl+Shift+Z' });
   if (selected.length === 1) act('duplicate', 'Edit', 'Duplicate selected table', () => s.duplicateTable(selected[0]), { icon: Plus });
@@ -287,16 +290,34 @@ function buildItems(): PaletteItem[] {
     act(`simulate:${t.id}`, 'Simulate', `Simulate data flowing into ${t.name}`, () => sim.start(t.id), { icon: Play, keywords: ['flow', 'rows', 'watch', t.name] });
   }
   if (sim.targetId) act('simulate-stop', 'Simulate', 'Stop the simulation', () => sim.stop(), { icon: Play, hint: 'Esc' });
-  act('simulate-tab', 'Simulate', 'Simulate data flow…', () => s.openDrawer('simulate'), { icon: Play, keywords: ['flow', 'rows', 'watch', 'animate'] });
+  if (dbTools) act('simulate-tab', 'Simulate', 'Simulate data flow…', () => s.openDrawer('simulate'), { icon: Play, keywords: ['flow', 'rows', 'watch', 'animate'] });
 
-  for (const t of TABS) act(`tab:${t.id}`, 'Panels', `Open ${t.label} tab`, () => s.openDrawer(t.id), { icon: t.icon });
-  act('sidebar', 'Panels', `${s.sidebarOpen ? 'Hide' : 'Show'} table list`, () => s.setSidebarOpen(!s.sidebarOpen), { icon: PanelLeft });
+  for (const t of TABS) {
+    if (t.database && !dbTools) continue;
+    act(`tab:${t.id}`, 'Panels', `Open ${t.label} tab`, () => s.openDrawer(t.id), { icon: t.icon });
+  }
+  act('sidebar', 'Panels', `${s.sidebarOpen ? 'Hide' : 'Show'} the outline`, () => s.setSidebarOpen(!s.sidebarOpen), { icon: PanelLeft });
   act('inspector', 'Panels', `${s.inspectorOpen ? 'Hide' : 'Show'} inspector`, () => s.setInspectorOpen(!s.inspectorOpen), { icon: PanelRight });
   act('drawer', 'Panels', `${s.drawer.open ? 'Hide' : 'Show'} bottom drawer`, () => s.toggleDrawer(), { icon: PanelBottom });
   act('theme', 'Panels', `Switch to ${s.theme === 'dark' ? 'light' : 'dark'} theme`, () => s.setTheme(s.theme === 'dark' ? 'light' : 'dark'), { icon: s.theme === 'dark' ? Sun : Moon });
-  for (const dl of DIALECTS) {
-    if (dl.id === d.dialect) continue;
-    act(`dialect:${dl.id}`, 'Dialect', `Switch dialect to ${dl.label}`, () => bridge.switchDialect?.(dl.id), { icon: Database });
+  if (dbTools) {
+    for (const dl of DIALECTS) {
+      if (dl.id === d.dialect) continue;
+      act(`dialect:${dl.id}`, 'Dialect', `Switch dialect to ${dl.label}`, () => bridge.switchDialect?.(dl.id), { icon: Database });
+    }
+  }
+  // Changing what the diagram is about is itself an action, so the palette can
+  // reach the half that is currently tucked away without hunting through menus.
+  for (const [id, label] of [
+    ['code', 'code'],
+    ['data', 'data'],
+    ['both', 'both'],
+  ] as const) {
+    if (emphasis === id) continue;
+    act(`emphasis:${id}`, 'Diagram', `This diagram is about ${label}`, () => s.setEmphasis(id), {
+      icon: id === 'code' ? Cpu : id === 'data' ? Table2 : Shapes,
+      keywords: ['emphasis', 'focus', 'hide', 'show', 'database tools', 'code map'],
+    });
   }
   act('help', 'Help', 'Keyboard shortcuts and help', () => useDialogStore.getState().setHelp(true), { icon: HelpCircle, hint: '?' });
   return items;

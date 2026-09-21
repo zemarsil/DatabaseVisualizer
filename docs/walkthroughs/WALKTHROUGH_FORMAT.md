@@ -1,6 +1,6 @@
 # How a walkthrough is built
 
-Every file in this directory teaches one thing you can do in Database Visualizer,
+Every file in this directory teaches one thing you can do in Coditect,
 in the same shape, checked by the same tooling. This document is the procedure:
 read it before writing one, and the result will pass the validator on the first
 or second try.

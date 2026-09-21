@@ -370,9 +370,20 @@ def column_ids(access: Access, table: dict, schema: Schema, report: Report) -> l
 
 
 def empty_diagram(name: str, dialect: str) -> dict:
+    """
+    A fresh diagram for a scan with no target file: a code map and nothing else.
+
+    'emphasis' says so outright rather than leaving the app to infer it from the
+    empty table list. Both readings agree today, but the field keeps saying
+    "this is a code map" after someone deletes the last node, and it is what
+    stops a scan of a codebase opening in a window full of SQL tooling. A scan
+    written *into* an existing diagram never comes through here, so a schema
+    someone is adding a map to is never relabelled.
+    """
     return {
         'version': 1,
         'name': name,
+        'emphasis': 'code',
         'dialect': dialect,
         'tables': [],
         'relationships': [],

@@ -11,6 +11,7 @@
  */
 import type { Dialect } from '@shared/types';
 import { parseDiagramFile } from '@/lib/io';
+import { hasContent } from '@/lib/emphasis';
 import { emptyDiagram } from '@/lib/model';
 import { startFreshWorkspaceEntry } from '@/lib/library';
 import { useStore } from '@/store/useStore';
@@ -33,9 +34,14 @@ async function replaceCanvas(r: Replacement): Promise<boolean> {
   const s = useStore.getState();
   try {
     const d = r.json ? parseDiagramFile(r.json) : null;
-    if (s.diagram.tables.length && !(await confirmDialog({ title: r.title, message: r.message, confirmLabel: r.confirmLabel }))) return false;
+    if (hasContent(s.diagram) && !(await confirmDialog({ title: r.title, message: r.message, confirmLabel: r.confirmLabel }))) return false;
     await startFreshWorkspaceEntry();
-    s.setDiagram(d ?? emptyDiagram(r.dialect));
+    // A walkthrough that starts from a blank canvas is still a walkthrough
+    // about a schema — it declares a dialect and its first step reaches for
+    // + Table. Answering the opening question on the reader's behalf keeps the
+    // start screen from covering the canvas they are about to be told to
+    // double-click, and keeps that button in the toolbar where the step points.
+    s.setDiagram(d ?? { ...emptyDiagram(r.dialect), emphasis: 'data' });
     s.toast('success', r.done(d?.name ?? 'a blank canvas'));
     return true;
   } catch (e) {

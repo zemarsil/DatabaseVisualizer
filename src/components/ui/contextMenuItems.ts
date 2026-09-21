@@ -79,6 +79,7 @@ import { PALETTE } from '@/lib/palette';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
 import { sheetDiagram, type Store } from '@/store/useStore';
+import { diagramEmphasis, showsDatabaseTools } from '@/lib/emphasis';
 
 /** What the user right-clicked. */
 export type ContextTarget =
@@ -341,7 +342,11 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
   const tables = s.diagram.tables;
   const ui = useUi.getState();
   const schemaGroups = groupBySchema(s.diagram).length;
-  const items: MenuNode[] = [
+  const dbTools = showsDatabaseTools(s.diagram);
+  // Code and data, in the order this diagram cares about them, with the table
+  // entries left out of a code map entirely. Nothing else in the menu changes:
+  // paste, select all, detangle and fit mean the same thing either way.
+  const dataAdds: MenuNode[] = [
     {
       kind: 'action',
       id: 'add-table',
@@ -357,19 +362,14 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
       icon: Eye,
       run: () => s.addTable({ x: Math.round(at.x - 120), y: Math.round(at.y - 20) }, { kind: 'view' }),
     },
-    {
-      kind: 'action',
-      id: 'add-note',
-      label: 'Add note here',
-      icon: StickyNote,
-      hint: 'N',
-      run: () => s.addNote({ x: Math.round(at.x - 110), y: Math.round(at.y - 60) }),
-    },
+  ];
+  const codeAdds: MenuNode[] = [
     {
       kind: 'action',
       id: 'add-program',
       label: 'Add program here',
       icon: Cpu,
+      hint: 'C',
       run: () => s.addProgram({ position: { x: Math.round(at.x - 130), y: Math.round(at.y - 30) } }),
     },
     // The three levels of a code map, so a codebase can be sketched from the
@@ -381,6 +381,18 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
       icon: KIND_ICONS[k],
       run: () => s.addProgram({ kind: k, position: { x: Math.round(at.x - 130), y: Math.round(at.y - 30) } }),
     })),
+  ];
+  const codeFirst = diagramEmphasis(s.diagram) === 'code';
+  const items: MenuNode[] = [
+    ...(codeFirst ? codeAdds : [...(dbTools ? dataAdds : []), ...codeAdds]),
+    {
+      kind: 'action',
+      id: 'add-note',
+      label: 'Add note here',
+      icon: StickyNote,
+      hint: 'N',
+      run: () => s.addNote({ x: Math.round(at.x - 110), y: Math.round(at.y - 60) }),
+    },
     {
       kind: 'action',
       id: 'paste',
@@ -393,10 +405,13 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
     {
       kind: 'action',
       id: 'select-all',
-      label: 'Select all tables',
+      label: dbTools ? 'Select all tables' : 'Select all code',
       icon: SquareDashedMousePointer,
-      disabled: tables.length === 0,
-      run: () => selectOnly(s, { tableIds: tables.map((t) => t.id) }),
+      disabled: tables.length === 0 && s.diagram.programs.length === 0,
+      run: () =>
+        dbTools
+          ? selectOnly(s, { tableIds: tables.map((t) => t.id) })
+          : selectOnly(s, { programIds: s.diagram.programs.map((p) => p.id) }),
     },
     {
       kind: 'action',
@@ -404,26 +419,33 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
       label: 'Detangle layout',
       icon: Shuffle,
       hint: 'L',
-      disabled: tables.length < 2,
+      // Both halves are laid out, so both count towards "is there enough here".
+      disabled: tables.length + s.diagram.programs.length < 2,
       run: () => s.applyLayout(),
     },
     { kind: 'action', id: 'fit', label: 'Fit to window', icon: Maximize, hint: 'F', run: () => s.requestFitView() },
-    {
-      kind: 'action',
-      id: 'group-by-schema',
-      label: 'Group tables by schema',
-      icon: Boxes,
-      disabled: schemaGroups === 0,
-      hint: schemaGroups ? `${schemaGroups} schema${schemaGroups === 1 ? '' : 's'}` : 'no schemas',
-      run: () => {
-        const n = createGroupsBySchema(s);
-        s.toast('success', `Created ${n} group${n === 1 ? '' : 's'} from schema names.`);
-      },
-    },
+    ...(dbTools
+      ? [
+          {
+            kind: 'action' as const,
+            id: 'group-by-schema',
+            label: 'Group tables by schema',
+            icon: Boxes,
+            disabled: schemaGroups === 0,
+            hint: schemaGroups ? `${schemaGroups} schema${schemaGroups === 1 ? '' : 's'}` : 'no schemas',
+            run: () => {
+              const n = createGroupsBySchema(s);
+              s.toast('success', `Created ${n} group${n === 1 ? '' : 's'} from schema names.`);
+            },
+          },
+        ]
+      : []),
     sep('s-canvas'),
     { kind: 'caption', id: 'canvas-caption', text: 'Canvas' },
     { kind: 'action', id: 'snap', label: 'Snap to grid', checked: ui.snapToGrid, run: () => ui.setSnapToGrid(!ui.snapToGrid) },
-    { kind: 'action', id: 'cardinality', label: 'Cardinality labels', checked: ui.showCardinality, run: () => ui.setShowCardinality(!ui.showCardinality) },
+    ...(dbTools
+      ? [{ kind: 'action' as const, id: 'cardinality', label: 'Cardinality labels', checked: ui.showCardinality, run: () => ui.setShowCardinality(!ui.showCardinality) }]
+      : []),
   ];
 
   if (s.trace.picking) {
@@ -436,12 +458,16 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
     sep('s2'),
     { kind: 'action', id: 'undo', label: 'Undo', icon: Undo2, hint: 'Ctrl+Z', disabled: s.past.length === 0, run: () => s.undo() },
     { kind: 'action', id: 'redo', label: 'Redo', icon: Redo2, hint: 'Ctrl+Shift+Z', disabled: s.future.length === 0, run: () => s.redo() },
-    sep('s3'),
-    { kind: 'action', id: 'sql', label: 'SQL script', icon: Code2, run: () => s.openDrawer('sql') },
-    { kind: 'action', id: 'types', label: 'Custom types', icon: Shapes, run: () => s.openDrawer('types') },
-    { kind: 'action', id: 'import', label: 'Import SQL…', icon: FileDown, run: () => s.openDrawer('import') },
-    { kind: 'action', id: 'database', label: 'Docker & database', icon: Database, run: () => s.openDrawer('database') },
   );
+  if (dbTools) {
+    items.push(
+      sep('s3'),
+      { kind: 'action', id: 'sql', label: 'SQL script', icon: Code2, run: () => s.openDrawer('sql') },
+      { kind: 'action', id: 'types', label: 'Custom types', icon: Shapes, run: () => s.openDrawer('types') },
+      { kind: 'action', id: 'import', label: 'Import SQL…', icon: FileDown, run: () => s.openDrawer('import') },
+      { kind: 'action', id: 'database', label: 'Docker & database', icon: Database, run: () => s.openDrawer('database') },
+    );
+  }
   return items;
 }
 

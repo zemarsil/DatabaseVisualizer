@@ -17,13 +17,15 @@ import {
 } from '@xyflow/react';
 import { Crosshair, X } from 'lucide-react';
 import { isCodeStepOp, type Program } from '@shared/types';
-import { useStore } from '@/store/useStore';
+import { selectEmphasis, useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
 import { rowsAtStage } from '@/lib/simulate/engine';
 import { isContextMenuOpen, openContextMenu } from '@/components/ui/ContextMenu';
 import type { SelectionChange } from '@/lib/selection';
 import { paletteHue } from '@/lib/palette';
+import { isBlankDiagram, showsStartScreen } from '@/lib/emphasis';
+import { StartPanel } from './StartPanel';
 import { GROUP_STICKINESS, groupAtPoint, groupBounds, inflate, rectCenter, rectContains, tableRect, type Rect } from '@/lib/groups';
 import { estimateProgramSize, programRoundTrips } from '@/lib/programs';
 import {
@@ -163,6 +165,8 @@ export function Canvas() {
   const removeElements = useStore((s) => s.removeElements);
   const addRelationship = useStore((s) => s.addRelationship);
   const addTable = useStore((s) => s.addTable);
+  const addProgram = useStore((s) => s.addProgram);
+  const emphasis = useStore(selectEmphasis);
   const mutate = useStore((s) => s.mutate);
   const focusTable = useStore((s) => s.focusTable);
   const focusRelationship = useStore((s) => s.focusRelationship);
@@ -1403,7 +1407,11 @@ export function Canvas() {
 
   const nameOf = (id: string) => tableMap.get(id)?.name ?? codeMap.get(id)?.name ?? '?';
   const pickingLabel = trace.picking ? (trace.fromId ? `From ${nameOf(trace.fromId)}: now click the destination table or code node` : 'Click the starting table or code node') : null;
-  const empty = diagram.tables.length === 0 && diagram.programs.length === 0 && diagram.notes.length === 0;
+  // Two different emptinesses. A canvas nobody has chosen a direction on gets
+  // the opening question; one where the direction is known gets a hint for that
+  // direction, and never "add a table" to someone who came here to draw code.
+  const blank = isBlankDiagram(diagram);
+  const asking = showsStartScreen(diagram);
 
   return (
     <div ref={wrapperRef} className="app__canvas" data-tour="canvas" onDoubleClick={onPaneDoubleClick} onDragEnter={onDragEnter} onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop}>
@@ -1485,18 +1493,36 @@ export function Canvas() {
           </button>
         </div>
       )}
-      {empty && (
+      {asking && <StartPanel />}
+      {blank && !asking && (
         <div className="canvas__empty">
           <div className="canvas__empty-card">
             <h2>Empty diagram</h2>
-            <p>Double-click the canvas or press T to add a table, paste CREATE TABLE statements, pull a schema from a running database, or right-click to start a map of the code that talks to it.</p>
+            {emphasis === 'code' ? (
+              <p>
+                Double-click the canvas or press C to add a program, module, class or function. Press T if you also want a table — the database tools come back with it.
+              </p>
+            ) : emphasis === 'data' ? (
+              <p>Double-click the canvas or press T to add a table, paste CREATE TABLE statements, or pull a schema from a running database.</p>
+            ) : (
+              <p>Double-click the canvas to add a table, press C for a piece of code, or import a schema you already have.</p>
+            )}
             <div className="row" style={{ justifyContent: 'center' }}>
-              <button className="btn btn--primary" onClick={() => addTable()}>
-                Add table
-              </button>
-              <button className="btn" onClick={() => openDrawer('import')}>
-                Import SQL
-              </button>
+              {emphasis !== 'data' && (
+                <button className={`btn${emphasis === 'code' ? ' btn--primary' : ''}`} onClick={() => void (addProgram(), setInspectorOpen(true))}>
+                  Add code
+                </button>
+              )}
+              {emphasis !== 'code' && (
+                <button className={`btn${emphasis === 'data' ? ' btn--primary' : ''}`} onClick={() => addTable()}>
+                  Add table
+                </button>
+              )}
+              {emphasis !== 'code' && (
+                <button className="btn" onClick={() => openDrawer('import')}>
+                  Import SQL
+                </button>
+              )}
               <button className="btn" onClick={loadSample}>
                 Load example
               </button>
