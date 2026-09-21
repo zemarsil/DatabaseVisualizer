@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Read a codebase into a Database Visualizer code map.
+Read a codebase into a Coditect code map.
 
 The code map (docs/CODE_MAP_FORMAT.md) says what talks to the database: the
 program, the files inside it, the classes in those, the functions that actually

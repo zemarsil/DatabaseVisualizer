@@ -27,6 +27,7 @@ import {
   type TableDisplay,
   type Workspace,
 } from '@shared/types';
+import { diagramEmphasis, showsDatabaseTools, type Emphasis } from '@/lib/emphasis';
 import { layoutDiagram, type LayoutDirection } from '@/lib/layout';
 import { canBeParentOf, canLinkCode, codeBounds, codeChildren, codeDescendantIds, codeSubtreeIds, codeVisibility, defaultCodeOp, nextCodePosition, wouldNestInItself, type CodeLinkOp } from '@/lib/codemap';
 import {
@@ -48,7 +49,6 @@ import {
   flowCopyForTable,
   newSheetId,
   pruneRelationships,
-  singleSheetWorkspace,
   uniqueColumnName,
   extensionByName,
   uniqueCustomTypeName,
@@ -238,6 +238,12 @@ interface Actions {
   // diagram metadata
   setDiagramName: (name: string) => void;
   setDialect: (dialect: Dialect, translateTypes: boolean) => void;
+  /**
+   * Say what this diagram leans towards, which is how the opening choice is
+   * answered and how someone changes their mind later. Only ever a preference:
+   * what is actually on the canvas still outranks it (see src/lib/emphasis.ts).
+   */
+  setEmphasis: (emphasis: Emphasis) => void;
   setViewport: (viewport: { x: number; y: number; zoom: number }) => void;
   setFileBacked: (fileBacked: boolean) => void;
 
@@ -430,6 +436,16 @@ interface Actions {
 
 export type Store = State & Actions;
 
+/**
+ * What is on screen the first time, and every time after.
+ *
+ * Normally the autosave: whatever you were last looking at. With no autosave —
+ * a first visit, or cleared storage — this used to open the bookshop example, a
+ * nine-table schema. That made a database the app's answer before anyone had
+ * asked it anything, which is the assumption the opening choice exists to stop
+ * making. A blank canvas is the honest starting point: it asks what you are
+ * drawing, and offers the example as one of the ways to begin.
+ */
 function loadInitialWorkspace(): Workspace {
   try {
     const raw = localStorage.getItem(AUTOSAVE_KEY);
@@ -438,9 +454,9 @@ function loadInitialWorkspace(): Workspace {
     // knows it by, so the checkpoints saved against it are still its own.
     if (raw) return parseWorkspaceFile(raw, { sheetId: getCurrentWorkspaceId() });
   } catch {
-    /* fall through to sample */
+    /* fall through to the blank canvas */
   }
-  return singleSheetWorkspace(sampleDiagram());
+  return emptyWorkspace();
 }
 
 const emptyTrace = (): TraceState => ({ fromId: null, toId: null, result: null, searched: false, picking: false });
@@ -804,6 +820,7 @@ export const useStore = create<Store>()(
             for (const t of d.tables) for (const c of t.columns) c.type = translateType(c.type, from, dialect);
           }
         }),
+      setEmphasis: (emphasis) => mutate((d) => void (d.emphasis = emphasis)),
       setViewport: (viewport) => mutate((d) => void (d.viewport = viewport), { history: false, dirty: false }),
       setFileBacked: (fileBacked) => set((s) => void (s.fileBacked = fileBacked)),
 
@@ -1882,3 +1899,13 @@ export const selectSelectedProgram = (s: Store): Program | undefined =>
   s.selection.programIds.length === 1 && s.selection.tableIds.length === 0 && s.selection.noteIds.length === 0
     ? s.diagram.programs.find((p) => p.id === s.selection.programIds[0])
     : undefined;
+
+/**
+ * What this diagram leans towards, and the one question most of the chrome
+ * actually asks: is the database half of the app worth showing? Both are
+ * selectors rather than component-local calls so a component re-renders when
+ * the answer changes — which it does the moment the first table or the first
+ * code node lands on the canvas.
+ */
+export const selectEmphasis = (s: Store): Emphasis => diagramEmphasis(s.diagram);
+export const selectShowsDatabaseTools = (s: Store): boolean => showsDatabaseTools(s.diagram);

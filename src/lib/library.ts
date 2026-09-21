@@ -30,6 +30,12 @@ export interface WorkspaceRecord {
   dialect: Diagram['dialect'];
   /** Tables across every sheet. */
   tableCount: number;
+  /**
+   * Code nodes across every sheet. Optional because records written before the
+   * library learned that a diagram can be all code have no such field, and a
+   * missing count means "unknown", which reads the same as zero here.
+   */
+  codeCount?: number;
   sheetCount: number;
   /** Sheet ids, so the checkpoints belonging to this workspace can be found without parsing it. */
   sheetIds: string[];
@@ -47,6 +53,8 @@ export interface CheckpointRecord {
   name: string;
   createdAt: number;
   tableCount: number;
+  /** As on WorkspaceRecord: absent on checkpoints taken before code maps counted. */
+  codeCount?: number;
   data: string;
 }
 
@@ -59,6 +67,7 @@ export function workspaceRecord(ws: Workspace, id: string, updatedAt = Date.now(
     name: ws.name || 'Untitled diagram',
     dialect: active.diagram.dialect,
     tableCount: ws.sheets.reduce((n, s) => n + s.diagram.tables.length, 0),
+    codeCount: ws.sheets.reduce((n, s) => n + s.diagram.programs.length, 0),
     sheetCount: ws.sheets.length,
     sheetIds: ws.sheets.map((s) => s.id),
     updatedAt,
@@ -68,7 +77,15 @@ export function workspaceRecord(ws: Workspace, id: string, updatedAt = Date.now(
 }
 
 export function checkpointRecord(d: Diagram, diagramId: string, name: string, createdAt = Date.now()): CheckpointRecord {
-  return { id: newId('ckpt'), diagramId, name: name.trim() || defaultCheckpointName(createdAt), createdAt, tableCount: d.tables.length, data: serializeDiagram(d) };
+  return {
+    id: newId('ckpt'),
+    diagramId,
+    name: name.trim() || defaultCheckpointName(createdAt),
+    createdAt,
+    tableCount: d.tables.length,
+    codeCount: d.programs.length,
+    data: serializeDiagram(d),
+  };
 }
 
 export function defaultCheckpointName(at = Date.now()): string {
@@ -224,4 +241,20 @@ export async function saveCheckpoint(name: string): Promise<CheckpointRecord> {
   const record = checkpointRecord(s.diagram, s.activeSheetId, name);
   await putCheckpoint(record);
   return record;
+}
+
+/**
+ * "4 tables", "12 code nodes", "4 tables · 12 code nodes" — the one line the
+ * library and the checkpoint list use to say how big a saved thing is. It used
+ * to count tables alone, which described an entire code map as "0 tables".
+ *
+ * A record with neither (or one written before code was counted, where the code
+ * count is simply unknown) still says something rather than nothing.
+ */
+export function countLabel(tables: number, code = 0, opts?: { short?: boolean }): string {
+  const t = opts?.short ? `${tables} t` : `${tables} table${tables === 1 ? '' : 's'}`;
+  const c = opts?.short ? `${code} c` : `${code} code node${code === 1 ? '' : 's'}`;
+  if (tables && code) return `${t} · ${c}`;
+  if (code) return c;
+  return t;
 }

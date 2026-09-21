@@ -4,6 +4,7 @@ import {
   BookmarkPlus,
   Box,
   Boxes,
+  Braces,
   Check,
   Cpu,
   FileCode,
@@ -37,10 +38,11 @@ import {
   Sparkles,
   StickyNote,
   Sun,
+  Table2,
   Undo2,
 } from 'lucide-react';
-import { DIALECTS, type Dialect } from '@shared/types';
-import { currentWorkspace, useStore } from '@/store/useStore';
+import { DIALECTS, codeKindMeta, codeKindOf, type CodeKind, type Dialect } from '@shared/types';
+import { currentWorkspace, selectEmphasis, selectShowsDatabaseTools, useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
 import { simulationTargets } from '@/lib/simulate/engine';
@@ -48,6 +50,7 @@ import { downloadDataUrl, downloadText, fileSlug, parseWorkspaceFile, serializeW
 import { exportDiagramImage } from '@/lib/exportImage';
 import { EXPORT_FORMATS, exportDiagram, type ExportFormat } from '@/lib/export';
 import { copyShareLink } from '@/lib/share';
+import { hasContent } from '@/lib/emphasis';
 import { addSheet as addSheetToWorkspace } from '@/lib/sheets';
 import { defaultCheckpointName, installLibraryAutosave, saveCheckpoint, startFreshWorkspaceEntry } from '@/lib/library';
 import { useBeforeUnload } from '@/hooks/useBeforeUnload';
@@ -85,6 +88,9 @@ function Menu({ label, icon, children, align = 'right', title, 'data-tour': tour
   );
 }
 
+/** The one-line explanation of a code kind, straight from the model. */
+const kindHint = (kind: CodeKind): string => codeKindMeta(kind).hint;
+
 /** A menu row with a tick that shows whether the option is on. Stays open so several can be flipped in a row. */
 function CheckItem({ on, label, onToggle, hint }: { on: boolean; label: string; onToggle: () => void; hint?: string }) {
   return (
@@ -111,6 +117,11 @@ export function TopBar() {
   const selection = useStore((s) => s.selection);
   const tracePicking = useStore((s) => s.trace.picking);
   const simulating = useSimulation((s) => s.targetId !== null);
+  // What this diagram leans towards, and whether the schema half of the app is
+  // worth putting on screen. Never a lock: adding one table flips `dbTools` to
+  // true on its own, so nothing here has to be undone to go the database route.
+  const emphasis = useStore(selectEmphasis);
+  const dbTools = useStore(selectShowsDatabaseTools);
 
   const undo = useStore((s) => s.undo);
   const redo = useStore((s) => s.redo);
@@ -120,6 +131,7 @@ export function TopBar() {
   const addProgram = useStore((s) => s.addProgram);
   const addGroup = useStore((s) => s.addGroup);
   const addCustomType = useStore((s) => s.addCustomType);
+  const setEmphasis = useStore((s) => s.setEmphasis);
   const applyLayout = useStore((s) => s.applyLayout);
   const setTableDisplay = useStore((s) => s.setTableDisplay);
   const setTheme = useStore((s) => s.setTheme);
@@ -203,8 +215,14 @@ export function TopBar() {
   };
 
   const exportAs = (format: ExportFormat) => {
-    if (diagram.tables.length === 0) {
+    if (!hasContent(diagram)) {
       toast('error', 'There is nothing to export yet.');
+      return;
+    }
+    // SQL, Mermaid and DBML describe tables and nothing else, so on a diagram
+    // with none they would write a valid, empty, useless file. Say so instead.
+    if (format !== 'markdown' && diagram.tables.length === 0) {
+      toast('error', `${EXPORT_FORMATS.find((f) => f.id === format)?.label ?? format} describes tables, and this diagram has none. Export Markdown to write up the code map.`);
       return;
     }
     const out = exportDiagram(diagram, format);
@@ -213,7 +231,7 @@ export function TopBar() {
   };
 
   const shareLink = async () => {
-    if (diagram.tables.length === 0) {
+    if (!hasContent(diagram)) {
       toast('error', 'There is nothing to share yet.');
       return;
     }
@@ -227,7 +245,7 @@ export function TopBar() {
   };
 
   const onNew = async () => {
-    const hasWork = diagram.tables.length > 0 || sheetCount > 1;
+    const hasWork = hasContent(diagram) || sheetCount > 1;
     if (hasWork && !(await confirmDialog({ title: 'Start a new workspace?', message: 'This one stays in the workspace library (File → Open recent…); a new, empty workspace takes its place.', confirmLabel: 'New workspace' }))) return;
     await startFreshWorkspaceEntry();
     newWorkspace(diagram.dialect);
@@ -237,7 +255,7 @@ export function TopBar() {
   const onNewSheet = () => addSheetToWorkspace();
 
   const onLoadSample = async () => {
-    if (diagram.tables.length && !(await confirmDialog({ title: 'Load the example diagram?', message: 'The current diagram stays in the workspace library (File → Open recent…); the example takes its place on this tab.', confirmLabel: 'Load example' }))) return;
+    if (hasContent(diagram) && !(await confirmDialog({ title: 'Load the example diagram?', message: 'The current diagram stays in the workspace library (File → Open recent…); the example takes its place on this tab.', confirmLabel: 'Load example' }))) return;
     await startFreshWorkspaceEntry();
     loadSample();
   };
@@ -270,6 +288,72 @@ export function TopBar() {
     if (picked) sim.start(picked);
     else openDrawer('simulate');
   };
+
+  /**
+   * A code node, from wherever the selection says it belongs: inside the
+   * selected container if one can hold it, otherwise a program at the top
+   * level. This is the code half's answer to `addTable`, which is why the
+   * toolbar can lead with either without the two behaving differently.
+   */
+  const addCode = () => {
+    const parent = selection.programIds.length === 1 ? diagram.programs.find((p) => p.id === selection.programIds[0]) : undefined;
+    const inside = parent && codeKindMeta(codeKindOf(parent)).container;
+    addProgram(inside ? { kind: 'module', parentId: parent.id } : {});
+    setInspectorOpen(true);
+  };
+
+  /**
+   * The two halves of the Add menu, as peers. They are rendered in either
+   * order — a code map lists code first — which is the whole reason they are
+   * pulled out rather than written inline twice. Plain functions rather than
+   * components, so they are not a fresh component type on every render.
+   */
+  const codeFirst = emphasis === 'code';
+  const addKind = (kind: CodeKind, close: () => void) => {
+    close();
+    addProgram({ kind, parentId: kind === 'program' ? undefined : selection.programIds[0] });
+    setInspectorOpen(true);
+  };
+  // Written out rather than mapped over CODE_KINDS so each data-tour is a
+  // literal: scripts/walkthrough-lib.mjs greps the source for them, and a
+  // target a walkthrough names has to be findable without running the app.
+  const codeItems = (close: () => void) => (
+    <>
+      <div className="menu__label">Code</div>
+      <button className="menu__item" data-tour="add-program" title={kindHint('program')} onClick={() => addKind('program', close)}>
+        <Cpu /> Program <span className="kbd">C</span>
+      </button>
+      <button className="menu__item" data-tour="add-module" title={kindHint('module')} onClick={() => addKind('module', close)}>
+        <FileCode /> Module
+      </button>
+      <button className="menu__item" data-tour="add-class" title={kindHint('class')} onClick={() => addKind('class', close)}>
+        <Box /> Class
+      </button>
+      <button className="menu__item" data-tour="add-function" title={kindHint('function')} onClick={() => addKind('function', close)}>
+        <SquareFunction /> Function
+      </button>
+      <button className="menu__item" data-tour="add-data" title={kindHint('data')} onClick={() => addKind('data', close)}>
+        <Braces /> Data file
+      </button>
+    </>
+  );
+  const dataItems = (close: () => void) => (
+    <>
+      <div className="menu__label">Data</div>
+      <button className="menu__item" data-tour="add-table" onClick={() => void (close(), addTable())}>
+        <Table2 /> Table <span className="kbd">T</span>
+      </button>
+      <button className="menu__item" onClick={() => void (close(), addTable(undefined, { kind: 'view' }))}>
+        <Eye /> View
+      </button>
+      <button className="menu__item" onClick={() => void (close(), addCustomType('enum'), openDrawer('types'))}>
+        <Shapes /> Enum type
+      </button>
+      <button className="menu__item" onClick={() => void (close(), addCustomType('composite'), openDrawer('types'))}>
+        <Shapes /> Composite type
+      </button>
+    </>
+  );
 
   const onTrace = () => {
     if (tracePicking) {
@@ -308,14 +392,17 @@ export function TopBar() {
 
   return (
     <header className="topbar">
-      <div className="topbar__brand" title="Database Visualizer">
+      {/* Code brackets around a stack of layers: the two halves of what this
+          app draws, drawn the same size as each other on purpose. */}
+      <div className="topbar__brand" title="Coditect">
         <svg viewBox="0 0 32 32" aria-hidden="true">
           <rect width="32" height="32" rx="7" fill="var(--bg-hover)" />
-          <rect x="5" y="6" width="10" height="7" rx="1.5" fill="#7aa2f7" />
-          <rect x="17" y="19" width="10" height="7" rx="1.5" fill="#4fd1c5" />
-          <path d="M15 9.5h4v13h-2" fill="none" stroke="#e0af68" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M12.5 9.5 8 16l4.5 6.5" fill="none" stroke="#7aa2f7" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M19.5 9.5 24 16l-4.5 6.5" fill="none" stroke="#4fd1c5" strokeWidth="2.1" strokeLinecap="round" strokeLinejoin="round" />
+          <rect x="13.9" y="12.4" width="4.2" height="2.3" rx="1.15" fill="#e0af68" />
+          <rect x="13.9" y="17.3" width="4.2" height="2.3" rx="1.15" fill="#e0af68" />
         </svg>
-        <span>DB Visualizer</span>
+        <span>Coditect</span>
       </div>
       {dirty && fileBacked && <span className="topbar__unsaved" title="Changed since the last save (Ctrl+S)" />}
       <input
@@ -327,13 +414,15 @@ export function TopBar() {
         title={sheetCount > 1 ? `The name of this workspace and the file it saves as; its ${sheetCount} diagrams are named on their own tabs` : 'The name of this diagram and the file it saves as'}
         spellCheck={false}
       />
-      <select data-tour="dialect" className="dialect-select select" value={diagram.dialect} onChange={(e) => onDialectChange(e.target.value as Dialect)} title="SQL dialect">
-        {DIALECTS.map((d) => (
-          <option key={d.id} value={d.id}>
-            {d.label}
-          </option>
-        ))}
-      </select>
+      {dbTools && (
+        <select data-tour="dialect" className="dialect-select select" value={diagram.dialect} onChange={(e) => onDialectChange(e.target.value as Dialect)} title="SQL dialect">
+          {DIALECTS.map((d) => (
+            <option key={d.id} value={d.id}>
+              {d.label}
+            </option>
+          ))}
+        </select>
+      )}
 
       <span className="topbar__sep" />
       <div className="topbar__group">
@@ -346,44 +435,37 @@ export function TopBar() {
       </div>
       <span className="topbar__sep" />
       <div className="topbar__group">
-        <button data-tour="add-table" className="btn" onClick={() => addTable()} title="Add table (T)">
-          <Plus /> Table
-        </button>
-        <Menu icon={<ChevronDown />} align="left" title="More things to add" data-tour="add-menu">
+        {/* The one-click button is whichever half this diagram is about. On a
+            diagram that is about both, there is no obvious default, so the
+            button is the menu and neither side gets to be the assumption. */}
+        {emphasis === 'code' && (
+          <button data-tour="add-code" className="btn" onClick={addCode} title="Add a code node (C)">
+            <Plus /> Code
+          </button>
+        )}
+        {emphasis === 'data' && (
+          <button data-tour="add-table" className="btn" onClick={() => addTable()} title="Add table (T)">
+            <Plus /> Table
+          </button>
+        )}
+        <Menu
+          label={emphasis === 'both' ? 'Add' : undefined}
+          icon={emphasis === 'both' ? <Plus /> : <ChevronDown />}
+          align="left"
+          title={emphasis === 'both' ? 'Add something to the diagram' : 'More things to add'}
+          data-tour="add-menu"
+        >
           {(close) => (
             <>
-              <button className="menu__item" onClick={() => void (close(), addTable())}>
-                <Plus /> Table <span className="kbd">T</span>
-              </button>
-              <button className="menu__item" onClick={() => void (close(), addTable(undefined, { kind: 'view' }))}>
-                <Eye /> View
-              </button>
+              {codeFirst && codeItems(close)}
+              {dbTools && dataItems(close)}
+              {!codeFirst && codeItems(close)}
+              <div className="menu__sep" />
               <button className="menu__item" onClick={() => void (close(), addNote())}>
                 <StickyNote /> Note <span className="kbd">N</span>
               </button>
               <button className="menu__item" onClick={() => void (close(), addGroup({ tableIds: selection.tableIds }))}>
                 <Boxes /> {selection.tableIds.length > 1 ? `Group the ${selection.tableIds.length} selected tables` : 'Group region'} <span className="kbd">G</span>
-              </button>
-              <div className="menu__sep" />
-              <div className="menu__label">Code map</div>
-              <button className="menu__item" data-tour="add-program" onClick={() => void (close(), addProgram(), setInspectorOpen(true))}>
-                <Cpu /> Program
-              </button>
-              <button className="menu__item" data-tour="add-module" onClick={() => void (close(), addProgram({ kind: 'module', parentId: selection.programIds[0] }), setInspectorOpen(true))}>
-                <FileCode /> Module
-              </button>
-              <button className="menu__item" data-tour="add-class" onClick={() => void (close(), addProgram({ kind: 'class', parentId: selection.programIds[0] }), setInspectorOpen(true))}>
-                <Box /> Class
-              </button>
-              <button className="menu__item" data-tour="add-function" onClick={() => void (close(), addProgram({ kind: 'function', parentId: selection.programIds[0] }), setInspectorOpen(true))}>
-                <SquareFunction /> Function
-              </button>
-              <div className="menu__sep" />
-              <button className="menu__item" onClick={() => void (close(), addCustomType('enum'), openDrawer('types'))}>
-                <Shapes /> Enum type
-              </button>
-              <button className="menu__item" onClick={() => void (close(), addCustomType('composite'), openDrawer('types'))}>
-                <Shapes /> Composite type
               </button>
             </>
           )}
@@ -433,9 +515,11 @@ export function TopBar() {
         <button data-tour="trace" className={`btn${tracePicking ? ' btn--active' : ''}`} onClick={onTrace} title="Trace a connection between two tables or code nodes">
           <Route /> Trace
         </button>
-        <button data-tour="simulate" className={`btn${simulating ? ' btn--active' : ''}`} onClick={onSimulate} title={simulating ? 'Leave simulation mode (Esc)' : 'Simulate data flowing into the selected table (S)'}>
-          <Play /> Simulate
-        </button>
+        {dbTools && (
+          <button data-tour="simulate" className={`btn${simulating ? ' btn--active' : ''}`} onClick={onSimulate} title={simulating ? 'Leave simulation mode (Esc)' : 'Simulate data flowing into the selected table (S)'}>
+            <Play /> Simulate
+          </button>
+        )}
         <button data-tour="fit" className="btn btn--icon" onClick={requestFitView} title="Fit to window (F)">
           <Maximize />
         </button>
@@ -448,9 +532,11 @@ export function TopBar() {
       <span className="topbar__spacer" />
 
       <div className="topbar__group">
-        <button data-tour="database" className={`btn${drawerOpen ? ' btn--active' : ''}`} onClick={() => toggleDrawer('database')} title="Docker & database">
-          <Database /> Database
-        </button>
+        {dbTools && (
+          <button data-tour="database" className={`btn${drawerOpen ? ' btn--active' : ''}`} onClick={() => toggleDrawer('database')} title="Docker & database">
+            <Database /> Database
+          </button>
+        )}
         <Menu label="File" icon={<Save />} data-tour="file-menu">
           {(close) => (
             <>
@@ -479,18 +565,24 @@ export function TopBar() {
               <button className="menu__item" onClick={() => void (close(), exportImage('svg'))}>
                 <FileImage /> Export SVG
               </button>
-              <button className="menu__item" onClick={() => void (close(), exportAs('sql'))}>
-                <Download /> Export SQL script
-              </button>
+              {/* Markdown is the one that writes up a code map too, so it is the
+                  one export a diagram with no tables in it still offers. */}
               <button className="menu__item" onClick={() => void (close(), exportAs('markdown'))}>
                 <FileText /> Export Markdown
               </button>
-              <button className="menu__item" onClick={() => void (close(), exportAs('mermaid'))}>
-                <FileText /> Export Mermaid ER diagram
-              </button>
-              <button className="menu__item" onClick={() => void (close(), exportAs('dbml'))}>
-                <FileText /> Export DBML
-              </button>
+              {dbTools && (
+                <>
+                  <button className="menu__item" onClick={() => void (close(), exportAs('sql'))}>
+                    <Download /> Export SQL script
+                  </button>
+                  <button className="menu__item" onClick={() => void (close(), exportAs('mermaid'))}>
+                    <FileText /> Export Mermaid ER diagram
+                  </button>
+                  <button className="menu__item" onClick={() => void (close(), exportAs('dbml'))}>
+                    <FileText /> Export DBML
+                  </button>
+                </>
+              )}
               <div className="menu__sep" />
               <button className="menu__item" onClick={() => void (close(), shareLink())}>
                 <Link /> Copy share link
@@ -505,36 +597,54 @@ export function TopBar() {
         <Menu label="View" icon={<SlidersHorizontal />} data-tour="view-menu">
           {(close) => (
             <>
-              <CheckItem on={sidebarOpen} label="Table list" onToggle={() => setSidebarOpen(!sidebarOpen)} />
+              <CheckItem on={sidebarOpen} label="Outline" onToggle={() => setSidebarOpen(!sidebarOpen)} />
               <CheckItem on={inspectorOpen} label="Inspector" onToggle={() => setInspectorOpen(!inspectorOpen)} />
               <CheckItem on={drawerOpen} label="Bottom drawer" onToggle={() => toggleDrawer()} />
               <CheckItem on={theme === 'dark'} label="Dark theme" onToggle={() => setTheme(theme === 'dark' ? 'light' : 'dark')} />
               <div className="menu__sep" />
-              <CheckItem on={derivedLens} label="Derived-column lens (D)" onToggle={() => toggleDerived()} />
-              <CheckItem on={showCardinality} label="Cardinality labels" onToggle={() => setShowCardinality(!showCardinality)} />
+              {dbTools && <CheckItem on={derivedLens} label="Derived-column lens (D)" onToggle={() => toggleDerived()} />}
+              {dbTools && <CheckItem on={showCardinality} label="Cardinality labels" onToggle={() => setShowCardinality(!showCardinality)} />}
               <CheckItem on={snapToGrid} label="Snap to grid" onToggle={() => setSnapToGrid(!snapToGrid)} />
               <CheckItem on={warnOnClose} label="Warn before closing unsaved" onToggle={() => setWarnOnClose(!warnOnClose)} />
+              {/* What this diagram leans towards. Changing it here is how someone
+                  who answered the opening question one way gets the other half
+                  back — or tidies it away again once they are done with it. */}
               <div className="menu__sep" />
-              <div className="menu__label">All tables</div>
-              <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, undefined))}>
-                <Rows3 /> Show every column
+              <div className="menu__label">This diagram is about</div>
+              <button className="menu__item" onClick={() => void (close(), setEmphasis('code'))}>
+                {emphasis === 'code' ? '●' : '○'} Code
               </button>
-              <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, 'keys'))}>
-                <Rows3 /> Keys only
+              <button className="menu__item" onClick={() => void (close(), setEmphasis('data'))}>
+                {emphasis === 'data' ? '●' : '○'} Data
               </button>
-              <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, 'header'))}>
-                <Rows3 /> Headers only
+              <button className="menu__item" onClick={() => void (close(), setEmphasis('both'))}>
+                {emphasis === 'both' ? '●' : '○'} Both
               </button>
+              {allTableIds.length > 0 && (
+                <>
+                  <div className="menu__sep" />
+                  <div className="menu__label">All tables</div>
+                  <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, undefined))}>
+                    <Rows3 /> Show every column
+                  </button>
+                  <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, 'keys'))}>
+                    <Rows3 /> Keys only
+                  </button>
+                  <button className="menu__item" onClick={() => void (close(), setTableDisplay(allTableIds, 'header'))}>
+                    <Rows3 /> Headers only
+                  </button>
+                </>
+              )}
             </>
           )}
         </Menu>
       </div>
       <span className="topbar__sep" />
       <div className="topbar__group">
-        <button className={`btn btn--icon btn--ghost${sidebarOpen ? ' btn--active' : ''}`} onClick={() => setSidebarOpen(!sidebarOpen)} title="Toggle table list">
+        <button className={`btn btn--icon btn--ghost${sidebarOpen ? ' btn--active' : ''}`} onClick={() => setSidebarOpen(!sidebarOpen)} title="Toggle the outline">
           <PanelLeft />
         </button>
-        <button className={`btn btn--icon btn--ghost${drawerOpen ? ' btn--active' : ''}`} onClick={() => toggleDrawer()} title="Toggle SQL / database drawer">
+        <button className={`btn btn--icon btn--ghost${drawerOpen ? ' btn--active' : ''}`} onClick={() => toggleDrawer()} title="Toggle the bottom drawer">
           <PanelBottom />
         </button>
         <button className={`btn btn--icon btn--ghost${inspectorOpen ? ' btn--active' : ''}`} onClick={() => setInspectorOpen(!inspectorOpen)} title="Toggle inspector">

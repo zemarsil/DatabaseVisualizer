@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Box, Boxes, Braces, Cpu, Database, Eye, FileCode, PanelLeftClose, Plus, Search, SquareFunction, StickyNote, type LucideIcon } from 'lucide-react';
-import { codeKindOf, type CodeKind, type Program, type Table } from '@shared/types';
-import { useStore } from '@/store/useStore';
+import { codeKindMeta, codeKindOf, type CodeKind, type Program, type Table } from '@shared/types';
+import { selectEmphasis, useStore } from '@/store/useStore';
 import { codeChildren } from '@/lib/codemap';
 import { paletteHue } from '@/lib/palette';
 import { openContextMenu } from '@/components/ui/ContextMenu';
@@ -22,6 +22,9 @@ export function Sidebar() {
   const setSelection = useStore((s) => s.setSelection);
   const selectGroup = useStore((s) => s.selectGroup);
   const addTable = useStore((s) => s.addTable);
+  const addProgram = useStore((s) => s.addProgram);
+  const setInspectorOpen = useStore((s) => s.setInspectorOpen);
+  const emphasis = useStore(selectEmphasis);
   const setSidebarOpen = useStore((s) => s.setSidebarOpen);
   const resizePanel = useStore((s) => s.resizePanel);
   const [query, setQuery] = useState('');
@@ -87,27 +90,22 @@ export function Sidebar() {
     );
   };
 
-  return (
-    <aside className="sidebar" data-tour="sidebar">
-      <div className="sidebar__head">
-        <span className="sidebar__section" style={{ padding: 0 }}>
-          Tables <span className="sidebar__count">({tables.length})</span>
-        </span>
-        <span className="grow" />
-        <button className="btn btn--sm btn--icon" title="Add table (T)" onClick={() => addTable()}>
-          <Plus />
-        </button>
-        <button className="btn btn--sm btn--icon btn--ghost" title="Hide sidebar" onClick={() => setSidebarOpen(false)}>
-          <PanelLeftClose />
-        </button>
-      </div>
-      <div className="sidebar__search row">
-        <Search size={14} className="faint" />
-        <input className="input input--sm grow" placeholder="Filter tables, columns or code" value={query} onChange={(e) => setQuery(e.target.value)} />
-      </div>
-      <div className="sidebar__list">
-        {filtered.length === 0 && programs.length === 0 && <div className="sidebar__empty">{tables.length === 0 ? 'No tables yet. Add one or import SQL.' : 'No table matches the filter.'}</div>}
+  /** Mirrors the toolbar's add button: inside the selected container if it can hold one. */
+  const addCode = () => {
+    const parent = selection.programIds.length === 1 ? programs.find((p) => p.id === selection.programIds[0]) : undefined;
+    const inside = parent && codeKindMeta(codeKindOf(parent)).container;
+    addProgram(inside ? { kind: 'module', parentId: parent.id } : {});
+    setInspectorOpen(true);
+  };
 
+  // A group region with nothing in it yet is still worth listing — it is how
+  // you find the box you just drew in order to drag tables into it.
+  const tableSection =
+    tables.length === 0 && groups.length === 0 ? null : (
+      <>
+        <div className="sidebar__section">
+          Tables <span className="sidebar__count">({tables.length})</span>
+        </div>
         {groups.map((g) => {
           const members = sections.byGroup.get(g.id) ?? [];
           if (members.length === 0 && query.trim()) return null;
@@ -129,37 +127,96 @@ export function Sidebar() {
             </div>
           );
         })}
-
         {groups.length > 0 && sections.ungrouped.length > 0 && <div className="sidebar__section">Ungrouped</div>}
         {sections.ungrouped.map(renderTable)}
+      </>
+    );
 
-        {codeTree.length > 0 && (
+  const codeSection =
+    codeTree.length === 0 ? null : (
+      <>
+        <div className="sidebar__section">
+          Code <span className="sidebar__count">({programs.length})</span>
+        </div>
+        {codeTree.map(({ p, depth }) => {
+          const Icon = KIND_ICON[codeKindOf(p)];
+          const traced = p.id === trace.fromId || p.id === trace.toId;
+          return (
+            <button
+              key={p.id}
+              className={`sidebar__item${selection.programIds.includes(p.id) ? ' sidebar__item--active' : ''}${traced ? ' sidebar__item--trace' : ''}`}
+              style={{ paddingLeft: 10 + depth * 14 }}
+              onClick={() => {
+                setSelection({ programIds: [p.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+                focusTable(p.id);
+              }}
+              onContextMenu={(e) => {
+                if (!selection.programIds.includes(p.id)) setSelection({ programIds: [p.id], tableIds: [], noteIds: [], relationshipId: null });
+                openContextMenu(e, { type: 'program', programId: p.id });
+              }}
+              title={p.comment || p.entrypoint || p.name}
+            >
+              <Icon size={13} style={{ color: paletteHue(p.color), flex: 'none' }} />
+              <span className={`sidebar__name${p.collapsed ? ' muted' : ''}`}>{p.name}</span>
+              <span className="sidebar__count">{p.steps.length}</span>
+            </button>
+          );
+        })}
+      </>
+    );
+
+  /**
+   * Nothing to list yet. What to suggest depends on what this diagram is about,
+   * because "add one or import SQL" is unhelpful advice to someone mapping a
+   * codebase — which is exactly the kind of thing this app used to say.
+   */
+  const emptyHint =
+    tables.length || programs.length || groups.length
+      ? 'Nothing here matches the filter.'
+      : emphasis === 'code'
+        ? 'No code yet. Add a program, or open a map the scanner wrote.'
+        : emphasis === 'data'
+          ? 'No tables yet. Add one or import SQL.'
+          : 'Nothing here yet. Add a table, or a piece of code.';
+
+  return (
+    <aside className="sidebar" data-tour="sidebar">
+      <div className="sidebar__head">
+        <span className="sidebar__section" style={{ padding: 0 }}>
+          Outline
+        </span>
+        <span className="grow" />
+        {emphasis === 'code' ? (
+          <button className="btn btn--sm btn--icon" title="Add a code node (C)" onClick={addCode}>
+            <Plus />
+          </button>
+        ) : (
+          <button className="btn btn--sm btn--icon" title="Add table (T)" onClick={() => addTable()}>
+            <Plus />
+          </button>
+        )}
+        <button className="btn btn--sm btn--icon btn--ghost" title="Hide sidebar" onClick={() => setSidebarOpen(false)}>
+          <PanelLeftClose />
+        </button>
+      </div>
+      <div className="sidebar__search row">
+        <Search size={14} className="faint" />
+        <input className="input input--sm grow" placeholder={emphasis === 'code' ? 'Filter code' : 'Filter tables, columns or code'} value={query} onChange={(e) => setQuery(e.target.value)} />
+      </div>
+      <div className="sidebar__list">
+        {tableSection === null && codeSection === null && <div className="sidebar__empty">{emptyHint}</div>}
+
+        {/* A code map reads code first. Everything else keeps the order it has
+            always had, because on a schema the tables are what you scan for. */}
+        {emphasis === 'code' ? (
           <>
-            <div className="sidebar__section">Code</div>
-            {codeTree.map(({ p, depth }) => {
-              const Icon = KIND_ICON[codeKindOf(p)];
-              const traced = p.id === trace.fromId || p.id === trace.toId;
-              return (
-                <button
-                  key={p.id}
-                  className={`sidebar__item${selection.programIds.includes(p.id) ? ' sidebar__item--active' : ''}${traced ? ' sidebar__item--trace' : ''}`}
-                  style={{ paddingLeft: 10 + depth * 14 }}
-                  onClick={() => {
-                    setSelection({ programIds: [p.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
-                    focusTable(p.id);
-                  }}
-                  onContextMenu={(e) => {
-                    if (!selection.programIds.includes(p.id)) setSelection({ programIds: [p.id], tableIds: [], noteIds: [], relationshipId: null });
-                    openContextMenu(e, { type: 'program', programId: p.id });
-                  }}
-                  title={p.comment || p.entrypoint || p.name}
-                >
-                  <Icon size={13} style={{ color: paletteHue(p.color), flex: 'none' }} />
-                  <span className={`sidebar__name${p.collapsed ? ' muted' : ''}`}>{p.name}</span>
-                  <span className="sidebar__count">{p.steps.length}</span>
-                </button>
-              );
-            })}
+            {codeSection}
+            {tableSection}
+          </>
+        ) : (
+          <>
+            {tableSection}
+            {codeSection}
           </>
         )}
 

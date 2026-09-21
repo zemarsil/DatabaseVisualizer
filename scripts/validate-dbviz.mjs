@@ -127,7 +127,15 @@ function validate(doc) {
   if (doc.version !== 1) warn(`"version" should be 1 (found ${JSON.stringify(doc.version)}).`);
   if (typeof doc.name !== 'string' || !doc.name.trim()) warn('"name" is missing; the diagram will load as "Untitled diagram".');
   if (!DIALECTS.includes(doc.dialect)) err(`"dialect" must be one of ${DIALECTS.join(', ')} (found ${JSON.stringify(doc.dialect)}); anything else silently falls back to postgresql.`);
-  if (!Array.isArray(doc.tables)) return { errors: [...errors, '"tables" must be an array; the app refuses the file without it.'], warnings };
+  // Either half is a whole file: a schema with no code map, or a code map with
+  // no schema. Only a file with neither is refused. Mirrors parseDiagramValue
+  // in src/lib/io.ts, which is what actually opens these.
+  if (!Array.isArray(doc.tables) && !Array.isArray(doc.programs))
+    return { errors: [...errors, 'Neither "tables" nor "programs" is an array; the app refuses a file with neither.'], warnings };
+  if (doc.tables !== undefined && !Array.isArray(doc.tables)) err('"tables" is present but is not an array; it is ignored, and every table in the file with it.');
+  if (doc.emphasis !== undefined && !['code', 'data', 'both'].includes(doc.emphasis))
+    err(`"emphasis" must be "code", "data" or "both" (found ${JSON.stringify(doc.emphasis)}); anything else is ignored and the emphasis is read off the contents instead.`);
+  const tables = Array.isArray(doc.tables) ? doc.tables : [];
 
   const ids = new Map(); // id -> what claimed it
   const claim = (id, what) => {
@@ -217,7 +225,7 @@ function validate(doc) {
   const tableNames = new Map();
   const positions = new Map();
 
-  for (const [ti, t] of doc.tables.entries()) {
+  for (const [ti, t] of tables.entries()) {
     const where = `tables[${ti}]${t && t.name ? ` (${t.name})` : ''}`;
     if (!t || typeof t !== 'object') {
       err(`${where} is not an object.`);

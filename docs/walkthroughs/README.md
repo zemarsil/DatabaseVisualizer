@@ -1,6 +1,6 @@
 # Walkthroughs
 
-Sixteen short, hands-on guides to Database Visualizer that build **one
+Sixteen short, hands-on guides to Coditect that build **one
 database, once**. Walkthrough 00 puts two tables on the canvas; walkthrough 14
 exports the eighteen-table bookshop those two tables grew into; walkthrough 16
 draws the code that uses it. Nothing is ever thrown away and restarted: each

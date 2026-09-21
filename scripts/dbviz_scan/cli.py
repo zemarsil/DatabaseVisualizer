@@ -42,7 +42,7 @@ LANGUAGE_IDS = [lang.id for lang in LANGUAGES]
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         prog='scan_code.py',
-        description='Read a codebase into a Database Visualizer code map. '
+        description='Read a codebase into a Coditect code map. '
                     f'Reads {", ".join(LANGUAGE_BY_ID[i].label for i in LANGUAGE_IDS)}.',
         epilog=f'examples:{USAGE}',
         formatter_class=argparse.RawDescriptionHelpFormatter,

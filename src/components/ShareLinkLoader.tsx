@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useStore } from '@/store/useStore';
 import { clearSharedPayloadFromLocation, decodeDiagramFromUrl, readSharedPayloadFromLocation } from '@/lib/share';
+import { isBlankDiagram } from '@/lib/emphasis';
 
 let handling = false;
 
@@ -17,7 +18,7 @@ export function ShareLinkLoader() {
         // A shared diagram arrives as a sheet of its own, so nothing you had
         // open is replaced — unless the canvas is an untouched blank one.
         const current = useStore.getState();
-        if (current.sheetIds.length === 1 && current.diagram.tables.length === 0) {
+        if (current.sheetIds.length === 1 && isBlankDiagram(current.diagram)) {
           setDiagram(decoded);
           toast('success', `Opened "${decoded.name}" from the link.`);
         } else {

@@ -196,6 +196,10 @@ export function describeProgram(d: Diagram, p: Program): string {
   if (clauses.length) return `${p.name}, ${article} ${kind}, ${clauses.join('; ')}.`;
   const members = d.programs.filter((x) => x.parentId === p.id).length;
   if (members) return `${p.name}, ${article} ${kind}, holds ${members} node${members === 1 ? '' : 's'}.`;
+  // On a diagram with no schema in it, "does not touch the schema yet" names
+  // something the reader never asked for and invites them to go and find it.
+  // What is actually missing there is the steps.
+  if (d.tables.length === 0) return `${p.name}, ${article} ${kind}, has no steps yet.`;
   return `${p.name}, ${article} ${kind}, does not touch the schema yet.`;
 }
 

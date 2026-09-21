@@ -122,6 +122,18 @@ function HelpContent() {
         <strong>Do it for me</strong> on any step you would rather watch. Start anywhere — the card you get before step 1 has a{' '}
         <strong>Set up the canvas</strong> button that puts the diagram that walkthrough starts from in front of you.
       </p>
+      <h4>Two halves, one canvas</h4>
+      <p>
+        Coditect draws two things, and you never have to want both. A <strong>code map</strong> is programs, modules, classes and functions, and what each
+        one calls, imports, loads and computes — a picture of a codebase, with no database anywhere in it. A <strong>database schema</strong> is tables,
+        columns, keys and the connections between them, with SQL written as you draw and a real engine to run it on. Drawn together, they answer the
+        question neither can on its own: which function reads which column.
+      </p>
+      <p>
+        An empty canvas asks which one you are starting, and the answer only decides what the workbench leads with. Nothing is taken away: adding a table
+        to a code map brings the dialect picker, the SQL tab and the Database tab straight back, and <em>View → This diagram is about</em> changes the
+        answer whenever you like.
+      </p>
       <h4>Find anything</h4>
       <p>
         <K k="Ctrl" /> <K k="K" /> opens the command palette. Type a table name to jump to it, or the first letters of any action (export, detangle,
@@ -129,7 +141,8 @@ function HelpContent() {
       </p>
       <h4>Building a diagram</h4>
       <p>
-        Double-click the canvas (or press <K k="T" />) to add a table. Select a table to edit its columns in the inspector on the right: <K k="Enter" /> in a
+        Press <K k="C" /> to add a piece of code and <K k="T" /> to add a table; double-clicking the canvas adds whichever the diagram is about. Select a
+        table to edit its columns in the inspector on the right: <K k="Enter" /> in a
         column name adds the next column below it, <K k="Shift" /> + <K k="Enter" /> inserts one above, and <K k="Ctrl" /> + <K k="Backspace" /> on an
         empty name removes it, so a whole table can be typed without touching the mouse. Drag the grip at the left of a row to reorder columns. Drag from
         the small handle next to a column to a column in another table to create a foreign key. Drag from the orange handle in a table header to another
@@ -181,11 +194,11 @@ function HelpContent() {
         Detangle runs a layered layout that ranks referenced tables before the tables that reference them and minimises edge crossings. Trace finds the
         shortest chain of connections between two tables and writes the JOIN query for it; <em>Run</em> sends it to the Query tab.
       </p>
-      <h4>Mapping the code that talks to the schema</h4>
+      <h4>Mapping code</h4>
       <p>
-        A program is a node whose ordered steps say what it does: read a table, compute something the database never sees, write the answer back. Code maps
-        take that one level further. Right-click the canvas (or open the <strong>+</strong> menu next to <em>Table</em>) to add a <em>module</em>, a{' '}
-        <em>class</em> or a <em>function</em>; drag a node into a container&apos;s region to put it inside; drag from one code node to another to draw a{' '}
+        A code node is a node whose ordered steps say what it does: call another function, import a module, load a data file, compute something — and, when
+        there is a schema on the canvas, read or write a table. Press <K k="C" />, right-click the canvas, or open the <strong>Add</strong> menu to add a{' '}
+        <em>program</em>, a <em>module</em>, a <em>class</em>, a <em>function</em> or a <em>data file</em>; drag a node into a container&apos;s region to put it inside; drag from one code node to another to draw a{' '}
         <em>call</em>, an <em>import</em> or an <em>extends</em>, and from a table into a function (or back) to say that the function reads or writes it.
         Every arrow is a step on the node it leaves, so reordering steps renumbers the arrows and nothing can drift. The chevron on a container&apos;s
         title folds it to one node with every arrow of everything inside gathered onto it, which is how a big map stays readable. Focus (<K k="." />) and
@@ -273,6 +286,10 @@ function HelpContent() {
           <K k="T" />
         </span>
         <span>Add table</span>
+        <span>
+          <K k="C" />
+        </span>
+        <span>Add a code node (inside the selected container, if it can hold one)</span>
         <span>
           <K k="N" />
         </span>
@@ -422,7 +439,7 @@ export function DialogHost() {
   return (
     <>
       {help && (
-        <Modal title={helpView === 'guide' ? 'How to use Database Visualizer' : 'Walkthroughs'} onClose={() => setHelp(false)} wide>
+        <Modal title={helpView === 'guide' ? 'How to use Coditect' : 'Walkthroughs'} onClose={() => setHelp(false)} wide>
           {helpView === 'guide' ? <HelpContent /> : <WalkthroughBrowser onGuide={() => setHelpView('guide')} />}
         </Modal>
       )}

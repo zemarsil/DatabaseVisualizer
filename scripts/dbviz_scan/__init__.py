@@ -1,5 +1,5 @@
 """
-Reading a codebase into a Database Visualizer code map.
+Reading a codebase into a Coditect code map.
 
 The entry point is `scripts/scan_code.py`; this package is what it runs.
 

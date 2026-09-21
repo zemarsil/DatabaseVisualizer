@@ -1,5 +1,5 @@
 import { BookOpen, ChevronDown, ChevronUp, Code2, Database, FileDown, Play, Route, Shapes, ShieldAlert, Sigma, Terminal } from 'lucide-react';
-import { useStore, type DrawerTab } from '@/store/useStore';
+import { selectShowsDatabaseTools, useStore, type DrawerTab } from '@/store/useStore';
 import { SqlPanel } from './SqlPanel';
 import { ImportPanel } from './ImportPanel';
 import { DatabasePanel } from './DatabasePanel';
@@ -17,17 +17,24 @@ import { lintDiagram } from '@/lib/lint';
 import { buildLineage, lineageTotals } from '@/lib/lineage';
 import { useUi } from '@/store/useUi';
 
-const TABS: { id: DrawerTab; label: string; icon: React.ReactNode }[] = [
+/**
+ * `database: true` marks a tab that only means anything once there is a schema:
+ * it generates DDL, runs it, imports it or reasons about rows. Those tabs stay
+ * off a code map, where they would be nine-tenths of the drawer and none of it
+ * usable. Walkthrough, Trace and Problems have no such marker because all three
+ * already work across code and tables alike.
+ */
+const TABS: { id: DrawerTab; label: string; icon: React.ReactNode; database?: boolean }[] = [
   { id: 'walkthrough', label: 'Walkthrough', icon: <BookOpen /> },
-  { id: 'sql', label: 'SQL', icon: <Code2 /> },
-  { id: 'types', label: 'Types', icon: <Shapes /> },
-  { id: 'import', label: 'Import SQL', icon: <FileDown /> },
+  { id: 'sql', label: 'SQL', icon: <Code2 />, database: true },
+  { id: 'types', label: 'Types', icon: <Shapes />, database: true },
+  { id: 'import', label: 'Import SQL', icon: <FileDown />, database: true },
   { id: 'trace', label: 'Trace', icon: <Route /> },
-  { id: 'simulate', label: 'Simulate', icon: <Play /> },
-  { id: 'derived', label: 'Derived', icon: <Sigma /> },
+  { id: 'simulate', label: 'Simulate', icon: <Play />, database: true },
+  { id: 'derived', label: 'Derived', icon: <Sigma />, database: true },
   { id: 'problems', label: 'Problems', icon: <ShieldAlert /> },
-  { id: 'query', label: 'Query', icon: <Terminal /> },
-  { id: 'database', label: 'Database', icon: <Database /> },
+  { id: 'query', label: 'Query', icon: <Terminal />, database: true },
+  { id: 'database', label: 'Database', icon: <Database />, database: true },
 ];
 
 export function Drawer() {
@@ -46,13 +53,18 @@ export function Drawer() {
   const errorCount = useMemo(() => lintDiagram(diagram).filter((f) => f.severity === 'error').length, [diagram]);
   const derivedCount = useMemo(() => lineageTotals(buildLineage(diagram), diagram).derived, [diagram]);
   const lensOn = useUi((s) => s.derived !== null);
+  const dbTools = useStore(selectShowsDatabaseTools);
+  const tabs = dbTools ? TABS : TABS.filter((t) => !t.database);
+  // A tab that has just been hidden must not keep rendering its panel behind
+  // the tab strip; the drawer falls back to the first one still on offer.
+  const shown = tabs.some((t) => t.id === tab) ? tab : tabs[0].id;
 
   return (
     <section className={`drawer${open ? '' : ' drawer--collapsed'}`}>
       {open && <ResizeHandle orientation="horizontal" className="resize-handle--start" onResize={(delta) => resizePanel('drawerH', -delta)} />}
       <div className="drawer__tabs">
-        {TABS.map((t) => (
-          <button key={t.id} data-tour={`tab-${t.id}`} className={`drawer__tab${open && tab === t.id ? ' drawer__tab--active' : ''}`} onClick={() => (open && tab === t.id ? closeDrawer() : openDrawer(t.id))}>
+        {tabs.map((t) => (
+          <button key={t.id} data-tour={`tab-${t.id}`} className={`drawer__tab${open && shown === t.id ? ' drawer__tab--active' : ''}`} onClick={() => (open && shown === t.id ? closeDrawer() : openDrawer(t.id))}>
             {t.icon}
             {t.label}
             {t.id === 'trace' && traceResult && <span className="badge badge--trace">{traceResult.hops.length} hops</span>}
@@ -60,7 +72,7 @@ export function Drawer() {
             {t.id === 'types' && typeCount > 0 && <span className="badge">{typeCount}</span>}
             {t.id === 'problems' && errorCount > 0 && <span className="badge badge--danger">{errorCount}</span>}
             {t.id === 'derived' && (lensOn ? <span className="badge badge--flow">lens</span> : derivedCount > 0 ? <span className="badge">{derivedCount}</span> : null)}
-            {t.id === 'walkthrough' && activeWalkthroughSlug && !(open && tab === 'walkthrough') && <span className="badge badge--accent">•</span>}
+            {t.id === 'walkthrough' && activeWalkthroughSlug && !(open && shown === 'walkthrough') && <span className="badge badge--accent">•</span>}
           </button>
         ))}
         <span className="grow" />
@@ -70,16 +82,16 @@ export function Drawer() {
       </div>
       {open && (
         <div className="drawer__body" data-tour="drawer-body">
-          {tab === 'walkthrough' && <WalkthroughPanel />}
-          {tab === 'sql' && <SqlPanel />}
-          {tab === 'types' && <TypesPanel />}
-          {tab === 'import' && <ImportPanel />}
-          {tab === 'trace' && <TracePanel />}
-          {tab === 'simulate' && <SimulatePanel />}
-          {tab === 'derived' && <DerivedPanel />}
-          {tab === 'problems' && <ProblemsPanel />}
-          {tab === 'query' && <QueryPanel />}
-          {tab === 'database' && <DatabasePanel />}
+          {shown === 'walkthrough' && <WalkthroughPanel />}
+          {shown === 'sql' && <SqlPanel />}
+          {shown === 'types' && <TypesPanel />}
+          {shown === 'import' && <ImportPanel />}
+          {shown === 'trace' && <TracePanel />}
+          {shown === 'simulate' && <SimulatePanel />}
+          {shown === 'derived' && <DerivedPanel />}
+          {shown === 'problems' && <ProblemsPanel />}
+          {shown === 'query' && <QueryPanel />}
+          {shown === 'database' && <DatabasePanel />}
         </div>
       )}
     </section>

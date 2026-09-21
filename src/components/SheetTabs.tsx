@@ -4,6 +4,7 @@ import { useStore } from '@/store/useStore';
 import { addSheet, closeSheetWithConfirm } from '@/lib/sheets';
 import { openContextMenu } from './ui/ContextMenu';
 import '@/styles/sheets.css';
+import { countLabel } from '@/lib/library';
 
 /**
  * The tabs above the canvas: one per diagram in the workspace, the way a
@@ -17,6 +18,7 @@ export function SheetTabs() {
   const parked = useStore((s) => s.parked);
   const activeName = useStore((s) => s.diagram.name);
   const activeTables = useStore((s) => s.diagram.tables.length);
+  const activeCode = useStore((s) => s.diagram.programs.length);
   const switchSheet = useStore((s) => s.switchSheet);
   const renameSheet = useStore((s) => s.renameSheet);
   const moveSheet = useStore((s) => s.moveSheet);
@@ -36,7 +38,10 @@ export function SheetTabs() {
     return {
       id,
       name: id === activeSheetId ? activeName : (diagram?.name ?? 'Untitled diagram'),
+      // The badge is "how much is on this tab", so a tab holding a code map
+      // must not read 0. Both halves count, and the tooltip says which is which.
       tables: id === activeSheetId ? activeTables : (diagram?.tables.length ?? 0),
+      code: id === activeSheetId ? activeCode : (diagram?.programs.length ?? 0),
     };
   });
 
@@ -60,7 +65,7 @@ export function SheetTabs() {
             role="tab"
             aria-selected={active}
             tabIndex={active ? 0 : -1}
-            title={`${t.name} — ${t.tables} table${t.tables === 1 ? '' : 's'}. Double-click to rename, right-click for more.`}
+            title={`${t.name} — ${countLabel(t.tables, t.code)}. Double-click to rename, right-click for more.`}
             className={`sheets__tab${active ? ' sheets__tab--active' : ''}${dropIndex === i && dragId !== t.id ? ' sheets__tab--drop' : ''}`}
             draggable={renaming !== t.id}
             onClick={() => switchSheet(t.id)}
@@ -122,7 +127,7 @@ export function SheetTabs() {
               <>
                 <Table2 className="sheets__icon" />
                 <span className="sheets__name">{t.name}</span>
-                <span className="sheets__count">{t.tables}</span>
+                <span className="sheets__count">{t.tables + t.code}</span>
                 <button
                   className="sheets__close"
                   title={tabs.length === 1 ? 'Empty this diagram' : `Close "${t.name}"`}

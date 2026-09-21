@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { BookmarkPlus, History, Trash2 } from 'lucide-react';
 import { useStore } from '@/store/useStore';
-import { defaultCheckpointName, deleteCheckpoint, listCheckpoints, recordToDiagram, relativeTime, saveCheckpoint, type CheckpointRecord } from '@/lib/library';
+import { countLabel, defaultCheckpointName, deleteCheckpoint, listCheckpoints, recordToDiagram, relativeTime, saveCheckpoint, type CheckpointRecord } from '@/lib/library';
 import { confirmDialog } from '../ui/Modal';
 
 export const CHECKPOINTS_EVENT = 'dbviz:checkpoints';
@@ -72,7 +72,7 @@ export function Checkpoints() {
             {c.name}
           </span>
           <span className="faint small">
-            {c.tableCount} t · {relativeTime(c.createdAt)}
+            {countLabel(c.tableCount, c.codeCount, { short: true })} · {relativeTime(c.createdAt)}
           </span>
           <button className="btn btn--sm" onClick={() => void restore(c)}>
             Restore

@@ -6,6 +6,7 @@
  */
 import { sheetDiagram, useStore } from '@/store/useStore';
 import { confirmDialog, promptDialog } from '@/components/ui/Modal';
+import { describeContents, hasContent } from './emphasis';
 
 /** Add a diagram to the workspace and switch to it. */
 export function addSheet(): void {
@@ -38,13 +39,14 @@ export async function closeSheetWithConfirm(id: string): Promise<void> {
   const diagram = sheetDiagram(s, id);
   if (!diagram) return;
   const last = s.sheetIds.length === 1;
+  const holds = describeContents(diagram);
   if (
-    diagram.tables.length > 0 &&
+    hasContent(diagram) &&
     !(await confirmDialog({
       title: `Close "${diagram.name}"?`,
       message: last
-        ? `Its ${diagram.tables.length} table${diagram.tables.length === 1 ? '' : 's'} go with it and the tab is left empty. The workspace as it was stays in the library (File → Open recent…).`
-        : `Its ${diagram.tables.length} table${diagram.tables.length === 1 ? '' : 's'} go with it. The other diagrams in this workspace are untouched, and the workspace as it was stays in the library (File → Open recent…).`,
+        ? `Its ${holds} go with it and the tab is left empty. The workspace as it was stays in the library (File → Open recent…).`
+        : `Its ${holds} go with it. The other diagrams in this workspace are untouched, and the workspace as it was stays in the library (File → Open recent…).`,
       confirmLabel: 'Close',
       danger: true,
     }))

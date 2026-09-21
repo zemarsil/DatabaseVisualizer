@@ -1,4 +1,5 @@
 import { useEffect } from 'react';
+import { codeKindMeta, codeKindOf } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { useSimulation } from '@/store/useSimulation';
 import { useUi } from '@/store/useUi';
@@ -75,6 +76,17 @@ export default function App() {
           e.preventDefault();
           s.addTable();
           break;
+        case 'c':
+        case 'C': {
+          // The code half's T. Inside the selected container when it can hold
+          // one, so building a map is the same single key all the way down.
+          e.preventDefault();
+          const only = s.selection.programIds.length === 1 ? s.diagram.programs.find((p) => p.id === s.selection.programIds[0]) : undefined;
+          const inside = only && codeKindMeta(codeKindOf(only)).container;
+          s.addProgram(inside ? { kind: 'module', parentId: only.id } : {});
+          s.setInspectorOpen(true);
+          break;
+        }
         case 'n':
         case 'N':
           e.preventDefault();

@@ -3,7 +3,7 @@
   "version": 1,
   "id": "postgres-extras",
   "name": "PostgreSQL extras",
-  "description": "Three PostgreSQL extensions Database Visualizer does not bundle. An example of the pack format; see docs/EXTENSION_PACK_FORMAT.md.",
+  "description": "Three PostgreSQL extensions Coditect does not bundle. An example of the pack format; see docs/EXTENSION_PACK_FORMAT.md.",
   "dialect": "postgresql",
   "extensions": [
     {
