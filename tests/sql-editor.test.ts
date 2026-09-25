@@ -118,6 +118,60 @@ describe('highlightSql', () => {
 /* Completion                                                          */
 /* ------------------------------------------------------------------ */
 
+describe('a routine body in dollar quotes', () => {
+  // The user's report, nearly verbatim: the whole body used to come out as one green string.
+  const proc = `CREATE OR REPLACE PROCEDURE myproc(
+	otherstuff		int DEFAULT 1,
+    nslices        int DEFAULT 16,
+    max_rows       bigint DEFAULT 0,
+    slack          float8 DEFAULT 0.0001)
+LANGUAGE plpgsql AS $$
+DECLARE
+    n_slice bigint;
+    total bigint := 0;
+
+
+BEGIN
+  UPDATE orders SET status = 'done' WHERE id = n_slice;
+END $$;`;
+
+  it('colours the body as SQL, and only the literal inside it as a string', () => {
+    const spans = highlightSql(proc, scope);
+    expect(spans.map((s) => s.text).join('')).toBe(proc);
+    const of = (text: string) => spans.filter((s) => s.text === text).map((s) => s.cls);
+    expect(of('$$')).toEqual(['punct', 'punct']);
+    expect(of('DECLARE')).toEqual(['keyword']);
+    expect(of('UPDATE')).toEqual(['keyword']);
+    expect(of('orders')).toEqual(['table']);
+    expect(of('status')).toEqual(['column']);
+    expect(of("'done'")).toEqual(['string']);
+    expect(of('bigint')).toEqual(['type', 'type', 'type']);
+  });
+
+  it('colours a body while its closing quote is still to be typed', () => {
+    const spans = highlightSql('CREATE FUNCTION f() RETURNS int LANGUAGE sql AS $body$ SELECT id FROM orders', scope);
+    expect(spans.find((s) => s.text === 'orders')?.cls).toBe('table');
+  });
+
+  it('keeps a dollar-quoted literal that is not a body a string', () => {
+    const spans = highlightSql('SELECT $$ from orders $$ AS label', scope);
+    expect(spans.find((s) => s.text.startsWith('$$'))).toMatchObject({ cls: 'string', text: '$$ from orders $$' });
+  });
+
+  it('offers completion inside the body, where it used to see a string', () => {
+    const text = 'CREATE PROCEDURE p() LANGUAGE plpgsql AS $$ BEGIN DELETE FROM ord';
+    expect(inLiteralAt(text, text.length)).toBe(false);
+    expect(completions(text, text.length, scope)?.items.map((i) => i.label)).toContain('orders');
+    expect(inLiteralAt("SELECT $$ from ord", 'SELECT $$ from ord'.length)).toBe(true);
+  });
+
+  it('still counts the whole CREATE as one statement', () => {
+    expect(splitStatements(`${proc}
+SELECT 1;`).map((s) => s.text.slice(0, 16))).toEqual(['CREATE OR REPLAC', 'SELECT 1;']);
+    expect(scanSql(proc).filter((s) => s.kind === 'string').length).toBe(1);
+  });
+});
+
 describe('completions', () => {
   it('finds the word and its qualifier at the caret', () => {
     expect(wordAtCaret('select o.sta', 12)).toEqual({ word: 'sta', start: 9, end: 12, qualifier: 'o' });

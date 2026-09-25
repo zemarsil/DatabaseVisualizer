@@ -34,7 +34,8 @@ export const SQL_KEYWORDS = new Set(
    COLLATE ESCAPE INTERVAL ARRAY GENERATED ALWAYS IDENTITY AUTO_INCREMENT AUTOINCREMENT UNSIGNED ZEROFILL ENGINE CHARSET
    CHARACTER VARYING WITHOUT ZONE PRECISION NO ACTION DEFERRABLE INITIALLY DEFERRED IMMEDIATE EXCLUDED CONCURRENTLY OWNER
    REFRESH INHERITS LANGUAGE RETURNS DECLARE LOOP WHILE RETURN RAISE NOTICE EXCEPTION GLOBAL LOCAL SESSION ISOLATION LEVEL
-   READ WRITE SAVEPOINT RELEASE LOCK MODE ACCESS EXCLUSIVE CAST EXTRACT ESCAPE STRICT IMMUTABLE STABLE VOLATILE`
+   READ WRITE SAVEPOINT RELEASE LOCK MODE ACCESS EXCLUSIVE CAST EXTRACT ESCAPE STRICT IMMUTABLE STABLE VOLATILE
+   EXIT CONTINUE PERFORM ELSIF ELSEIF FOREACH CALL OUT INOUT CURSOR DIAGNOSTICS EXECUTE LEAVE ITERATE UNTIL HANDLER DETERMINISTIC VARIADIC ATOMIC`
     .split(/\s+/)
     .filter(Boolean),
 );
@@ -75,8 +76,22 @@ const MULTI_PUNCT = ['::', '<=', '>=', '<>', '!=', '||', '->>', '->', '=>', '@>'
 const WORD_START = /[A-Za-z_\u0080-\uFFFF]/;
 const WORD_PART = /[A-Za-z0-9_$\u0080-\uFFFF]/;
 
+export interface ScanOptions {
+  /**
+   * Scan the body of a routine as SQL rather than as one string. PostgreSQL
+   * quotes a function's body in dollars (`AS $$ … $$`, `DO $$ … $$`), which
+   * to the grammar is a string literal and to the person reading it is code.
+   * Colouring and completion want the second reading; everything structural —
+   * splitting statements, finding the statement under the caret, formatting —
+   * wants the first, because a `;` inside the body does not end the CREATE.
+   * So it is opt-in, and only the dollar quote that follows AS or DO counts:
+   * `SELECT $$literal$$` stays a string.
+   */
+  codeBodies?: boolean;
+}
+
 /** Split SQL into segments that cover every character. Never throws. */
-export function scanSql(text: string): SqlSegment[] {
+export function scanSql(text: string, opts: ScanOptions = {}): SqlSegment[] {
   const out: SqlSegment[] = [];
   const n = text.length;
   let i = 0;
@@ -111,9 +126,23 @@ export function scanSql(text: string): SqlSegment[] {
       const m = /^\$([A-Za-z_][A-Za-z0-9_]*)?\$/.exec(text.slice(i, i + 64));
       if (m) {
         const tag = m[0];
-        let j = text.indexOf(tag, i + tag.length);
-        j = j === -1 ? n : j + tag.length;
-        push('string', j);
+        const close = text.indexOf(tag, i + tag.length);
+        let prevSolid: SqlSegment | undefined;
+        for (let k = out.length - 1; k >= 0 && !prevSolid; k--) if (out[k].kind !== 'space' && out[k].kind !== 'comment') prevSolid = out[k];
+        const opensBody = opts.codeBodies && prevSolid?.kind === 'word' && /^(AS|DO)$/i.test(prevSolid.text);
+        if (opensBody) {
+          // The quotes are punctuation; what is between them is scanned as SQL
+          // in its own right, then shifted to where it sits in the whole text.
+          // A body whose closing quote is not typed yet runs to the end, so it
+          // is coloured as code while it is being written.
+          push('punct', i + tag.length);
+          const bodyEnd = close === -1 ? n : close;
+          for (const seg of scanSql(text.slice(i, bodyEnd), opts)) out.push({ ...seg, start: seg.start + i, end: seg.end + i });
+          i = bodyEnd;
+          if (close !== -1) push('punct', close + tag.length);
+          continue;
+        }
+        push('string', close === -1 ? n : close + tag.length);
         continue;
       }
       // $1 style parameter
@@ -266,7 +295,7 @@ function stripQuotes(text: string): string {
  * `UPDATE t AS u`), lower-cased alias → table name as written.
  */
 export function tableAliases(text: string): Map<string, string> {
-  const segs = scanSql(text).filter((s) => s.kind !== 'space' && s.kind !== 'comment');
+  const segs = scanSql(text, { codeBodies: true }).filter((s) => s.kind !== 'space' && s.kind !== 'comment');
   const out = new Map<string, string>();
   const isName = (s: SqlSegment | undefined) => Boolean(s) && (s!.kind === 'word' || s!.kind === 'quoted');
   for (let i = 0; i < segs.length; i++) {
@@ -297,7 +326,7 @@ export function tableAliases(text: string): Map<string, string> {
 
 /** Colour every character of `text`. Spans concatenate back to the input. */
 export function highlightSql(text: string, scope?: SqlScope, opts: HighlightOptions = {}): HighlightSpan[] {
-  const segments = scanSql(text);
+  const segments = scanSql(text, { codeBodies: true });
   const tables = new Map<string, SqlScopeTable>();
   for (const t of scope?.tables ?? []) {
     tables.set(t.name.toLowerCase(), t);
@@ -380,7 +409,8 @@ export function segmentAt(segments: SqlSegment[], caret: number): SqlSegment | n
  * yet, or a line comment) counts up to and including its end.
  */
 export function inLiteralAt(text: string, caret: number): boolean {
-  for (const s of scanSql(text)) {
+  // Inside a routine body is code, not a literal: completion should work there.
+  for (const s of scanSql(text, { codeBodies: true })) {
     if (s.kind !== 'string' && s.kind !== 'comment' && s.kind !== 'quoted') continue;
     if (s.start < caret && caret < s.end) return true;
     if (caret !== s.end) continue;

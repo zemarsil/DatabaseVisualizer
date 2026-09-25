@@ -85,7 +85,7 @@ export function wordAtCaret(text: string, caret: number): WordAtCaret {
 /** Table names the text mentions (as words), lower-cased. */
 function mentionedTables(text: string, tables: Map<string, SqlScopeTable>): Set<string> {
   const out = new Set<string>();
-  for (const s of scanSql(text)) {
+  for (const s of scanSql(text, { codeBodies: true })) {
     if (s.kind !== 'word' && s.kind !== 'quoted') continue;
     const name = s.text.replace(/^["`[]|["`\]]$/g, '').toLowerCase();
     const t = tables.get(name);

@@ -3,6 +3,7 @@ import { FileUp, Play } from 'lucide-react';
 import { useStore } from '@/store/useStore';
 import { importSql, type ImportResult } from '@/lib/sql/import';
 import { suggestForeignKeys } from '@/lib/suggest';
+import { procedureSignature } from '@/lib/procedures';
 import { diagramScope } from '@/lib/sqlScope';
 import { SqlEditor, type SqlEditorHandle } from '@/components/ui/SqlEditor';
 import { DIALECTS, isProcedure } from '@shared/types';
@@ -26,6 +27,7 @@ export function ImportPanel() {
   const [sql, setSql] = useState('');
   const [mode, setMode] = useState<'merge' | 'replace'>(diagram.tables.length ? 'merge' : 'replace');
   const [preview, setPreview] = useState<ImportResult | null>(null);
+  const procedures = useMemo(() => (preview?.programs ?? []).filter(isProcedure), [preview]);
   const [group, setGroup] = useState(false);
   const [groupName, setGroupName] = useState('');
   const [groupExternal, setGroupExternal] = useState(true);
@@ -125,7 +127,9 @@ export function ImportPanel() {
           </button>
           {preview && (
             <span className="small muted">
-              {preview.tables.length === 0 ? 'Nothing to import yet' : `Ready: ${preview.tables.length} table${preview.tables.length === 1 ? '' : 's'}`}
+              {preview.tables.length === 0
+                ? 'Nothing to import yet'
+                : `Ready: ${preview.tables.length} table${preview.tables.length === 1 ? '' : 's'}${procedures.length ? `, ${procedures.length} procedure${procedures.length === 1 ? '' : 's'}` : ''}`}
             </span>
           )}
         </div>
@@ -139,6 +143,7 @@ export function ImportPanel() {
             <div className="row row--wrap" style={{ marginBottom: 4 }}>
               <span className="badge badge--success">{preview.tables.length} tables</span>
               <span className="badge badge--accent">{preview.relationships.length} connections</span>
+              {procedures.length > 0 && <span className="badge">{procedures.length} procedures</span>}
               {preview.errors.length > 0 && <span className="badge badge--danger">{preview.errors.length} errors</span>}
               {preview.warnings.length > 0 && <span className="badge">{preview.warnings.length} warnings</span>}
             </div>
@@ -147,6 +152,11 @@ export function ImportPanel() {
                 {preview.tables.map((t) => (
                   <span key={t.id} className="chip">
                     {t.name} <span className="faint">({t.columns.length})</span>
+                  </span>
+                ))}
+                {procedures.map((p) => (
+                  <span key={p.id} className="chip" title={procedureSignature(p)}>
+                    {p.name} <span className="faint">({p.returns?.trim() ? 'function' : 'procedure'})</span>
                   </span>
                 ))}
               </div>
