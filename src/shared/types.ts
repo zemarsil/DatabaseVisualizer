@@ -820,9 +820,25 @@ export function isCodeStepOp(op: ProgramStepOp): op is 'call' | 'import' | 'exte
  * because there is nothing in it to run — and a load names a data file and
  * nothing else, because reading values out of a function is not a thing.
  */
-export function canStepName(op: ProgramStepOp, kind: CodeKind): boolean {
+export function canStepName(op: ProgramStepOp, kind: CodeKind, from?: CodeKind): boolean {
   if (!isCodeStepOp(op)) return false;
+  // A procedure runs inside the database, so the only code it can reach is
+  // another routine there, and the only thing anything does to one is call it:
+  // there is no importing a stored procedure, or inheriting from it.
+  if (from === 'procedure' && kind !== 'procedure') return false;
+  if (kind === 'procedure') return op === 'call';
   return op === 'load' ? kind === 'data' : kind !== 'data';
+}
+
+/**
+ * The ops a node of this kind may have steps of. A data file runs nothing, so
+ * none; a procedure reads, writes, works and calls other routines, all inside
+ * the database, and has no imports, bases or files to load.
+ */
+export function stepOpsForKind(kind: CodeKind): ProgramStepOp[] {
+  if (kind === 'data') return [];
+  if (kind === 'procedure') return ['read', 'write', 'compute', 'call'];
+  return PROGRAM_STEP_OPS.map((o) => o.id);
 }
 
 export function isProgramStepOp(v: unknown): v is ProgramStepOp {
@@ -907,8 +923,17 @@ export interface ProgramStep {
  * rather than a module written in YAML because the difference is real and
  * worth enforcing — no computation happens in there, so it holds nothing, does
  * nothing, and the only arrow that may touch it is a load.
+ *
+ * 'procedure' is the other side of the line a program draws. A program is the
+ * caller, outside the database; a stored procedure (or stored function) is
+ * code the database itself holds and runs. It has steps like any other node —
+ * what it reads, what it writes, what it calls, in order — but it is part of
+ * the schema: the script creates it, a migration replaces it, reading a live
+ * database brings it back. So it stands at the top level, never inside a
+ * module, and it counts as the data half of the diagram rather than the code
+ * half. See src/lib/procedures.ts.
  */
-export type CodeKind = 'program' | 'module' | 'class' | 'function' | 'data';
+export type CodeKind = 'program' | 'module' | 'class' | 'function' | 'data' | 'procedure';
 
 export interface CodeKindMeta {
   id: CodeKind;
@@ -928,6 +953,14 @@ export const CODE_KINDS: CodeKindMeta[] = [
   { id: 'class', label: 'Class', plural: 'classes', hint: 'A class, a struct, a type with methods.', container: true, parents: ['program', 'module', 'class'] },
   { id: 'function', label: 'Function', plural: 'functions', hint: 'A function or a method: the node whose steps say what it does.', container: false, parents: ['program', 'module', 'class'] },
   { id: 'data', label: 'Data file', plural: 'data files', hint: 'A YAML or JSON file other code loads. Nothing runs in it, so it has no steps.', container: false, parents: ['program', 'module'] },
+  {
+    id: 'procedure',
+    label: 'Procedure',
+    plural: 'procedures',
+    hint: 'A stored procedure or function: code the database runs itself, created by the schema script alongside the tables it reads and writes.',
+    container: false,
+    parents: [],
+  },
 ];
 
 export function isCodeKind(v: unknown): v is CodeKind {
@@ -953,6 +986,11 @@ export function isDataNode(p: Pick<Program, 'kind'>): boolean {
   return codeKindOf(p) === 'data';
 }
 
+/** A stored procedure or function: code the database holds, part of the schema rather than the code map. */
+export function isProcedure(p: Pick<Program, 'kind'>): boolean {
+  return codeKindOf(p) === 'procedure';
+}
+
 /**
  * The language a node of this kind may keep, or the one it has to take instead.
  *
@@ -963,12 +1001,16 @@ export function isDataNode(p: Pick<Program, 'kind'>): boolean {
  * arrives disagreeing with itself.
  */
 export function languageForKind(kind: CodeKind, language: ProgramLanguage): ProgramLanguage {
+  // A procedure is written in the engine's own language, which the dialect
+  // decides; the host-language field has nothing to say about it.
+  if (kind === 'procedure') return 'other';
   if (kind === 'data') return isDataLanguage(language) ? language : DEFAULT_DATA_LANGUAGE;
   return isDataLanguage(language) ? 'other' : language;
 }
 
 /** The kind a node written in this language may keep, or the one it has to take. */
 export function kindForLanguage(language: ProgramLanguage, kind: CodeKind): CodeKind {
+  if (kind === 'procedure') return kind;
   if (isDataLanguage(language)) return 'data';
   return kind === 'data' ? 'module' : kind;
 }
@@ -980,8 +1022,41 @@ export function kindForLanguage(language: ProgramLanguage, kind: CodeKind): Code
  * since a data node never had any.
  */
 export function settleCodeNode(kind: CodeKind, language: ProgramLanguage): { kind: CodeKind; language: ProgramLanguage } {
+  if (kind === 'procedure') return { kind, language: 'other' };
   if (kind !== 'data' && !isDataLanguage(language)) return { kind, language };
   return { kind: 'data', language: isDataLanguage(language) ? language : DEFAULT_DATA_LANGUAGE };
+}
+
+/** How a procedure parameter is passed. Absent means IN, which is what an unmarked parameter is on every engine. */
+export type ProcedureParamMode = 'in' | 'out' | 'inout';
+
+export const PROCEDURE_PARAM_MODES: ProcedureParamMode[] = ['in', 'out', 'inout'];
+
+export function isProcedureParamMode(v: unknown): v is ProcedureParamMode {
+  return v === 'in' || v === 'out' || v === 'inout';
+}
+
+/** One parameter of a stored procedure or function. */
+export interface ProcedureParam {
+  id: string;
+  name: string;
+  /** Raw SQL type, the same convention as Column.type, and translated with it when the dialect changes. */
+  type: string;
+  /** Absent means IN. */
+  mode?: ProcedureParamMode;
+  /** PostgreSQL only: the DEFAULT a caller may leave the argument out for. */
+  defaultValue?: string;
+}
+
+/**
+ * The language a PostgreSQL routine body is written in. MariaDB has only one
+ * (SQL/PSM, its BEGIN … END compound statements), SQLite and DuckDB have no
+ * stored procedures at all, so the field only ever means something there.
+ */
+export type RoutineLanguage = 'plpgsql' | 'sql';
+
+export function isRoutineLanguage(v: unknown): v is RoutineLanguage {
+  return v === 'plpgsql' || v === 'sql';
 }
 
 /**
@@ -1032,6 +1107,33 @@ export interface Program {
   comment?: string;
   /** Always empty on a data file, which runs nothing and so does nothing in order. */
   steps: ProgramStep[];
+
+  /*
+   * The fields below belong to procedures alone, and are dropped from every
+   * other kind. A procedure's steps are still what draws its arrows; these are
+   * what turns it into a CREATE statement.
+   */
+  /** The schema the routine is created in. Absent means the default one. */
+  schema?: string;
+  /** In declaration order. Absent or empty means it takes none. */
+  params?: ProcedureParam[];
+  /**
+   * A return type makes the routine a stored *function* (CREATE FUNCTION …
+   * RETURNS, called inside a query) rather than a procedure (CREATE PROCEDURE,
+   * run with CALL). Written as the engine spells it: "integer", "TABLE (id int)",
+   * "SETOF orders", "trigger".
+   */
+  returns?: string;
+  /**
+   * The body as the engine stores it: on PostgreSQL what goes between the dollar
+   * quotes (a plpgsql BEGIN … END; block, or plain statements for LANGUAGE sql),
+   * on MariaDB the routine body (usually one BEGIN … END compound statement).
+   * Absent means the body is written from the steps, so a procedure sketched as
+   * steps is already one the database can create.
+   */
+  body?: string;
+  /** PostgreSQL only; absent means plpgsql. */
+  routineLanguage?: RoutineLanguage;
 }
 
 export interface Diagram {
@@ -1246,9 +1348,25 @@ export interface ExtensionsResponse {
   note?: string;
 }
 
+/** A stored procedure or function as a live server reports it. */
+export interface IntrospectedRoutine {
+  schema: string;
+  name: string;
+  kind: 'procedure' | 'function';
+  params: { name: string; type: string; mode?: ProcedureParamMode; defaultValue?: string }[];
+  /** Functions only. */
+  returns?: string;
+  /** PostgreSQL's language name, e.g. plpgsql or sql. */
+  language?: string;
+  body: string;
+  comment: string | null;
+}
+
 export interface IntrospectResponse {
   serverVersion: string;
   tables: IntrospectedTable[];
+  /** Stored procedures and functions (PostgreSQL and MariaDB); absent from engines that have none. */
+  routines?: IntrospectedRoutine[];
   /** Named enum types (PostgreSQL and DuckDB). */
   enums?: { schema: string; name: string; values: string[] }[];
   /** Extensions installed in this database, so importing a schema brings its dependencies with it. */

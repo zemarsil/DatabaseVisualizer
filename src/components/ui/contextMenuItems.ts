@@ -8,6 +8,7 @@
  * ContextMenu.tsx instantiates.
  */
 import {
+  DatabaseZap,
   AlignCenterHorizontal,
   AlignCenterVertical,
   AlignEndHorizontal,
@@ -67,6 +68,7 @@ import {
 import { CODE_KINDS, RELATIONSHIP_KINDS, canContain, codeKindMeta, codeKindOf, isDataNode, kindMeta, programLanguageMeta, type CodeKind, type Column, type Relationship, type Table, type TableDisplay } from '@shared/types';
 import { codeChildren, codeDescendantIds, codePath } from '@/lib/codemap';
 import { generateProgramCode, hasStarter } from '@/lib/code/generate';
+import { generateProcedureSql } from '@/lib/sql/generator';
 import { flowDerivations, matchColumnsByName } from '@/lib/derivation';
 import { buildLineage, columnOrigin, derivedColumnIds, type Lineage } from '@/lib/lineage';
 import { createGroup, customTypeByName, relationshipKindPatch, uniqueGroupName } from '@/lib/model';
@@ -194,7 +196,7 @@ function inGroup(store: Store, kind: 'table' | 'note' | 'program', id: string): 
   return kind === 'note' ? sel.noteIds.includes(id) : kind === 'program' ? sel.programIds.includes(id) : sel.tableIds.includes(id);
 }
 
-const KIND_ICONS: Record<CodeKind, LucideIcon> = { program: Cpu, module: FileCode, class: Box, function: SquareFunction, data: Braces };
+const KIND_ICONS: Record<CodeKind, LucideIcon> = { program: Cpu, module: FileCode, class: Box, function: SquareFunction, data: Braces, procedure: DatabaseZap };
 
 /* ------------------------------------------------------------------ */
 /* Shared rows: collapse modes and arrange                             */
@@ -361,6 +363,16 @@ function paneMenu(at: { x: number; y: number }, env: MenuEnv): MenuNode[] {
       label: 'Add view here',
       icon: Eye,
       run: () => s.addTable({ x: Math.round(at.x - 120), y: Math.round(at.y - 20) }, { kind: 'view' }),
+    },
+    {
+      kind: 'action',
+      id: 'add-procedure',
+      label: 'Add procedure here',
+      icon: DatabaseZap,
+      run: () => {
+        s.addProgram({ kind: 'procedure', position: { x: Math.round(at.x - 130), y: Math.round(at.y - 30) } });
+        s.setInspectorOpen(true);
+      },
     },
   ];
   const codeAdds: MenuNode[] = [
@@ -814,7 +826,7 @@ function programMenu(programId: string, env: MenuEnv): MenuNode[] {
   const lang = programLanguageMeta(prg.language);
   const kind = codeKindOf(prg);
   const noun = codeKindMeta(kind).label.toLowerCase();
-  const starter = generateProgramCode(s.diagram, prg);
+  const starter = kind === 'procedure' ? '' : generateProgramCode(s.diagram, prg);
   const members = codeChildren(s.diagram).get(prg.id) ?? [];
   const inside = codeDescendantIds(s.diagram, prg.id);
   const parent = prg.parentId ? s.diagram.programs.find((p) => p.id === prg.parentId) : undefined;
@@ -886,16 +898,25 @@ function programMenu(programId: string, env: MenuEnv): MenuNode[] {
       },
     },
     sep('s1'),
-    {
-      kind: 'action',
-      id: 'copy-code',
-      label: `Copy the ${lang.label} starter`,
-      icon: Code2,
-      // A container's starter is the file it stands for, so what it holds
-      // counts as much as what it does itself.
-      disabled: !hasStarter(s.diagram, prg),
-      run: () => env.copy(starter, `Copied the ${lang.label} starter for ${prg.name}.`),
-    },
+    // A procedure's "starter" is the statement that creates it, not host code.
+    kind === 'procedure'
+      ? {
+          kind: 'action' as const,
+          id: 'copy-code',
+          label: `Copy the CREATE ${prg.returns?.trim() ? 'FUNCTION' : 'PROCEDURE'}`,
+          icon: Code2,
+          run: () => env.copy(generateProcedureSql(s.diagram, prg.id).script, `Copied the CREATE statement for ${prg.name}.`),
+        }
+      : {
+          kind: 'action' as const,
+          id: 'copy-code',
+          label: `Copy the ${lang.label} starter`,
+          icon: Code2,
+          // A container's starter is the file it stands for, so what it holds
+          // counts as much as what it does itself.
+          disabled: !hasStarter(s.diagram, prg),
+          run: () => env.copy(starter, `Copied the ${lang.label} starter for ${prg.name}.`),
+        },
     { kind: 'action', id: 'copy', label: `Copy ${noun}`, icon: ClipboardCopy, hint: 'Ctrl+C', run: () => void copySelectionToClipboard([], [prg.id]) },
     { kind: 'action', id: 'duplicate', label: `Duplicate ${noun}`, icon: Copy, run: () => s.duplicateProgram(prg.id) },
     sep('s2'),

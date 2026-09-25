@@ -13,6 +13,7 @@ import {
   isDataNode,
   programLanguageMeta,
   programStepOpMeta,
+  stepOpsForKind,
   type CodeKind,
   type Program,
   type ProgramStep,
@@ -142,7 +143,7 @@ export function ProgramEditor({ program }: { program: Program }) {
         <label className="field grow">
           <span className="field__label">Kind</span>
           <select className="select" value={kind} onChange={(e) => void changeKind(e.target.value as CodeKind)} title={kindMeta.hint}>
-            {CODE_KINDS.map((k) => (
+            {CODE_KINDS.filter((k) => k.id !== 'procedure').map((k) => (
               <option key={k.id} value={k.id}>
                 {k.label}
               </option>
@@ -345,7 +346,7 @@ export function ProgramEditor({ program }: { program: Program }) {
             {/* A read or a write has to name a table, so on a diagram with no
                 tables those buttons would add a step with nothing to point at.
                 The moment one table exists they are back. */}
-            {PROGRAM_STEP_OPS.filter((op) => !(programStepOpMeta(op.id).touchesDatabase && noTables)).map((op) => (
+            {PROGRAM_STEP_OPS.filter((op) => stepOpsForKind(kind).includes(op.id) && !(programStepOpMeta(op.id).touchesDatabase && noTables)).map((op) => (
               <button key={op.id} className="btn btn--sm" title={op.hint} onClick={() => addProgramStep(program.id, { op: op.id })}>
                 <Plus /> {op.label}
               </button>
@@ -396,8 +397,14 @@ export function ProgramEditor({ program }: { program: Program }) {
   );
 }
 
-/** One step: its op, what it touches, and the SQL and code it carries. */
-function StepRow({ program, step, index, open }: { program: Program; step: ProgramStep; index: number; open: boolean }) {
+/**
+ * One step: its op, what it touches, and the SQL and code it carries.
+ *
+ * Shared with the procedure editor. On a procedure everything a step carries
+ * is SQL — the statement, and for a compute or a call the procedural code — so
+ * the host-language code box gives way to SQL editors there.
+ */
+export function StepRow({ program, step, index, open }: { program: Program; step: ProgramStep; index: number; open: boolean }) {
   const diagram = useStore((s) => s.diagram);
   const updateProgramStep = useStore((s) => s.updateProgramStep);
   const removeProgramStep = useStore((s) => s.removeProgramStep);
@@ -405,15 +412,20 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
   const setActiveStep = useUi((s) => s.setActiveProgramStepId);
   const [expanded, setExpanded] = useState(open);
   const scope = useMemo(() => diagramScope(diagram), [diagram]);
+  const kind = codeKindOf(program);
+  const inDatabase = kind === 'procedure';
+  // The ops this node may have, plus the one the step already has, so a step a
+  // file gave a stray op still shows what it is rather than a blank select.
+  const ops = PROGRAM_STEP_OPS.filter((o) => stepOpsForKind(kind).includes(o.id) || o.id === step.op);
   // A load names a data file and a call, import or extends names code, so the
   // picker only offers what the op could actually mean.
   const codeOptions = useMemo(
     () =>
       diagram.programs
-        .filter((p) => p.id !== program.id && canStepName(step.op, codeKindOf(p)))
+        .filter((p) => p.id !== program.id && canStepName(step.op, codeKindOf(p), codeKindOf(program)))
         .map((p) => ({ id: p.id, label: codePath(diagram, p) }))
         .sort((a, b) => a.label.localeCompare(b.label)),
-    [diagram, program.id, step.op],
+    [diagram, program, step.op],
   );
 
   const meta = programStepOpMeta(step.op);
@@ -437,7 +449,7 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
           onChange={(e) => updateProgramStep(program.id, step.id, { op: e.target.value as ProgramStepOp })}
           title={meta.hint}
         >
-          {PROGRAM_STEP_OPS.map((o) => (
+          {ops.map((o) => (
             <option key={o.id} value={o.id}>
               {o.label}
             </option>
@@ -464,7 +476,7 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
         {meta.namesCode && (
           <select className="select select--sm" value={step.codeId ?? ''} onChange={(e) => updateProgramStep(program.id, step.id, { codeId: e.target.value || undefined })}>
             <option value="">
-              {step.op === 'call' ? 'Pick what it calls…' : step.op === 'import' ? 'Pick what it imports…' : step.op === 'load' ? 'Pick the data file…' : 'Pick the base class…'}
+              {step.op === 'call' ? (inDatabase ? 'Pick the routine it calls…' : 'Pick what it calls…') : step.op === 'import' ? 'Pick what it imports…' : step.op === 'load' ? 'Pick the data file…' : 'Pick the base class…'}
             </option>
             {codeOptions.map((c) => (
               <option key={c.id} value={c.id}>
@@ -556,7 +568,11 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
                 placeholder={step.op === 'read' ? 'SELECT … FROM …' : 'INSERT INTO … / UPDATE …'}
                 ariaLabel="Step SQL"
               />
-              <span className="field__hint">Leave it empty and the generated starter writes one from the table and columns above.</span>
+              <span className="field__hint">
+                {inDatabase
+                  ? 'Leave it empty and the body written from these steps gets a placeholder naming the table and columns above.'
+                  : 'Leave it empty and the generated starter writes one from the table and columns above.'}
+              </span>
             </div>
           )}
 
@@ -572,17 +588,36 @@ function StepRow({ program, step, index, open }: { program: Program; step: Progr
             </div>
           )}
 
-          <div className="field">
-            <span className="field__label">Code</span>
-            <CodeEditor
-              value={step.code ?? ''}
-              onChange={(v) => updateProgramStep(program.id, step.id, { code: v || undefined })}
-              language={program.language}
-              rows={5}
-              placeholder={step.op === 'compute' ? 'The part the database never sees.' : step.op === 'load' ? 'The line that reads the file.' : isCodeStepOp(step.op) ? 'The line that makes the call.' : 'The code around this statement.'}
-              ariaLabel="Step code"
-            />
-          </div>
+          {inDatabase ? (
+            (step.op === 'compute' || step.op === 'call') && (
+              <div className="field">
+                <span className="field__label">{step.op === 'compute' ? 'Procedural code' : 'The call'}</span>
+                <SqlEditor
+                  value={step.code ?? ''}
+                  onChange={(v) => updateProgramStep(program.id, step.id, { code: v || undefined })}
+                  scope={scope}
+                  mode="statement"
+                  rows={3}
+                  expandable
+                  title={`Step ${index + 1} of ${program.name}`}
+                  placeholder={step.op === 'compute' ? 'IF … THEN … END IF; / SET total = total + 1;' : 'CALL other_procedure(…);'}
+                  ariaLabel="Step code"
+                />
+              </div>
+            )
+          ) : (
+            <div className="field">
+              <span className="field__label">Code</span>
+              <CodeEditor
+                value={step.code ?? ''}
+                onChange={(v) => updateProgramStep(program.id, step.id, { code: v || undefined })}
+                language={program.language}
+                rows={5}
+                placeholder={step.op === 'compute' ? 'The part the database never sees.' : step.op === 'load' ? 'The line that reads the file.' : isCodeStepOp(step.op) ? 'The line that makes the call.' : 'The code around this statement.'}
+                ariaLabel="Step code"
+              />
+            </div>
+          )}
         </div>
       )}
     </div>

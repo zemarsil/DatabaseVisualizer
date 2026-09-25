@@ -36,13 +36,15 @@ inside the block. The importer is a purpose-built schema parser, not a full SQL 
 Supported: `CREATE TABLE` with column and table constraints, `ALTER TABLE … ADD
 CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`,
 `COMMENT ON TABLE|COLUMN`, `CREATE VIEW`, `CREATE TYPE … AS ENUM` / `AS (…)`, and
-`CREATE EXTENSION` (plus MariaDB's `INSTALL SONAME` / `INSTALL PLUGIN` and DuckDB's `INSTALL` / `LOAD`).
-DuckDB's `STRUCT(…)` / `MAP(…)` / `INTEGER[3]` column types, `CREATE TYPE … AS STRUCT(…)` and
+`CREATE EXTENSION` (plus MariaDB's `INSTALL SONAME` / `INSTALL PLUGIN` and DuckDB's `INSTALL` / `LOAD`),
+and `CREATE [OR REPLACE] PROCEDURE | FUNCTION` with `COMMENT ON PROCEDURE | FUNCTION` — PostgreSQL's
+dollar-quoted bodies and MariaDB's `BEGIN … END` bodies, `DELIMITER` lines included. A routine becomes
+a procedure node whose steps are read out of its body. DuckDB's `STRUCT(…)` / `MAP(…)` / `INTEGER[3]` column types, `CREATE TYPE … AS STRUCT(…)` and
 `CREATE SEQUENCE` + `DEFAULT nextval(…)` (read as an auto-increment column) parse as well.
 `pg_dump` and `mysqldump` output parses fine.
 
 Silently dropped (with a warning): generated columns, partitioning, expression indexes,
-triggers, functions. If your recommendation depends on one of those, use Option B and
+triggers, and functions in a language other than SQL or PL/pgSQL. If your recommendation depends on one of those, use Option B and
 describe it in a note, or leave it in the script knowing it will not appear on the canvas.
 
 Put your rationale in `COMMENT ON COLUMN` / `COMMENT ON TABLE` — those survive the round
@@ -395,6 +397,42 @@ The code map inside a program uses the same object, plus `kind` and `parentId`:
 - Use it when the recommendation is *about the code*: which function owns a write, what a
   column rename will break, where a transaction boundary should be. A single program with
   steps is still right for "a job does this nightly".
+
+**Procedure** — a stored procedure or function: code the *database* runs. It is an entry of
+`programs` with `"kind": "procedure"`, drawn with steps like any code node, but it is part of
+the schema: the generated script creates it after the tables and views, and a migration
+replaces it.
+
+```json
+{ "id": "prc_archive", "name": "archive_orders", "kind": "procedure", "language": "other",
+  "position": { "x": 700, "y": 320 }, "color": "teal",
+  "comment": "Moves orders older than the cutoff into the archive.",
+  "params": [{ "id": "prm_cutoff", "name": "cutoff", "type": "DATE" }],
+  "steps": [
+    { "id": "stp_a1", "op": "write", "tableId": "tbl_orders_archive", "columnIds": [],
+      "sql": "INSERT INTO orders_archive SELECT * FROM orders WHERE placed_at < cutoff" },
+    { "id": "stp_a2", "op": "write", "tableId": "tbl_orders", "columnIds": [],
+      "sql": "DELETE FROM orders WHERE placed_at < cutoff" }
+  ] }
+```
+
+- `params` are `{ id, name, type, mode?, defaultValue? }`, `mode` being `in` (the default,
+  left out), `out` or `inout`. `defaultValue` is PostgreSQL's alone.
+- `returns` makes it a stored **function** (`CREATE FUNCTION … RETURNS`, used inside a
+  query); leave it out for a procedure (`CREATE PROCEDURE`, run with `CALL`).
+- `body` is the routine body as the engine takes it: on PostgreSQL what goes between the
+  dollar quotes (a PL/pgSQL `BEGIN … END;` block, or plain statements with
+  `"routineLanguage": "sql"`), on MariaDB one `BEGIN … END` compound statement. Leave it out
+  and the body is written from the steps, each step's `sql` in order — often the clearest
+  way to write one.
+- Its steps are `read`, `write`, `compute` (procedural work: variables, `IF`, loops) and
+  `call` naming another procedure. A program, module or function that runs it has a
+  `call` step naming it; nothing may `import` or `extend` one.
+- It never has a `parentId`. SQLite and DuckDB have no stored procedures: on those the
+  script documents one as a comment rather than creating it.
+- Use it when the recommendation is that the work belongs *in* the database — a batch
+  that should be one transaction next to the data, logic every client must share — as
+  opposed to a program, which says it belongs outside.
 
 **Note** — sticky note on the canvas, for prose the schema cannot hold.
 

@@ -5,7 +5,7 @@ import { importSql, type ImportResult } from '@/lib/sql/import';
 import { suggestForeignKeys } from '@/lib/suggest';
 import { diagramScope } from '@/lib/sqlScope';
 import { SqlEditor, type SqlEditorHandle } from '@/components/ui/SqlEditor';
-import { DIALECTS } from '@shared/types';
+import { DIALECTS, isProcedure } from '@shared/types';
 
 const PLACEHOLDER = `-- Paste CREATE TABLE statements (pg_dump / mysqldump output works too)
 CREATE TABLE authors (
@@ -66,7 +66,8 @@ export function ImportPanel() {
     const extras = [
       res.customTypes.length ? `${res.customTypes.length} type(s)` : '',
       res.extensions.length ? `${res.extensions.length} extension(s)` : '',
-      res.programs.length ? `${res.programs.length} program(s)` : '',
+      res.programs.some(isProcedure) ? `${res.programs.filter(isProcedure).length} procedure(s)` : '',
+      res.programs.some((p) => !isProcedure(p)) ? `${res.programs.filter((p) => !isProcedure(p)).length} program(s)` : '',
     ].filter(Boolean);
     const extraNote = extras.length ? ` and ${extras.join(' and ')}` : '';
     toast('success', `Imported ${res.tables.length} table(s), ${res.relationships.length} connection(s)${extraNote}.`);
@@ -130,7 +131,7 @@ export function ImportPanel() {
         </div>
         <div className="small muted" style={{ marginBottom: 8 }}>
           Understands CREATE TABLE with column and table constraints, ALTER TABLE … ADD CONSTRAINT, CREATE INDEX, COMMENT ON, CREATE TYPE … AS ENUM and CREATE TYPE
-          … AS (composite). Other statements are skipped with a warning. Tables referenced but not defined get a placeholder. A script this app exported also
+          … AS (composite), and CREATE PROCEDURE / FUNCTION (DELIMITER lines included). Other statements are skipped with a warning. Tables referenced but not defined get a placeholder. A script this app exported also
           carries its data flows, serialized copies, dependencies and tagged queries in its trailing comments, and they come back with it.
         </div>
         {preview && (

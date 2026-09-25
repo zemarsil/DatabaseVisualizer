@@ -174,7 +174,7 @@ export function MigrateSection() {
               <div className="migrate-list">
                 {groups.map(([group, changes]) => (
                   <div key={group}>
-                    <div className="migrate-group">{group.startsWith('type:') ? `type ${group.slice(5)}` : group}</div>
+                    <div className="migrate-group">{group.startsWith('type:') ? `type ${group.slice(5)}` : group.startsWith('routine:') ? `routine ${group.slice(8)}` : group}</div>
                     {changes.map((c) => {
                       const badge = RISK_BADGE[c.risk];
                       return (

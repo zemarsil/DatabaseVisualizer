@@ -6,6 +6,7 @@ import { codeKindMeta, codeKindOf, describeRelationship, dialectLabel, programLa
 import { codePath } from '../codemap';
 import { fileSlug } from '../io';
 import { describeProgram, describeStep } from '../programs';
+import { procedureSignature } from '../procedures';
 
 function ident(name: string): string {
   return /^[A-Za-z0-9_]+$/.test(name) ? name : `"${name.replace(/"/g, '')}"`;
@@ -126,7 +127,9 @@ export function exportDbml(d: Diagram): string {
     const kind = codeKindOf(prg);
     const body = [
       describeProgram(d, prg),
-      `${codeKindMeta(kind).label} written in ${programLanguageMeta(prg.language).label}${prg.parentId && codeById.get(prg.parentId) ? `, inside ${codePath(d, codeById.get(prg.parentId)!, codeById)}` : ''}${prg.entrypoint?.trim() ? `, in ${prg.entrypoint.trim()}` : ''}.`,
+      kind === 'procedure'
+        ? `Stored ${prg.returns?.trim() ? 'function' : 'procedure'} ${procedureSignature(prg)}.`
+        : `${codeKindMeta(kind).label} written in ${programLanguageMeta(prg.language).label}${prg.parentId && codeById.get(prg.parentId) ? `, inside ${codePath(d, codeById.get(prg.parentId)!, codeById)}` : ''}${prg.entrypoint?.trim() ? `, in ${prg.entrypoint.trim()}` : ''}.`,
       prg.comment?.trim() ?? '',
       prg.steps.map((s, i) => `${i + 1}. ${describeStep(s, s.tableId ? tableById.get(s.tableId) : undefined, s.codeId ? codeById.get(s.codeId) : undefined)}`).join('\n'),
     ]

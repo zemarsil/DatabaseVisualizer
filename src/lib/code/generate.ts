@@ -44,6 +44,7 @@ import {
   codeKindOf,
   isCodeStepOp,
   isDataNode,
+  isProcedure,
   programLanguageMeta,
   programRoleMeta,
   type CodeKind,
@@ -58,6 +59,7 @@ import {
 } from '@shared/types';
 import { quoteIdent, quoteQualified } from '../sql/dialect';
 import { describeProgram } from '../programs';
+import { isStoredFunction, usableParams } from '../procedures';
 import { codeChildren } from '../codemap';
 import { driverFor, hasDriver, type Driver, type DriverShape } from './drivers';
 
@@ -186,6 +188,33 @@ export function resolveSteps(d: Diagram, p: Program, driver?: Driver): ProgramCo
     // place_order is called here, not what calling it takes.
     if (isCodeStepOp(s.op)) {
       const target = s.codeId ? codeById.get(s.codeId) : undefined;
+      // A call to a stored procedure is not a stub: it is a statement the
+      // driver sends, the same as a write — CALL for a procedure, SELECT for a
+      // function — with the routine's IN parameters bound in order.
+      if (s.op === 'call' && target && isProcedure(target)) {
+        // A function's OUT parameters are part of its result, not its argument
+        // list; a procedure's are passed as NULL on PostgreSQL and as a session
+        // variable on MariaDB, which is where the value comes back.
+        const params = usableParams(target).filter((x) => x.mode !== 'out' || !isStoredFunction(target));
+        const bound = params.filter((x) => x.mode !== 'out').map((x) => sanitize(x.name));
+        // Placeholders are numbered by the parameters bound, not by position, so an OUT in the middle leaves no gap.
+        let n = 0;
+        const numbered = params.map((x) => (x.mode === 'out' ? (d.dialect === 'postgresql' ? 'NULL' : `@${sanitize(x.name)}`) : ph(++n)));
+        const name = quoteQualified(target.name.trim(), target.schema?.trim() || undefined, d.dialect);
+        return {
+          index: i + 1,
+          op: s.op,
+          table: undefined,
+          columns: [],
+          target,
+          sql: isStoredFunction(target) ? `SELECT ${name}(${numbered.join(', ')})` : `CALL ${name}(${numbered.join(', ')})`,
+          generated: true,
+          note: s.note?.trim() ?? '',
+          slug: unique(sanitize(`call_${target.name}`)),
+          params: bound,
+          stub: false,
+        };
+      }
       return {
         index: i + 1,
         op: s.op,

@@ -274,9 +274,9 @@ export function pasteText(text: string, at?: { x: number; y: number }): 'clipboa
     }
     if (at) {
       gridAt(res.tables, at);
-      s.pasteTables(res.tables, res.relationships, res.customTypes, { x: 0, y: 0 }, res.extensions);
+      s.pasteTables(res.tables, res.relationships, res.customTypes, { x: 0, y: 0 }, res.extensions, res.programs);
     } else {
-      s.importTables(res.tables, res.relationships, 'merge', { customTypes: res.customTypes, extensions: res.extensions });
+      s.importTables(res.tables, res.relationships, 'merge', { customTypes: res.customTypes, extensions: res.extensions, programs: res.programs });
     }
     const problems = res.errors.length ? ` (${res.errors.length} statement${res.errors.length === 1 ? '' : 's'} had errors)` : '';
     s.toast('success', `Imported ${res.tables.length} table${res.tables.length === 1 ? '' : 's'} from the pasted SQL${problems}.`);
@@ -439,7 +439,7 @@ export async function openDroppedFiles(files: File[], at?: { x: number; y: numbe
           s.toast('error', `${file.name}: no CREATE TABLE statements found.`);
           continue;
         }
-        s.importTables(res.tables, res.relationships, s.diagram.tables.length ? 'merge' : 'replace', { customTypes: res.customTypes });
+        s.importTables(res.tables, res.relationships, s.diagram.tables.length ? 'merge' : 'replace', { customTypes: res.customTypes, extensions: res.extensions, programs: res.programs });
         s.toast('success', `Imported ${res.tables.length} table${res.tables.length === 1 ? '' : 's'} from ${file.name}.`);
         continue;
       }

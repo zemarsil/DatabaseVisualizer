@@ -4,6 +4,8 @@ import {
   isProgramLanguage,
   isProgramRole,
   isProgramStepOp,
+  isProcedureParamMode,
+  isRoutineLanguage,
   isRelationshipKind,
   isWindowFunction,
   normalizeVerb,
@@ -18,6 +20,7 @@ import {
   type Note,
   type Program,
   type ProgramStep,
+  type ProcedureParam,
   type Relationship,
   type Sheet,
   type Table,
@@ -142,10 +145,43 @@ function parsePrograms(v: unknown): Program[] {
       color: str(p.color, 'slate'),
       ...(typeof p.comment === 'string' && p.comment ? { comment: p.comment } : {}),
       steps,
+      ...(kind === 'procedure' ? parseRoutineFields(p) : {}),
     });
   }
+  // A procedure lives in the database, not inside a module: a file that put
+  // one in a container gets it back at the top level.
+  for (const prg of out) if (prg.kind === 'procedure') delete prg.parentId;
   pruneCodeParents(out);
   return out;
+}
+
+/**
+ * What makes a procedure a CREATE statement: its schema, parameters, return
+ * type, body and body language. Every field is optional, and only a procedure
+ * reads them — they are dropped from any other kind, the way a role is dropped
+ * from anything but a program.
+ */
+function parseRoutineFields(p: Record<string, unknown>): Partial<Program> {
+  const params: ProcedureParam[] = [];
+  for (const rx of Array.isArray(p.params) ? p.params : []) {
+    if (!rx || typeof rx !== 'object') continue;
+    const x = rx as Record<string, unknown>;
+    if (typeof x.name !== 'string') continue;
+    params.push({
+      id: typeof x.id === 'string' && x.id ? x.id : newId('param'),
+      name: x.name,
+      type: typeof x.type === 'string' ? x.type : '',
+      ...(isProcedureParamMode(x.mode) && x.mode !== 'in' ? { mode: x.mode } : {}),
+      ...(typeof x.defaultValue === 'string' && x.defaultValue ? { defaultValue: x.defaultValue } : {}),
+    });
+  }
+  return {
+    ...(typeof p.schema === 'string' && p.schema ? { schema: p.schema } : {}),
+    ...(params.length ? { params } : {}),
+    ...(typeof p.returns === 'string' && p.returns.trim() ? { returns: p.returns } : {}),
+    ...(typeof p.body === 'string' && p.body.trim() ? { body: p.body } : {}),
+    ...(isRoutineLanguage(p.routineLanguage) && p.routineLanguage !== 'plpgsql' ? { routineLanguage: p.routineLanguage } : {}),
+  };
 }
 
 /** Drop a parent pointer that names no node in the list, or that would put a node inside itself. */

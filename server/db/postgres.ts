@@ -4,11 +4,13 @@ import type {
   DatabaseExtension,
   ExtensionsResponse,
   IntrospectResponse,
+  IntrospectedRoutine,
   IntrospectedTable,
   QueryResult,
   ReferentialAction,
   StatementResult,
 } from '../../src/shared/types';
+import { parseRoutineParams } from '../../src/shared/routines';
 import type { QueryOptions } from './index';
 import { serializeRows, splitStatements } from './values';
 
@@ -135,6 +137,23 @@ export const INTROSPECT_QUERIES = {
        JOIN pg_namespace n ON n.oid = t.typnamespace
        WHERE ${SYSTEM_SCHEMAS}
        GROUP BY 1, 2 ORDER BY 1, 2`,
+  // Stored procedures and functions written in SQL or PL/pgSQL. Everything an
+  // extension installed is left out (PostGIS alone brings thousands, and the
+  // extension is already recorded), and so is anything in C or another
+  // procedural language, whose body is not text the diagram can show.
+  routines: `SELECT n.nspname AS schema, p.proname AS name,
+              CASE p.prokind WHEN 'p' THEN 'procedure' ELSE 'function' END AS kind,
+              pg_get_function_arguments(p.oid) AS arguments,
+              CASE WHEN p.prokind = 'f' THEN pg_get_function_result(p.oid) END AS returns,
+              l.lanname::text AS language,
+              p.prosrc AS body,
+              obj_description(p.oid, 'pg_proc') AS comment
+       FROM pg_proc p
+       JOIN pg_namespace n ON n.oid = p.pronamespace
+       JOIN pg_language l ON l.oid = p.prolang
+       WHERE p.prokind IN ('p', 'f') AND l.lanname IN ('sql', 'plpgsql') AND ${SYSTEM_SCHEMAS}
+         AND NOT EXISTS (SELECT 1 FROM pg_depend dep WHERE dep.classid = 'pg_proc'::regclass AND dep.objid = p.oid AND dep.deptype = 'e')
+       ORDER BY 1, 2`,
 } as const;
 
 /**
@@ -202,6 +221,10 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
 
     const enums = await c.query<{ schema: string; name: string; values: string[] }>(INTROSPECT_QUERIES.enums);
 
+    const routines = await c.query<{ schema: string; name: string; kind: 'procedure' | 'function'; arguments: string; returns: string | null; language: string; body: string; comment: string | null }>(
+      INTROSPECT_QUERIES.routines,
+    );
+
     const byKey = new Map<string, IntrospectedTable>();
     for (const t of tables.rows) {
       const isView = t.relkind === 'v' || t.relkind === 'm';
@@ -260,12 +283,27 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
       serverVersion: version,
       tables: [...byKey.values()],
       enums: enums.rows.map((e) => ({ schema: e.schema, name: e.name, values: textArray(e.values) })),
+      routines: routines.rows.map((r) => routineFromRow(r)),
       // plpgsql is in every database already, so listing it would only add noise.
       extensions: extensions.rows.map((e) => ({ name: e.name, schema: e.schema === 'public' ? undefined : e.schema, version: e.version })),
     };
   } finally {
     await c.end();
   }
+}
+
+/** One pg_proc row as the response shape: the argument text split into parameters. */
+export function routineFromRow(r: { schema: string; name: string; kind: 'procedure' | 'function'; arguments: string; returns: string | null; language: string; body: string; comment: string | null }): IntrospectedRoutine {
+  return {
+    schema: r.schema,
+    name: r.name,
+    kind: r.kind,
+    params: parseRoutineParams(r.arguments ?? '', true),
+    ...(r.kind === 'function' && r.returns ? { returns: r.returns } : {}),
+    language: r.language,
+    body: r.body ?? '',
+    comment: r.comment,
+  };
 }
 
 /** PostGIS alone provides several thousand functions; a sample is enough to recognise it by. */

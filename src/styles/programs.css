@@ -327,6 +327,48 @@
   height: 36px;
   border-bottom-width: 1px;
 }
+/* A stored procedure is code, so it keeps the numbered gutter of steps, but
+   it lives in the database, so it takes a table's rounded corners and its own
+   colour for the outline rather than the pink every piece of outside code
+   shares. It should read as "part of the schema that runs". */
+.program-node--procedure {
+  border-radius: 8px;
+  border-color: var(--hue);
+  box-shadow: var(--node-shadow), 0 0 0 3px color-mix(in srgb, var(--hue) 22%, transparent);
+  overflow: hidden;
+}
+.program-node--procedure .program-node__header {
+  border-bottom-color: var(--hue);
+}
+.program-node--procedure .program-node__prompt {
+  color: var(--hue);
+}
+.program-node--procedure .program-node__lang {
+  background: color-mix(in srgb, var(--hue) 30%, transparent);
+}
+.program-node--procedure.program-node--selected {
+  border-color: var(--accent);
+  box-shadow: var(--node-shadow), 0 0 0 3px var(--accent-soft);
+}
+/* The parameter rows of the procedure editor: mode, name, type, default. */
+.procedure-param {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 4px;
+}
+.procedure-param__mode {
+  flex: none;
+  width: 72px;
+}
+.procedure-param__default {
+  flex: none;
+  width: 80px;
+}
+.procedure-param .input {
+  min-width: 0;
+}
+
 .program-node--collapsed {
   box-shadow: var(--node-shadow), 0 0 0 3px var(--program-soft), 4px 4px 0 -1px color-mix(in srgb, var(--program) 45%, var(--node-bg));
 }

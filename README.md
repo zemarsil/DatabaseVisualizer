@@ -23,6 +23,7 @@ Drawn together they answer the question neither can alone: *which function reads
 - Draw tables and their connections on a pan/zoom canvas: crow's-foot foreign keys plus three kinds the database cannot enforce — data flows, serialized copies, and plain dependencies. Views are nodes too, fed by the tables their `SELECT` reads.
 - Say how a connection *reads*: "orders **contains** order_items", "customers **has** addresses", "orders **uses** addresses". The verb is documentation, so it never changes the DDL.
 - Tag any connection with the query that moves data across it, so the diagram documents *how* one table feeds another, not just that they are related.
+- **Stored procedures and functions**: code the database runs itself, drawn like a program — numbered steps with an arrow to every table they read or write — but created by the schema script, replaced by a migration, read back off a live PostgreSQL or MariaDB, and imported from a pasted `CREATE PROCEDURE`. Write the body, or sketch the steps and let the body be written from them. See [Stored procedures](#stored-procedures-the-work-that-happens-inside-the-database).
 - **Group** tables into a labelled region — handy when part of the diagram is a *different* database you only read from. Mark that group external and the generated script documents those tables instead of creating them.
 - Generate the `CREATE TABLE` script for **PostgreSQL**, **MariaDB**, **SQLite** or **DuckDB** from the diagram, or paste DDL (including `pg_dump` / `mysqldump` output) and get the diagram back. Enum and composite types are first-class.
 - **Problems**: a schema linter that flags missing primary keys, foreign keys onto non-unique columns, type mismatches, duplicate names, reserved words and more — most findings fix themselves with one click — plus foreign-key suggestions read off column names.
@@ -85,7 +86,7 @@ Nothing is ever removed. What is on the canvas outranks the choice, in the one d
 | --- | --- | --- |
 | Nothing, nothing chosen | you are asked | shown |
 | Only code | code | hidden |
-| Only tables | data | shown |
+| Only tables (or procedures) | data | shown |
 | Both | both | shown |
 | Anything, after choosing **Blank canvas** | both | shown |
 
@@ -117,6 +118,7 @@ A file with no `tables` array at all is a valid diagram, as long as it has `prog
 | Derived columns | On a data-flow edge, add one entry per target column: target column, aggregate, source expression, group-by keys, filter, and optionally a **sequence** operation (previous / next value, change since the previous row, running total or average, row number, rank) with its order-by and partition-by keys. Expressions are SQL and may name a column of any table the source points at through foreign keys as `table.column` (`orders.status` from `order_items`). The edge shows a `Σ` count and a per-column summary, and the script gets an `INSERT ... SELECT` skeleton with the `JOIN`s and window functions written for the current dialect |
 | See what is computed | Any column a data flow fills carries a **Σ** mark, and its table a **Σ n** badge that survives collapsing. `D` (or **View → Derived-column lens**) turns that into a way of reading the whole canvas: computed columns take the green rail, the columns feeding them the flow colour, foreign keys step back. The **Derived** drawer tab lists every one with its formula; pick a column — there, or by right-clicking it → *Show where this comes from* — and the canvas narrows to that column's chain: every column read to produce it, and everything computed from it in turn. `Esc` widens the chain back, then puts the lens away |
 | One source, several look-alike targets | On a data-flow edge, **Match by name** adds a plain passthrough derivation for every target column a source column of the same name can fill (case and underscores ignored; columns already derived are left alone). *Feed other tables the same way* then ticks off the other tables that share those column names and draws the same flow into each, its derivations re-pointed at the columns each table spells the same way. Five tables fed from one is five edges either way — a connection joins two tables — but not five sets of derivations typed by hand |
+| Stored procedures | **Add → Procedure** (on a diagram about data), right-click the canvas → **Add procedure here**, or `Ctrl+K` → *Add procedure*. Name it, add parameters, pick *Function* and a return type if it returns a value, then either add its steps (read, write, compute, call) or type its body — **Detect steps** reads the tables it touches and the procedures it calls out of a body, **From steps** starts a body from the steps. The inspector previews the `CREATE` statement for the current engine. A program or function calls one with a *call* step, and its generated starter runs a real `CALL` through the driver |
 | Say what talks to the database from outside | Right-click the canvas → **Add program here** (or `Ctrl+K` → *Add program*). Name it, pick its language, then add steps in the order they happen: read a table, compute something the database never sees, write the answer back. Each step naming a table draws a numbered arrow, and the node says *round trip: jobs* when it both reads and writes one. Every step holds the statement it runs and the code around it; **Show the … starter** writes a runnable skeleton from the steps with the right driver for your language and engine, and on a module or a class it writes the whole file, definitions and all |
 | Map the code behind a program | With a program selected, the **Add** menu's *Code* section adds a **Module**, **Class**, **Function** or **Data file** inside it (or right-click the canvas → **Add module here**, or the **+ Module** buttons in the inspector's *Inside* section). A container is drawn as a region around its members; drag a node into or out of one to move it. Give a function read and write steps as you would a program, drag the handle on its header onto another node for a **call** (an **import** between modules, an **extends** between classes, a **load** onto a data file), and drag from a table's column handle onto a node for a read on that column. Right-click a region → **Collapse to one node** folds it and gathers its arrows; **Trace** accepts a code node at either end |
 | Simulate data flow | **Simulate** button (or `S`) with a table selected, the **Simulate** drawer tab, or right-click a table → *Simulate data flowing in*. Sample rows are generated for the raw inputs (filter values such as `'paid'` are planted so filters have something to match), every flow upstream runs in order, and playback steps through the stages: the canvas animates rows along each flow, the grids show the source and target rows, and clicking a produced row highlights the rows it came from and explains each column. Double-click a raw input cell to change it; `Esc` leaves the mode |
@@ -282,6 +284,8 @@ src/lib/sql/             tokenizer, parser (DDL -> model), generator (model -> D
 src/lib/sql/annotations.ts  the connections a script carries in its comments, so exported SQL imports back whole
 src/lib/groups.ts        table groups: region geometry, membership, external tables
 src/lib/programs.ts      programs: the arrows derived from their steps, round-trip detection, prose summaries
+src/lib/procedures.ts    stored procedures: CREATE / DROP per engine, the body written from the steps and the steps read out of a body
+src/shared/routines.ts   a routine's parameter list, read the same way from a CREATE statement and from PostgreSQL's catalog
 src/lib/codemap.ts       code maps: the containment tree, what a collapsed container stands in for, gathered arrows, container regions, paths
 src/lib/code/           drivers.ts: which package each language reaches each engine with; generate.ts: the starter, one file per container; highlight.ts: a lexer per host language
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
@@ -568,6 +572,48 @@ survives the round trip is what the diagram is *for* — the files, the classes,
 the functions, the statements and the order they run in — and what does not is
 the work outside the database, which is the part the map never claimed to know.
 
+## Stored procedures: the work that happens inside the database
+
+A program is the caller: work that has to happen outside the database. A
+stored procedure is the opposite placement of the same idea — work that
+belongs *next to* the data, in one transaction, the same for every client —
+and it gets the same kind of node, because what it does has the same shape: an
+ordered list of reads, writes, work and calls, each step drawing a numbered
+arrow to the table it touches. What differs is where it lives, so it is drawn
+with a table's rounded corners and a *Procedure* (or *Function*) badge, listed
+under **Procedures** in the outline, and treated as part of the schema:
+
+| | What happens to a procedure |
+| --- | --- |
+| Generated script | `CREATE OR REPLACE PROCEDURE` / `FUNCTION` after every table and view, on PostgreSQL with the body in dollar quotes and a `COMMENT ON PROCEDURE`, on MariaDB with a `COMMENT` characteristic and — in the script only, since a driver does not need it — wrapped in `DELIMITER //` for the command-line client. Dropped before the tables by *drop first* |
+| SQLite, DuckDB | Neither has stored procedures, so the script writes the procedure as a comment and Problems says so. Nothing is lost: it comes back the moment the diagram targets PostgreSQL or MariaDB |
+| Import SQL | `CREATE PROCEDURE` / `CREATE FUNCTION` in either engine's syntax, `DELIMITER` lines, `BEGIN … END` blocks with nested `IF` / `CASE` / labels, and `COMMENT ON PROCEDURE` all parse. A routine arrives as a procedure node whose steps are read out of its body |
+| Read a live database | PostgreSQL's SQL and PL/pgSQL routines (anything an extension installed is left out) and MariaDB's `information_schema.ROUTINES`, with their parameters, return types, bodies and comments. Reading the main database again restates its procedures in place; another database's stay out of the diagram, since anything in it is something the script creates |
+| Migrate | New procedures are created, changed bodies replaced in place, removed ones dropped (never ticked by default: the body may only exist in the database). PostgreSQL cannot change a routine's parameters or return type in place, so that change is written as a `DROP` then a `CREATE` |
+| Switch dialect | Parameter and return types are translated with the columns. The body is not: it is written in the engine's own procedural language |
+| Export | The Markdown data dictionary has a *Procedures* section with each signature and body; Mermaid and DBML carry them as they carry programs |
+
+A procedure has two descriptions of what it does, kept side by side rather than
+merged. The **steps** are what the canvas draws; the **body** is what the
+engine runs, and a body typed or imported is used exactly as written. Leave the
+body empty and it is written from the steps — each step's statement in order,
+a placeholder comment for a step with no SQL yet, a `CALL` for a call — so a
+procedure sketched as four steps is already one the database can create. Going
+the other way, **Detect steps** reads a body for the tables each statement
+reads (`FROM`, `JOIN`) and writes (`INSERT INTO`, `UPDATE`, `DELETE FROM`) and
+the procedures it `CALL`s, which is also how an imported routine gets its
+steps. Control flow draws nothing of its own: a step is something that touches
+data.
+
+A procedure's steps are *read*, *write*, *compute* (procedural work: variables,
+`IF`, loops) and *call*, which names another procedure. From the other side, a
+program, module or function reaches one with a *call* step, and that is the one
+call the starter does not write as a stub: `archive_orders` called from a Python
+job comes out as the statement `CALL archive_orders(%s)`, executed with the
+procedure's `IN` parameters bound in order — `SELECT order_total(%s)` for a
+function. That arrow, from the function that runs it to the procedure to the
+tables it moves rows between, is the whole path a batch takes, on one canvas.
+
 ## Several diagrams in one workspace
 
 The tabs above the canvas are the diagrams of one workspace, the way a
@@ -785,13 +831,13 @@ imports exactly as it always did.
 
 ## Notes on the SQL support
 
-The parser is purpose-built for schema DDL rather than a full SQL grammar. It handles `CREATE TABLE` with column and table constraints in both dialects, `ALTER TABLE … ADD CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`, `COMMENT ON`, `CREATE TYPE … AS ENUM`, and `CREATE EXTENSION` (plus MariaDB's `INSTALL SONAME` / `INSTALL PLUGIN`). Anything else is skipped with a warning, and a broken statement does not stop the rest of the script from importing. Generated columns, partitioning, and expression indexes are dropped with a warning because the model does not represent them.
+The parser is purpose-built for schema DDL rather than a full SQL grammar. It handles `CREATE TABLE` with column and table constraints in both dialects, `ALTER TABLE … ADD CONSTRAINT / ADD COLUMN / ALTER COLUMN SET DEFAULT|NOT NULL`, `CREATE [UNIQUE] INDEX`, `COMMENT ON`, `CREATE TYPE … AS ENUM`, `CREATE EXTENSION` (plus MariaDB's `INSTALL SONAME` / `INSTALL PLUGIN`), and `CREATE PROCEDURE` / `CREATE FUNCTION` in PostgreSQL's and MariaDB's syntax, `DELIMITER` included. Anything else is skipped with a warning, and a broken statement does not stop the rest of the script from importing. Generated columns, partitioning, and expression indexes are dropped with a warning because the model does not represent them.
 
 Views are first-class: `CREATE VIEW … AS SELECT …` (PostgreSQL, MariaDB and SQLite flavours, including `MATERIALIZED`, `ALGORITHM=`/`DEFINER=` prefixes and `WITH CHECK OPTION`) becomes a view node fed by data-flow links from the tables its SELECT reads, and the generated script creates views after every table, in dependency order. A materialized view stays materialized through import, save and introspection; because only PostgreSQL has them, the other two dialects generate a plain `CREATE VIEW` with a warning rather than a statement they cannot run, and the flag is preserved so switching back restores it. SQLite is a third dialect: the generator writes `INTEGER PRIMARY KEY AUTOINCREMENT`, keeps every foreign key inline (SQLite resolves them at run time, so cycles need no `ALTER TABLE`), turns enum types into `CHECK (col IN (…))`, drops schema prefixes and moves comments into the script, and the parser accepts `AUTOINCREMENT`, `[bracketed]` identifiers, `WITHOUT ROWID` and `STRICT`. Column types are translated when you switch to or from SQLite.
 
 DuckDB is the fourth dialect, and the second that runs inside the browser (DuckDB-Wasm, in a Web Worker). Its DDL is PostgreSQL's with a few rules of its own, which the generator follows: there is no serial or identity column, so an auto-increment column reads its default from a sequence created just before its table (`CREATE SEQUENCE orders_id_seq;` … `id INTEGER PRIMARY KEY DEFAULT nextval('orders_id_seq')`); enum and composite types are real `CREATE TYPE … AS ENUM` / `AS STRUCT(…)`; foreign keys support no referential action beyond refusing the change, so `ON DELETE CASCADE` is left out with a warning and Problems flags it; a foreign key can only be written inside `CREATE TABLE`, so one that closes a reference cycle is documented as a comment instead; comments are real `COMMENT ON`; schemas are created with `CREATE SCHEMA IF NOT EXISTS`. Types are translated on the way in and out (`INT UNSIGNED` ↔ `UINTEGER`, `TEXT[]` ↔ `VARCHAR[]`, `STRUCT(…)` → `JSONB`, `HUGEINT` → `NUMERIC(39,0)`), the parser reads `STRUCT(…)` / `MAP(…)` / `INTEGER[3]` types, `CREATE TYPE … AS STRUCT`, `CREATE SEQUENCE` and `INSTALL` / `LOAD`, and reading a live schema uses DuckDB's own `duckdb_tables()` / `duckdb_columns()` / `duckdb_constraints()` catalog functions, mapping an enum column back to the named type it was declared with. In the browser the database is a real `.duckdb` file on the origin-private file system, so it survives reloads and downloads as a file the DuckDB CLI opens; a browser without that storage falls back to an in-memory database for the session. Extensions a script loads (`json`, `spatial`, …) are fetched from extensions.duckdb.org, so they need the network the first time.
 
-**Migrate** introspects the connected database and diffs it against the diagram: new and dropped tables, added / dropped / retyped columns, nullability and default changes, foreign keys and indexes. The `ALTER TABLE` script it writes follows each dialect's rules (`ALTER COLUMN … TYPE` in PostgreSQL, `MODIFY COLUMN` in MariaDB, a create-copy-drop-rename rebuild for the changes SQLite cannot express, and for DuckDB the indexes dropped and recreated around a column change, since it refuses to alter an indexed table), with destructive statements grouped at the end and commented out unless you tick them. DuckDB cannot add or drop a constraint on an existing table (a primary key can be added once), so those changes are written as notes rather than statements it would reject. It works from the diagram alone, so it cannot see data; review the script before running it.
+**Migrate** introspects the connected database and diffs it against the diagram: new and dropped tables, added / dropped / retyped columns, nullability and default changes, foreign keys, indexes, and stored procedures. The `ALTER TABLE` script it writes follows each dialect's rules (`ALTER COLUMN … TYPE` in PostgreSQL, `MODIFY COLUMN` in MariaDB, a create-copy-drop-rename rebuild for the changes SQLite cannot express, and for DuckDB the indexes dropped and recreated around a column change, since it refuses to alter an indexed table), with destructive statements grouped at the end and commented out unless you tick them. DuckDB cannot add or drop a constraint on an existing table (a primary key can be added once), so those changes are written as notes rather than statements it would reject. It works from the diagram alone, so it cannot see data; review the script before running it.
 
 ## License
 

@@ -1,4 +1,5 @@
-import type { Column, Diagram, Dialect, IntrospectResponse, Table } from '@shared/types';
+import type { Column, Diagram, Dialect, IntrospectResponse, Program, ProcedureParamMode, Table } from '@shared/types';
+import { dialectHasProcedures, normalizeBody, procedureBody, proceduresOf, usableParams } from '../procedures';
 import { externalTableIds } from '../groups';
 import { isSerialType, normalizeType, quoteIdent } from '../sql/dialect';
 import { foreignKeyStatement, resolvedColumnType } from '../sql/generator';
@@ -63,10 +64,25 @@ export interface SnapEnum {
   customTypeId?: string;
 }
 
+/** A stored procedure or function, matched by name (overloads are not told apart). */
+export interface SnapRoutine {
+  key: string;
+  schema?: string;
+  name: string;
+  kind: 'procedure' | 'function';
+  params: { name: string; type: string; mode: ProcedureParamMode }[];
+  returns: string;
+  body: string;
+  /** The diagram procedure this came from (target side only). */
+  program?: Program;
+}
+
 export interface SchemaSnapshot {
   dialect: Dialect;
   tables: SnapTable[];
   enums: SnapEnum[];
+  /** Absent in snapshots of an engine with no procedures. */
+  routines?: SnapRoutine[];
 }
 
 export type ColumnChange = 'type' | 'nullable' | 'default' | 'autoIncrement';
@@ -89,7 +105,11 @@ export type MigrationOp =
   | { kind: 'create-enum'; enum: SnapEnum }
   | { kind: 'add-enum-values'; enum: SnapEnum; values: string[] }
   | { kind: 'enum-values-removed'; enum: SnapEnum; values: string[] }
-  | { kind: 'drop-enum'; enum: SnapEnum };
+  | { kind: 'drop-enum'; enum: SnapEnum }
+  | { kind: 'create-routine'; routine: SnapRoutine }
+  | { kind: 'drop-routine'; routine: SnapRoutine }
+  /** `recreate`: PostgreSQL cannot change a routine's parameters or return type in place, so it is dropped and created again. */
+  | { kind: 'replace-routine'; routine: SnapRoutine; current: SnapRoutine; recreate: boolean };
 
 export type Risk = 'safe' | 'risky' | 'destructive';
 
@@ -370,10 +390,24 @@ export function snapshotFromDiagram(d: Diagram, defaultSchema: string): SchemaSn
     }
     tables.push(snap);
   }
+  const routines: SnapRoutine[] = dialectHasProcedures(d.dialect)
+    ? proceduresOf(d)
+        .filter((p) => p.name.trim())
+        .map((p) => ({
+          key: tableKey(p.name.trim(), p.schema, defaultSchema),
+          schema: p.schema?.trim() || undefined,
+          name: p.name.trim(),
+          kind: p.returns?.trim() ? 'function' : 'procedure',
+          params: usableParams(p).map((x) => ({ name: x.name.trim(), type: x.type.trim(), mode: x.mode ?? 'in' })),
+          returns: p.returns?.trim() ?? '',
+          body: procedureBody(d, p),
+          program: p,
+        }))
+    : [];
   const enums: SnapEnum[] = hasNamedEnums(d.dialect)
     ? d.customTypes.filter((ct) => ct.kind === 'enum' && (ct.values ?? []).some((v) => v.trim())).map((ct) => ({ name: ct.name, values: (ct.values ?? []).filter((v) => v.trim()), customTypeId: ct.id }))
     : [];
-  return { dialect: d.dialect, tables, enums };
+  return { dialect: d.dialect, tables, enums, routines };
 }
 
 /** Engines with CREATE TYPE ... AS ENUM, so enum types are objects to diff on their own. */
@@ -411,7 +445,32 @@ export function snapshotFromIntrospection(res: IntrospectResponse, dialect: Dial
     };
   });
   const enums: SnapEnum[] = (res.enums ?? []).map((e) => ({ name: e.name, values: e.values }));
-  return { dialect, tables, enums };
+  const routines: SnapRoutine[] = (res.routines ?? []).map((r) => ({
+    key: tableKey(r.name, r.schema, defaultSchema),
+    schema: r.schema,
+    name: r.name,
+    kind: r.kind,
+    params: r.params.map((x) => ({ name: x.name, type: x.type, mode: x.mode ?? 'in' })),
+    returns: r.returns ?? '',
+    body: r.body,
+  }));
+  return { dialect, tables, enums, routines };
+}
+
+/**
+ * A parameter or return type the way both sides can agree on. PostgreSQL
+ * reports a routine's argument types without their modifiers (varchar(20)
+ * comes back as character varying), so on PostgreSQL the modifiers are
+ * dropped from both sides before comparing.
+ */
+function routineType(type: string, dialect: Dialect): string {
+  const t = type.trim();
+  if (/^(TABLE|SETOF)\b/i.test(t)) return t.replace(/\s+/g, ' ').replace(/\s*([(),])\s*/g, '$1').toLowerCase();
+  return comparableType(dialect === 'postgresql' ? t.replace(/\([^)]*\)/g, '') : t, dialect);
+}
+
+function routineSignature(r: SnapRoutine, dialect: Dialect): string {
+  return `${r.kind}(${r.params.map((x) => `${x.mode} ${x.name.toLowerCase()} ${routineType(x.type, dialect)}`).join(', ')})${r.returns ? ` ${routineType(r.returns, dialect)}` : ''}`;
 }
 
 /* ---------------- Diff ---------------- */
@@ -576,6 +635,36 @@ export function diffSchemas(target: SchemaSnapshot, current: SchemaSnapshot): Ch
 
     if (dialect !== 'sqlite' && (t.comment ?? '') !== (cur.comment ?? '')) {
       out.push(change({ kind: 'set-comment', table: t, comment: t.comment }, t.key, `Comment on ${t.name}`, 'safe', { detail: t.comment ?? '(remove)' }));
+    }
+  }
+
+  // Procedures and functions. A body is stored as it was written on both
+  // engines, so a difference in it is a real one; the signature decides whether
+  // the routine can be replaced in place.
+  if (dialectHasProcedures(dialect) && target.routines && current.routines) {
+    const noun = (r: SnapRoutine) => (r.kind === 'function' ? 'function' : 'procedure');
+    const curRoutines = new Map(current.routines.map((r) => [r.key, r] as const));
+    const tgtRoutines = new Map(target.routines.map((r) => [r.key, r] as const));
+    for (const r of target.routines) {
+      const cur = curRoutines.get(r.key);
+      if (!cur) {
+        out.push(change({ kind: 'create-routine', routine: r }, `routine:${r.key}`, `Create ${noun(r)} ${r.name}`, 'safe'));
+        continue;
+      }
+      const sigChanged = routineSignature(r, dialect) !== routineSignature(cur, dialect);
+      const bodyChanged = normalizeBody(r.body) !== normalizeBody(cur.body);
+      if (!sigChanged && !bodyChanged) continue;
+      const recreate = sigChanged && dialect === 'postgresql';
+      const what = [sigChanged ? (r.kind !== cur.kind ? `${noun(cur)} → ${noun(r)}` : 'parameters or return type') : '', bodyChanged ? 'body' : ''].filter(Boolean).join(' and ');
+      out.push(
+        change({ kind: 'replace-routine', routine: r, current: cur, recreate }, `routine:${r.key}`, `Replace ${noun(r)} ${r.name}`, recreate ? 'risky' : 'safe', {
+          detail: recreate ? `${what} changed; PostgreSQL cannot change a signature in place, so it is dropped and created again.` : `${what} changed.`,
+        }),
+      );
+    }
+    for (const cur of current.routines) {
+      if (tgtRoutines.has(cur.key)) continue;
+      out.push(change({ kind: 'drop-routine', routine: cur }, `routine:${cur.key}`, `Drop ${noun(cur)} ${cur.name}`, 'destructive', { detail: 'Its body exists only in the database; read the schema first to keep a copy.' }));
     }
   }
   return out;

@@ -17,7 +17,7 @@
  * itself. That is the whole point: a preference, not a mode you can get stuck
  * in.
  */
-import type { Diagram } from '@shared/types';
+import { isProcedure, type Diagram } from '@shared/types';
 
 /**
  * Deliberately an emphasis rather than a mode: it changes what the app leads
@@ -58,8 +58,11 @@ export function diagramEmphasis(d: Diagram): Emphasis {
   // 'both' is a decision, not a default, so it outranks the content: someone who
   // asked to mix freely and then drew only code still wanted both sets of tools.
   if (d.emphasis === 'both') return 'both';
-  const tables = d.tables.length > 0 || d.customTypes.length > 0 || d.extensions.length > 0;
-  const code = d.programs.length > 0;
+  // A stored procedure is part of the schema, not of the code map: it is
+  // created by the script, so it needs the database tooling on screen.
+  const procedures = d.programs.filter(isProcedure).length;
+  const tables = d.tables.length > 0 || d.customTypes.length > 0 || d.extensions.length > 0 || procedures > 0;
+  const code = d.programs.length > procedures;
   if (tables && code) return 'both';
   if (tables) return d.emphasis === 'code' ? 'both' : 'data';
   if (code) return d.emphasis === 'data' ? 'both' : 'code';
@@ -96,7 +99,9 @@ export function describeContents(d: Diagram): string {
   const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
   const parts: string[] = [];
   if (d.tables.length) parts.push(plural(d.tables.length, 'table'));
-  if (d.programs.length) parts.push(plural(d.programs.length, 'code node'));
+  const procedures = d.programs.filter(isProcedure).length;
+  if (procedures) parts.push(plural(procedures, 'procedure'));
+  if (d.programs.length > procedures) parts.push(plural(d.programs.length - procedures, 'code node'));
   if (d.notes.length) parts.push(plural(d.notes.length, 'note'));
   if (d.customTypes.length) parts.push(plural(d.customTypes.length, 'custom type'));
   // Groups are only worth mentioning when they are all there is; otherwise they

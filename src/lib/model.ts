@@ -428,6 +428,7 @@ export function clonePrograms(
       ...p,
       id: idMap.get(p.id)!,
       position: { x: p.position.x + offset.x, y: p.position.y + offset.y },
+      ...(p.params ? { params: p.params.map((x) => ({ ...x, id: newId('param') })) } : {}),
       steps: p.steps.map((s) => {
         const codeId = s.codeId ? (idMap.get(s.codeId) ?? (knownCode.has(s.codeId) ? s.codeId : undefined)) : undefined;
         const tableId = s.tableId ? (tableIdMap.get(s.tableId) ?? (knownTables.has(s.tableId) ? s.tableId : undefined)) : undefined;

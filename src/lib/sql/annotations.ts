@@ -31,6 +31,8 @@ import {
   isProgramLanguage,
   isProgramRole,
   isProgramStepOp,
+  isProcedureParamMode,
+  isRoutineLanguage,
   isRelationshipKind,
   isWindowFunction,
   normalizeVerb,
@@ -39,6 +41,10 @@ import {
   type AggregateFunction,
   type CodeKind,
   type Diagram,
+  type Dialect,
+  type Program,
+  type ProcedureParamMode,
+  type RoutineLanguage,
   type ProgramLanguage,
   type ProgramRole,
   type ProgramStepOp,
@@ -50,6 +56,7 @@ import {
 } from '@shared/types';
 import { externalTableIds } from '../groups';
 import { codePath } from '../codemap';
+import { dialectHasProcedures } from '../procedures';
 
 /** Opening marker; the version lets a later format change be recognised rather than misread. */
 const BEGIN = '-- dbviz:connections v1';
@@ -117,6 +124,21 @@ export interface AnnotatedProgram {
   entrypoint?: string;
   comment?: string;
   steps: AnnotatedProgramStep[];
+  /**
+   * A procedure's definition. The CREATE statement above the block already
+   * carries it on an engine that has procedures, and the importer takes it from
+   * there; the body is written here only when the engine has none, because the
+   * block is then the only place it is.
+   */
+  routine?: AnnotatedRoutine;
+}
+
+export interface AnnotatedRoutine {
+  schema?: string;
+  params?: { name: string; type: string; mode?: ProcedureParamMode; defaultValue?: string }[];
+  returns?: string;
+  language?: RoutineLanguage;
+  body?: string;
 }
 
 export interface SqlAnnotations {
@@ -250,6 +272,7 @@ export function collectAnnotations(d: Diagram, emittedAsDdl: ReadonlySet<string>
     ...(prg.role ? { role: prg.role } : {}),
     ...(trimmed(prg.entrypoint) ? { entrypoint: trimmed(prg.entrypoint) } : {}),
     ...(trimmed(prg.comment) ? { comment: trimmed(prg.comment) } : {}),
+    ...(prg.kind === 'procedure' ? { routine: annotatedRoutine(prg, d.dialect) } : {}),
     steps: prg.steps.map((s) => {
       const meta = programStepOpMeta(s.op);
       const table = meta.touchesDatabase ? tableName.get(s.tableId ?? '') : undefined;
@@ -268,6 +291,19 @@ export function collectAnnotations(d: Diagram, emittedAsDdl: ReadonlySet<string>
   }));
 
   return { connections, ...(programs.length ? { programs } : {}) };
+}
+
+function annotatedRoutine(p: Program, dialect: Dialect): AnnotatedRoutine {
+  const params = (p.params ?? [])
+    .filter((x) => x.name.trim())
+    .map((x) => ({ name: x.name.trim(), type: x.type.trim(), ...(x.mode && x.mode !== 'in' ? { mode: x.mode } : {}), ...(trimmed(x.defaultValue) ? { defaultValue: trimmed(x.defaultValue) } : {}) }));
+  return {
+    ...(trimmed(p.schema) ? { schema: trimmed(p.schema) } : {}),
+    ...(params.length ? { params } : {}),
+    ...(trimmed(p.returns) ? { returns: trimmed(p.returns) } : {}),
+    ...(p.routineLanguage && p.routineLanguage !== 'plpgsql' ? { language: p.routineLanguage } : {}),
+    ...(!dialectHasProcedures(dialect) && trimmed(p.body) ? { body: trimmed(p.body) } : {}),
+  };
 }
 
 /**
@@ -391,6 +427,26 @@ function program(v: unknown): AnnotatedProgram | null {
     ...(str(o.entrypoint) ? { entrypoint: str(o.entrypoint) } : {}),
     ...(str(o.comment) ? { comment: str(o.comment) } : {}),
     steps: settled.kind === 'data' ? [] : (Array.isArray(o.steps) ? o.steps : []).map(programStep).filter((s): s is AnnotatedProgramStep => s !== null),
+    ...(settled.kind === 'procedure' && o.routine && typeof o.routine === 'object' ? { routine: routine(o.routine as Record<string, unknown>) } : {}),
+  };
+}
+
+function routine(o: Record<string, unknown>): AnnotatedRoutine {
+  const params = (Array.isArray(o.params) ? o.params : [])
+    .filter((x): x is Record<string, unknown> => Boolean(x) && typeof x === 'object')
+    .filter((x) => str(x.name))
+    .map((x) => ({
+      name: str(x.name)!.trim(),
+      type: str(x.type) ?? '',
+      ...(isProcedureParamMode(x.mode) && x.mode !== 'in' ? { mode: x.mode } : {}),
+      ...(str(x.defaultValue) ? { defaultValue: str(x.defaultValue) } : {}),
+    }));
+  return {
+    ...(str(o.schema) ? { schema: str(o.schema) } : {}),
+    ...(params.length ? { params } : {}),
+    ...(str(o.returns) ? { returns: str(o.returns) } : {}),
+    ...(isRoutineLanguage(o.language) ? { language: o.language } : {}),
+    ...(str(o.body) ? { body: str(o.body) } : {}),
   };
 }
 

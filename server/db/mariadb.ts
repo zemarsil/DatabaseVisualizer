@@ -4,6 +4,7 @@ import type {
   DatabaseExtension,
   ExtensionsResponse,
   IntrospectResponse,
+  IntrospectedRoutine,
   IntrospectedTable,
   QueryResult,
   ReferentialAction,
@@ -240,7 +241,39 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
       if (unique) t.uniques.push({ name: rows[0].name, columns: cols });
       else if (!fkNames.has(key)) t.indexes.push({ name: rows[0].name, columns: cols, unique: false });
     }
-    return { serverVersion: version, tables: [...byName.values()] };
+    // Stored procedures and functions. ROUTINE_DEFINITION is the body as it was
+    // written; it reads NULL for a user without the privilege to see it, and a
+    // routine whose body cannot be read is still worth listing by its signature.
+    const routineRows = (await c.query(
+      `SELECT ROUTINE_NAME AS name, ROUTINE_TYPE AS type, DTD_IDENTIFIER AS returns, ROUTINE_DEFINITION AS body, ROUTINE_COMMENT AS comment
+       FROM information_schema.ROUTINES WHERE ROUTINE_SCHEMA = ? AND ROUTINE_TYPE IN ('PROCEDURE', 'FUNCTION') ORDER BY ROUTINE_NAME`,
+      [db],
+    )) as { name: string; type: string; returns: string | null; body: string | null; comment: string | null }[];
+    const paramRows = (await c.query(
+      `SELECT SPECIFIC_NAME AS routine, ROUTINE_TYPE AS type, PARAMETER_MODE AS mode, PARAMETER_NAME AS name, DTD_IDENTIFIER AS dtype
+       FROM information_schema.PARAMETERS WHERE SPECIFIC_SCHEMA = ? AND ORDINAL_POSITION > 0 ORDER BY SPECIFIC_NAME, ORDINAL_POSITION`,
+      [db],
+    )) as { routine: string; type: string; mode: string | null; name: string | null; dtype: string }[];
+    const routines: IntrospectedRoutine[] = routineRows.map((r) => {
+      const kind = r.type === 'FUNCTION' ? 'function' : 'procedure';
+      const params = paramRows
+        .filter((x) => x.routine === r.name && x.type === r.type)
+        .map((x) => {
+          const mode = (x.mode ?? '').toUpperCase();
+          return { name: x.name ?? '', type: x.dtype, ...(mode === 'OUT' ? { mode: 'out' as const } : mode === 'INOUT' ? { mode: 'inout' as const } : {}) };
+        });
+      return {
+        schema: db,
+        name: r.name,
+        kind,
+        params,
+        ...(kind === 'function' && r.returns ? { returns: r.returns } : {}),
+        body: r.body ?? '',
+        comment: r.comment || null,
+      };
+    });
+
+    return { serverVersion: version, tables: [...byName.values()], routines };
   } finally {
     await c.end();
   }

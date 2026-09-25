@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
-import { Box, Boxes, Braces, Cpu, Database, Eye, FileCode, PanelLeftClose, Plus, Search, SquareFunction, StickyNote, type LucideIcon } from 'lucide-react';
-import { codeKindMeta, codeKindOf, type CodeKind, type Program, type Table } from '@shared/types';
+import { Box, Boxes, Braces, Cpu, Database, DatabaseZap, Eye, FileCode, PanelLeftClose, Plus, Search, SquareFunction, StickyNote, type LucideIcon } from 'lucide-react';
+import { codeKindMeta, codeKindOf, isProcedure, type CodeKind, type Program, type Table } from '@shared/types';
 import { selectEmphasis, useStore } from '@/store/useStore';
 import { codeChildren } from '@/lib/codemap';
 import { paletteHue } from '@/lib/palette';
 import { openContextMenu } from '@/components/ui/ContextMenu';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
-const KIND_ICON: Record<CodeKind, LucideIcon> = { program: Cpu, module: FileCode, class: Box, function: SquareFunction, data: Braces };
+const KIND_ICON: Record<CodeKind, LucideIcon> = { program: Cpu, module: FileCode, class: Box, function: SquareFunction, data: Braces, procedure: DatabaseZap };
 
 export function Sidebar() {
   const tables = useStore((s) => s.diagram.tables);
@@ -65,6 +65,9 @@ export function Sidebar() {
     walk(null, 0);
     return rows;
   }, [diagram, query]);
+  // Procedures are listed with the schema they belong to rather than in the code tree.
+  const procedureRows = useMemo(() => codeTree.filter(({ p }) => isProcedure(p)), [codeTree]);
+  const codeRows = useMemo(() => codeTree.filter(({ p }) => !isProcedure(p)), [codeTree]);
 
   const renderTable = (t: Table) => {
     const active = selection.tableIds.includes(t.id);
@@ -132,36 +135,49 @@ export function Sidebar() {
       </>
     );
 
+  const renderCodeRows = (rows: { p: Program; depth: number }[]) =>
+    rows.map(({ p, depth }) => {
+      const Icon = KIND_ICON[codeKindOf(p)];
+      const traced = p.id === trace.fromId || p.id === trace.toId;
+      return (
+        <button
+          key={p.id}
+          className={`sidebar__item${selection.programIds.includes(p.id) ? ' sidebar__item--active' : ''}${traced ? ' sidebar__item--trace' : ''}`}
+          style={{ paddingLeft: 10 + depth * 14 }}
+          onClick={() => {
+            setSelection({ programIds: [p.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+            focusTable(p.id);
+          }}
+          onContextMenu={(e) => {
+            if (!selection.programIds.includes(p.id)) setSelection({ programIds: [p.id], tableIds: [], noteIds: [], relationshipId: null });
+            openContextMenu(e, { type: 'program', programId: p.id });
+          }}
+          title={p.comment || p.entrypoint || p.name}
+        >
+          <Icon size={13} style={{ color: paletteHue(p.color), flex: 'none' }} />
+          <span className={`sidebar__name${p.collapsed ? ' muted' : ''}`}>{p.name}</span>
+          <span className="sidebar__count">{p.steps.length}</span>
+        </button>
+      );
+    });
+
   const codeSection =
-    codeTree.length === 0 ? null : (
+    codeRows.length === 0 ? null : (
       <>
         <div className="sidebar__section">
-          Code <span className="sidebar__count">({programs.length})</span>
+          Code <span className="sidebar__count">({programs.filter((p) => !isProcedure(p)).length})</span>
         </div>
-        {codeTree.map(({ p, depth }) => {
-          const Icon = KIND_ICON[codeKindOf(p)];
-          const traced = p.id === trace.fromId || p.id === trace.toId;
-          return (
-            <button
-              key={p.id}
-              className={`sidebar__item${selection.programIds.includes(p.id) ? ' sidebar__item--active' : ''}${traced ? ' sidebar__item--trace' : ''}`}
-              style={{ paddingLeft: 10 + depth * 14 }}
-              onClick={() => {
-                setSelection({ programIds: [p.id], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
-                focusTable(p.id);
-              }}
-              onContextMenu={(e) => {
-                if (!selection.programIds.includes(p.id)) setSelection({ programIds: [p.id], tableIds: [], noteIds: [], relationshipId: null });
-                openContextMenu(e, { type: 'program', programId: p.id });
-              }}
-              title={p.comment || p.entrypoint || p.name}
-            >
-              <Icon size={13} style={{ color: paletteHue(p.color), flex: 'none' }} />
-              <span className={`sidebar__name${p.collapsed ? ' muted' : ''}`}>{p.name}</span>
-              <span className="sidebar__count">{p.steps.length}</span>
-            </button>
-          );
-        })}
+        {renderCodeRows(codeRows)}
+      </>
+    );
+
+  const procedureSection =
+    procedureRows.length === 0 ? null : (
+      <>
+        <div className="sidebar__section">
+          Procedures <span className="sidebar__count">({programs.filter(isProcedure).length})</span>
+        </div>
+        {renderCodeRows(procedureRows)}
       </>
     );
 
@@ -204,7 +220,7 @@ export function Sidebar() {
         <input className="input input--sm grow" placeholder={emphasis === 'code' ? 'Filter code' : 'Filter tables, columns or code'} value={query} onChange={(e) => setQuery(e.target.value)} />
       </div>
       <div className="sidebar__list">
-        {tableSection === null && codeSection === null && <div className="sidebar__empty">{emptyHint}</div>}
+        {tableSection === null && codeSection === null && procedureSection === null && <div className="sidebar__empty">{emptyHint}</div>}
 
         {/* A code map reads code first. Everything else keeps the order it has
             always had, because on a schema the tables are what you scan for. */}
@@ -212,10 +228,12 @@ export function Sidebar() {
           <>
             {codeSection}
             {tableSection}
+            {procedureSection}
           </>
         ) : (
           <>
             {tableSection}
+            {procedureSection}
             {codeSection}
           </>
         )}
