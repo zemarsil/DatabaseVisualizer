@@ -79,7 +79,8 @@ export async function readSchemaInto(connectionId: string, opts: ReadSchemaOptio
         relationships: diagram.relationships.filter((r) => !replaced.has(r.sourceTableId) && !replaced.has(r.targetTableId)),
       };
   const converted = introspectionToDiagram(res, conn.config.dialect, mode === 'merge' ? against : null);
-  if (converted.tables.length === 0) return { tables: 0, groupId: null, refreshed: false, serverVersion: res.serverVersion, warnings: converted.warnings };
+  // A database may hold nothing but routines; for the main one those are still worth reading.
+  if (converted.tables.length === 0 && (external || !converted.programs.some(isProcedure))) return { tables: 0, groupId: null, refreshed: false, serverVersion: res.serverVersion, warnings: converted.warnings };
 
   // A connection that already filled a group keeps filling it, even when this
   // read asked for no group: its tables live there, and a second copy of them

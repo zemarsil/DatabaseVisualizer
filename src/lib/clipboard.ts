@@ -63,5 +63,7 @@ export function classifyPastedText(text: string): PastedKind {
     }
   }
   if (/\bcreate\s+(or\s+replace\s+)?(temp(orary)?\s+)?(unlogged\s+)?(materialized\s+)?(table|view|type|index|unique)\b/i.test(trimmed)) return 'sql';
+  // A stored procedure or function on its own is a script too: it imports as a procedure node.
+  if (/\bcreate\s+(or\s+replace\s+)?(definer\s*=\s*\S+\s+)?(procedure|function)\b/i.test(trimmed)) return 'sql';
   return 'unknown';
 }

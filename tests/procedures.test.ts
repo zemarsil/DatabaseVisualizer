@@ -17,6 +17,8 @@ import {
   bodyFromSteps,
   createProcedureParam,
   dropProcedureStatement,
+  looksLikeCreateRoutine,
+  readCreateRoutine,
   procedureDdl,
   procedureSignature,
   proceduresFromRoutines,
@@ -35,6 +37,8 @@ import { generateProgramCode } from '../src/lib/code/generate';
 import { generateMarkdown } from '../src/lib/markdownExport';
 import { programLinks } from '../src/lib/programs';
 import { INTROSPECT_QUERIES, routineFromRow } from '../server/db/postgres';
+import { classifyPastedText } from '../src/lib/clipboard';
+import { useStore } from '../src/store/useStore';
 
 /** Orders, an archive, and a procedure that moves one into the other. */
 function shop(dialect: Diagram['dialect'] = 'postgresql'): { d: Diagram; archive: Program; total: Program } {
@@ -374,6 +378,101 @@ CREATE TABLE after_it (id INT PRIMARY KEY);`;
       { name: 'Weird Name', type: 'text' },
       { name: 'xs', type: 'int[]' },
     ]);
+  });
+});
+
+describe('a whole CREATE statement pasted into a procedure', () => {
+  // The user's procedure, as they pasted it: tabs, blank lines, END $$ and all.
+  const pasted = `CREATE OR REPLACE PROCEDURE myproc(
+	otherstuff		int DEFAULT 1,
+    nslices        int DEFAULT 16,
+    max_rows       bigint DEFAULT 0,
+    slack          float8 DEFAULT 0.0001)
+LANGUAGE plpgsql AS $$
+DECLARE
+    n_slice bigint;
+    total bigint := 0;
+
+
+BEGIN
+  FOR n_slice IN 1..nslices LOOP
+    UPDATE orders SET placed_at = now() WHERE id = n_slice;
+    INSERT INTO orders_archive SELECT id, placed_at FROM orders WHERE id = n_slice;
+  END LOOP;
+END $$;`;
+
+  it('is told apart from a body', () => {
+    expect(looksLikeCreateRoutine(pasted)).toBe(true);
+    expect(looksLikeCreateRoutine('  create function f() returns int as $$ select 1 $$')).toBe(true);
+    expect(looksLikeCreateRoutine('DELIMITER //\nCREATE DEFINER=`root`@`%` PROCEDURE p() BEGIN END //')).toBe(true);
+    expect(looksLikeCreateRoutine('BEGIN\n  UPDATE orders SET id = id;\nEND;')).toBe(false);
+    expect(looksLikeCreateRoutine('-- CREATE PROCEDURE p()')).toBe(false);
+  });
+
+  it('reads the name, every parameter with its default, the language and the body alone', () => {
+    const { d } = shop();
+    const def = readCreateRoutine(pasted, d)!;
+    expect(def.warnings).toEqual([]);
+    expect(def.patch).toMatchObject({ name: 'myproc', returns: undefined, routineLanguage: undefined });
+    expect(def.patch.params!.map((x) => [x.name, x.type, x.defaultValue])).toEqual([
+      ['otherstuff', 'int', '1'],
+      ['nslices', 'int', '16'],
+      ['max_rows', 'bigint', '0'],
+      ['slack', 'float8', '0.0001'],
+    ]);
+    expect(def.patch.body!.startsWith('DECLARE\n    n_slice bigint;')).toBe(true);
+    expect(def.patch.body!.endsWith('END')).toBe(true);
+    expect(def.patch.body).not.toContain('$$');
+    expect(def.steps.map((s) => s.op)).toEqual(['write', 'read', 'write']);
+    expect('comment' in def.patch).toBe(false);
+  });
+
+  it('writes back the procedure it read', () => {
+    const { d } = shop();
+    const def = readCreateRoutine(pasted, d)!;
+    const p = createProgram({ kind: 'procedure', language: 'other', ...def.patch, steps: def.steps });
+    const created = procedureDdl(d, p).statements[0];
+    expect(created).toContain('CREATE OR REPLACE PROCEDURE myproc(otherstuff int DEFAULT 1, nslices int DEFAULT 16, max_rows bigint DEFAULT 0, slack float8 DEFAULT 0.0001)');
+    // And reading that again gives the same definition: nothing drifts on a round trip.
+    expect(readCreateRoutine(created, d)!.patch).toEqual({ ...def.patch, params: expect.any(Array) });
+  });
+
+  it('reads a MariaDB paste, DELIMITER lines and a function return type included', () => {
+    const d = emptyDiagram('mariadb');
+    const def = readCreateRoutine(
+      "DELIMITER //\nCREATE DEFINER=`root`@`%` FUNCTION order_count(p_status VARCHAR(20)) RETURNS INT\nCOMMENT 'How many'\nREADS SQL DATA\nBEGIN\n  RETURN (SELECT COUNT(*) FROM orders WHERE status = p_status);\nEND //\nDELIMITER ;",
+      d,
+    )!;
+    expect(def.patch).toMatchObject({ name: 'order_count', returns: 'INT', comment: 'How many' });
+    expect(def.patch.params).toMatchObject([{ name: 'p_status', type: 'VARCHAR(20)' }]);
+    expect(def.patch.body).toBe('BEGIN\n  RETURN (SELECT COUNT(*) FROM orders WHERE status = p_status);\nEND');
+  });
+
+  it('is nothing when the text holds no routine the parser can read', () => {
+    expect(readCreateRoutine('CREATE PROCEDURE broken(', emptyDiagram())).toBeNull();
+  });
+
+  it('redefines the procedure in one undo step, drawing steps only when it had none', () => {
+    const { d } = shop();
+    const blank = createProgram({ name: 'new_procedure', kind: 'procedure', language: 'other', returns: 'int', comment: 'kept' });
+    d.programs.push(blank);
+    useStore.setState({ diagram: d, past: [], future: [] });
+    const def = readCreateRoutine(pasted, d)!;
+    useStore.getState().redefineProcedure(blank.id, def.patch, def.steps);
+    const after = useStore.getState().diagram.programs.find((p) => p.id === blank.id)!;
+    expect(after).toMatchObject({ name: 'myproc', kind: 'procedure', comment: 'kept' });
+    expect(after.returns).toBeUndefined();
+    expect(after.params).toHaveLength(4);
+    expect(after.steps).toHaveLength(3);
+    useStore.getState().undo();
+    expect(useStore.getState().diagram.programs.find((p) => p.id === blank.id)).toMatchObject({ name: 'new_procedure', returns: 'int', steps: [] });
+  });
+
+  it('imports from Import SQL or a canvas paste with no table beside it', () => {
+    expect(classifyPastedText(pasted)).toBe('sql');
+    const res = importSql(pasted, 'postgresql');
+    expect(res.tables).toEqual([]);
+    expect(res.programs.map((p) => [p.name, p.kind])).toEqual([['myproc', 'procedure']]);
   });
 });
 

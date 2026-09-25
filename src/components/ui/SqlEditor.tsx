@@ -63,6 +63,12 @@ export interface SqlEditorProps {
   expandable?: boolean;
   /** Title of that dialog. */
   title?: string;
+  /**
+   * Sees pasted text before it lands. Returning true means the paste was
+   * handled some other way (a whole CREATE PROCEDURE read into the form around
+   * the editor) and the text is not inserted.
+   */
+  onPaste?: (text: string) => boolean;
   /** Extra controls at the right of the status row. */
   actions?: ReactNode;
   className?: string;
@@ -521,6 +527,9 @@ export function SqlEditor(props: SqlEditorProps) {
             onChange(e.target.value);
           }}
           onKeyDown={onKeyDown}
+          onPaste={(e) => {
+            if (props.onPaste?.(e.clipboardData.getData('text/plain'))) e.preventDefault();
+          }}
           onSelect={onSelect}
           onClick={onSelect}
           onKeyUp={onSelect}

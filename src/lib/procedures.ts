@@ -41,7 +41,7 @@ import { describeStep } from './programs';
 import { referencedTables, splitStatements } from './sql/analyze';
 import { scanSql } from './sql/highlight';
 import { quoteIdent, quoteQualified, quoteString, translateType } from './sql/dialect';
-import type { ParsedRoutine } from './sql/parser';
+import { parseSql, type ParsedRoutine } from './sql/parser';
 
 /** Engines with stored procedures. SQLite has none; DuckDB has macros, which are expressions rather than routines. */
 export function dialectHasProcedures(dialect: Dialect): boolean {
@@ -451,6 +451,59 @@ export function proceduresFromRoutines(routines: RoutineSource[], resolveTable: 
   const resolveRoutine = (name: string) => all.find((p) => p.name.toLowerCase() === name.toLowerCase());
   for (const node of nodes) node.steps = stepsFromBody(node.body ?? '', resolveTable, resolveRoutine);
   return nodes;
+}
+
+/* ------------------------------------------------------------------ */
+/* A whole CREATE statement, pasted into an existing procedure         */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Whether text is a CREATE PROCEDURE / FUNCTION statement rather than a body:
+ * what a person pastes when they copy a routine out of a migration file, pg_dump
+ * or a SQL client. A leading DELIMITER line (the mariadb client's) is allowed.
+ */
+export function looksLikeCreateRoutine(text: string): boolean {
+  return /^\s*(?:DELIMITER[ \t]+\S+[ \t]*\r?\n\s*)?CREATE\s+(?:OR\s+REPLACE\s+)?(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\b/i.test(text);
+}
+
+export interface RoutineDefinition {
+  /** Every field the statement decides, absent ones set to undefined so they clear what was there. */
+  patch: Pick<Program, 'name' | 'schema' | 'params' | 'returns' | 'routineLanguage' | 'body' | 'comment'>;
+  /** The steps its body implies, read against the diagram's tables and procedures. */
+  steps: ProgramStep[];
+  warnings: string[];
+}
+
+/**
+ * Read a pasted CREATE [OR REPLACE] PROCEDURE / FUNCTION into the fields of a
+ * procedure: its name, schema, parameters, return type, body language, body
+ * (only what is inside the dollar quotes, or the BEGIN … END), and a COMMENT
+ * if the paste carries one. Null when the text holds no routine the parser can
+ * read, so the caller can let the paste land as plain text instead.
+ */
+export function readCreateRoutine(text: string, d: Diagram): RoutineDefinition | null {
+  const res = parseSql(text, d.dialect);
+  const routines = res.routines ?? [];
+  if (!routines.length) return null;
+  const warnings = res.errors.map((e) => `line ${e.line}: ${e.message}`);
+  if (routines.length > 1) warnings.push(`The paste defines ${routines.length} routines; only ${routines[0].name} was read. Import SQL brings in several at once.`);
+  const byName = (name: string) => d.tables.find((t) => t.name.toLowerCase() === name.toLowerCase());
+  const [def] = proceduresFromRoutines([routines[0]], byName, d.programs);
+  return {
+    patch: {
+      name: def.name,
+      schema: def.schema,
+      params: def.params?.length ? def.params : undefined,
+      returns: def.returns,
+      routineLanguage: def.routineLanguage,
+      body: def.body?.trim() ? def.body : undefined,
+      // A statement with no COMMENT says nothing about what the routine is
+      // for, so what the diagram already says is kept.
+      ...(def.comment ? { comment: def.comment } : {}),
+    },
+    steps: def.steps,
+    warnings,
+  };
 }
 
 /* ------------------------------------------------------------------ */

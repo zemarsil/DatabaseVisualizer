@@ -30,7 +30,15 @@ import { introspectionToDiagram } from './introspectImport';
 import { estimateNodeSize } from './geometry';
 import { selectionFlavors, type ClipboardFlavors } from './selectionExport';
 import { confirmDialog } from '@/components/ui/Modal';
-import type { Table } from '@shared/types';
+import { isProcedure, type Program, type Table } from '@shared/types';
+
+/** "3 tables and 1 procedure": what an import brought, for its toast. */
+function importedWhat(res: { tables: unknown[]; programs: Program[] }): string {
+  const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+  const procedures = res.programs.filter(isProcedure).length;
+  const parts = [res.tables.length || !procedures ? plural(res.tables.length, 'table') : '', procedures ? plural(procedures, 'procedure') : ''].filter(Boolean);
+  return parts.join(' and ');
+}
 
 /** The diagram-fragment flavor as a `copy` event spells it. */
 export const DBVIZ_FLAVOR = 'application/x-dbviz';
@@ -268,18 +276,21 @@ export function pasteText(text: string, at?: { x: number; y: number }): 'clipboa
     s.toast('success', `Pasted ${n} node${n === 1 ? '' : 's'}.`);
   } else if (kind === 'sql') {
     const res = importSql(text, s.diagram.dialect, s.diagram);
-    if (res.tables.length === 0) {
-      s.toast('error', res.errors[0] ?? 'No CREATE TABLE statements found in the pasted text.');
+    if (res.tables.length === 0 && res.programs.length === 0) {
+      s.toast('error', res.errors[0] ?? 'No CREATE TABLE or CREATE PROCEDURE statements found in the pasted text.');
       return kind;
     }
     if (at) {
       gridAt(res.tables, at);
+      // Procedures in a row under the pasted tables, or at the spot itself when there are none.
+      const below = res.tables.length ? Math.max(...res.tables.map((t) => t.position.y + estimateNodeSize(t.columns).height)) + 60 : at.y;
+      res.programs.forEach((p, i) => void (p.position = { x: Math.round(at.x + i * 300), y: Math.round(below) }));
       s.pasteTables(res.tables, res.relationships, res.customTypes, { x: 0, y: 0 }, res.extensions, res.programs);
     } else {
       s.importTables(res.tables, res.relationships, 'merge', { customTypes: res.customTypes, extensions: res.extensions, programs: res.programs });
     }
     const problems = res.errors.length ? ` (${res.errors.length} statement${res.errors.length === 1 ? '' : 's'} had errors)` : '';
-    s.toast('success', `Imported ${res.tables.length} table${res.tables.length === 1 ? '' : 's'} from the pasted SQL${problems}.`);
+    s.toast('success', `Imported ${importedWhat(res)} from the pasted SQL${problems}.`);
   } else if (kind === 'diagram') {
     try {
       const d = parseDiagramFile(text);
@@ -435,12 +446,13 @@ export async function openDroppedFiles(files: File[], at?: { x: number; y: numbe
       }
       if (name.endsWith('.sql') || name.endsWith('.txt') || classifyPastedText(text) === 'sql') {
         const res = importSql(text, s.diagram.dialect, s.diagram.tables.length ? s.diagram : null);
-        if (!res.tables.length) {
-          s.toast('error', `${file.name}: no CREATE TABLE statements found.`);
+        if (!res.tables.length && !res.programs.length) {
+          s.toast('error', `${file.name}: no CREATE TABLE or CREATE PROCEDURE statements found.`);
           continue;
         }
-        s.importTables(res.tables, res.relationships, s.diagram.tables.length ? 'merge' : 'replace', { customTypes: res.customTypes, extensions: res.extensions, programs: res.programs });
-        s.toast('success', `Imported ${res.tables.length} table${res.tables.length === 1 ? '' : 's'} from ${file.name}.`);
+        const replace = s.diagram.tables.length === 0 && s.diagram.programs.length === 0;
+        s.importTables(res.tables, res.relationships, replace ? 'replace' : 'merge', { customTypes: res.customTypes, extensions: res.extensions, programs: res.programs });
+        s.toast('success', `Imported ${importedWhat(res)} from ${file.name}.`);
         continue;
       }
       s.toast('error', `${file.name}: drop a .sql, .dbviz.json, .sqlite or .duckdb file.`);

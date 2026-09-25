@@ -354,6 +354,11 @@ interface Actions {
   moveProgramStep: (programId: string, stepId: string, delta: number) => void;
   /** Replace every step at once, in one history step: a procedure's steps read back out of its body. */
   setProgramSteps: (programId: string, steps: ProgramStep[]) => void;
+  /**
+   * A procedure redefined from a pasted CREATE statement: its fields and, when
+   * given, its steps, in one history step so one Ctrl+Z puts the old one back.
+   */
+  redefineProcedure: (programId: string, patch: Partial<Omit<Program, 'id' | 'steps'>>, steps?: ProgramStep[]) => void;
 
   // canvas
   /** Deletes tables, notes, programs and relationships together, as a single undo step. */
@@ -1488,6 +1493,17 @@ export const useStore = create<Store>()(
         set((s) => invalidateTrace(s));
         return step.id;
       },
+      redefineProcedure: (programId, patch, steps) =>
+        mutate((d) => {
+          const p = d.programs.find((x) => x.id === programId);
+          if (!p || p.kind !== 'procedure') return;
+          for (const [key, value] of Object.entries(patch) as [keyof Program, unknown][]) {
+            if (key === 'kind' || key === 'parentId') continue;
+            if (value === undefined) delete p[key];
+            else (p as unknown as Record<string, unknown>)[key] = value;
+          }
+          if (steps) p.steps = steps.map((st) => createProgramStep(st));
+        }),
       setProgramSteps: (programId, steps) =>
         mutate((d) => {
           const p = d.programs.find((x) => x.id === programId);

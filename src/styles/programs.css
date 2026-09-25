@@ -359,11 +359,13 @@
 }
 .procedure-param__mode {
   flex: none;
-  width: 72px;
+  width: 60px;
+  padding-left: 4px;
+  padding-right: 2px;
 }
 .procedure-param__default {
   flex: none;
-  width: 80px;
+  width: 58px;
 }
 .procedure-param .input {
   min-width: 0;

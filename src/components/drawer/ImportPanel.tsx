@@ -55,8 +55,8 @@ export function ImportPanel() {
   const run = () => {
     const res = importSql(sql, diagram.dialect, mode === 'merge' ? diagram : null);
     setPreview(res);
-    if (res.tables.length === 0) {
-      toast('error', res.errors.length ? 'Nothing imported: fix the errors below.' : 'No CREATE TABLE statements found.');
+    if (res.tables.length === 0 && res.programs.length === 0) {
+      toast('error', res.errors.length ? 'Nothing imported: fix the errors below.' : 'No CREATE TABLE or CREATE PROCEDURE statements found.');
       return;
     }
     importTables(res.tables, res.relationships, mode, {
@@ -122,14 +122,19 @@ export function ImportPanel() {
           )}
         </div>
         <div className="row" style={{ marginBottom: 10 }}>
-          <button className="btn btn--primary" onClick={run} disabled={!sql.trim() || (preview !== null && preview.tables.length === 0)} title="Ctrl+Enter in the editor">
+          <button className="btn btn--primary" onClick={run} disabled={!sql.trim() || (preview !== null && preview.tables.length === 0 && preview.programs.length === 0)} title="Ctrl+Enter in the editor">
             <Play /> Import
           </button>
           {preview && (
             <span className="small muted">
-              {preview.tables.length === 0
+              {preview.tables.length === 0 && preview.programs.length === 0
                 ? 'Nothing to import yet'
-                : `Ready: ${preview.tables.length} table${preview.tables.length === 1 ? '' : 's'}${procedures.length ? `, ${procedures.length} procedure${procedures.length === 1 ? '' : 's'}` : ''}`}
+                : `Ready: ${[
+                    preview.tables.length || !procedures.length ? `${preview.tables.length} table${preview.tables.length === 1 ? '' : 's'}` : '',
+                    procedures.length ? `${procedures.length} procedure${procedures.length === 1 ? '' : 's'}` : '',
+                  ]
+                    .filter(Boolean)
+                    .join(', ')}`}
             </span>
           )}
         </div>
@@ -147,7 +152,7 @@ export function ImportPanel() {
               {preview.errors.length > 0 && <span className="badge badge--danger">{preview.errors.length} errors</span>}
               {preview.warnings.length > 0 && <span className="badge">{preview.warnings.length} warnings</span>}
             </div>
-            {preview.tables.length > 0 && (
+            {(preview.tables.length > 0 || procedures.length > 0) && (
               <div className="chip-list" style={{ marginBottom: 6 }}>
                 {preview.tables.map((t) => (
                   <span key={t.id} className="chip">
