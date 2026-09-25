@@ -1,3 +1,4 @@
+import { isProcedure } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { useConnection } from '@/store/useConnection';
 import { backendFor } from './backend';
@@ -87,9 +88,20 @@ export async function readSchemaInto(connectionId: string, opts: ReadSchemaOptio
   // stops being marked as another database, which is exactly right — it is the
   // database being designed now.
   const useGroup = (opts.group ?? true) || Boolean(refreshId);
+  // Stored procedures are part of the schema they live in. The main database's
+  // come in as procedures of this diagram; another database's stay there, since
+  // anything in this diagram is something its script creates.
+  const procedures = converted.programs.filter(isProcedure);
+  const warnings = [...converted.warnings];
+  if (external && procedures.length) {
+    warnings.push(`${procedures.length} stored procedure${procedures.length === 1 ? '' : 's'} in ${conn.name || conn.config.database} ${procedures.length === 1 ? 'was' : 'were'} left out: ${procedures.length === 1 ? 'it belongs' : 'they belong'} to another database, and the diagram would create ${procedures.length === 1 ? 'it' : 'them'} here.`);
+  }
   const groupId = useStore.getState().importTables(converted.tables, converted.relationships, mode, {
     customTypes: converted.customTypes,
     extensions: converted.extensions,
+    programs: external ? [] : procedures,
+    // Reading the same database again restates its procedures rather than adding a second copy of each.
+    refreshProcedures: !external,
     group: useGroup
       ? {
           name: opts.groupName?.trim() || conn.name || conn.config.database || 'Imported database',
@@ -100,5 +112,5 @@ export async function readSchemaInto(connectionId: string, opts: ReadSchemaOptio
       : undefined,
   });
   useConnection.getState().setGroupId(conn.id, groupId ?? undefined);
-  return { tables: converted.tables.length, groupId, refreshed: Boolean(refreshId) && groupId === refreshId, serverVersion: res.serverVersion, warnings: converted.warnings };
+  return { tables: converted.tables.length, groupId, refreshed: Boolean(refreshId) && groupId === refreshId, serverVersion: res.serverVersion, warnings };
 }

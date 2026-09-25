@@ -35,6 +35,7 @@ const CODE_KINDS = {
   class: ['program', 'module', 'class'],
   function: ['program', 'module', 'class'],
   data: ['program', 'module'],
+  procedure: [],
 };
 const AGGREGATES = ['SUM', 'COUNT', 'AVG', 'MIN', 'MAX'];
 const WINDOW_FUNCTIONS = ['DIFF', 'LAG', 'LEAD', 'RUNNING_SUM', 'RUNNING_AVG', 'ROW_NUMBER', 'RANK'];
@@ -422,6 +423,31 @@ function validate(doc) {
     if (prg.collapsed !== undefined && prg.collapsed !== true && prg.collapsed !== false) warn(`${pw}: "collapsed" must be true or false; anything else loads as expanded.`);
     if (prg.collapsed === true && kind === 'function') warn(`${pw} is a collapsed function; a function holds nothing, so there is nothing to fold away.`);
 
+    // A procedure is part of the schema: these fields are what its CREATE
+    // statement is written from, and they are dropped from any other kind.
+    const ROUTINE_FIELDS = ['schema', 'params', 'returns', 'body', 'routineLanguage'];
+    if (kind !== 'procedure') {
+      for (const f of ROUTINE_FIELDS) if (prg[f] !== undefined) warn(`${pw} is a ${noun} with "${f}"; only a procedure has one, so it is dropped on load.`);
+    } else {
+      if (prg.params !== undefined && !Array.isArray(prg.params)) err(`${pw}: "params" must be an array of { id, name, type, mode?, defaultValue? }.`);
+      for (const [xi, x] of (Array.isArray(prg.params) ? prg.params : []).entries()) {
+        const xw = `${pw} params[${xi}]`;
+        if (!x || typeof x !== 'object') {
+          err(`${xw} is not an object.`);
+          continue;
+        }
+        claim(x.id, xw);
+        if (typeof x.name !== 'string' || !x.name.trim()) err(`${xw} has no name; the script leaves it out.`);
+        if (typeof x.type !== 'string' || !x.type.trim()) err(`${xw} has no type; the script leaves it out.`);
+        if (x.mode !== undefined && !['in', 'out', 'inout'].includes(x.mode)) warn(`${xw}: mode must be "in", "out" or "inout" (found ${JSON.stringify(x.mode)}); it loads as IN.`);
+        if (x.defaultValue !== undefined && doc.dialect !== 'postgresql') warn(`${xw}: parameter defaults are PostgreSQL's alone; on ${doc.dialect} the default is left out of the script.`);
+      }
+      if (prg.returns !== undefined && typeof prg.returns !== 'string') err(`${pw}: "returns" must be the return type as text; leave it out for a procedure.`);
+      if (prg.body !== undefined && typeof prg.body !== 'string') err(`${pw}: "body" must be text.`);
+      if (prg.routineLanguage !== undefined && !['plpgsql', 'sql'].includes(prg.routineLanguage)) warn(`${pw}: routineLanguage must be "plpgsql" or "sql"; it loads as plpgsql.`);
+      if (doc.dialect === 'sqlite' || doc.dialect === 'duckdb') warn(`${pw}: ${doc.dialect} has no stored procedures, so the script writes this one as a comment instead of creating it.`);
+    }
+
     // Containment. The loader drops a parent it cannot honour rather than
     // refusing the file, so each of these is an error here: the node would
     // silently land at the top level.
@@ -453,8 +479,11 @@ function validate(doc) {
 
     const steps = Array.isArray(prg.steps) ? prg.steps : [];
     const container = kind !== 'function' && programs.some((other) => other.parentId === prg.id);
-    // A data file having no steps is what a data file is, not a gap in the map.
-    if (!steps.length && !container && kind !== 'data') warn(`${pw} has no steps, so the diagram does not say what it touches or calls.`);
+    // A data file having no steps is what a data file is, not a gap in the map;
+    // a procedure with a body has one, even if nobody has drawn its steps yet.
+    if (!steps.length && !container && kind !== 'data' && !(kind === 'procedure' && typeof prg.body === 'string' && prg.body.trim())) {
+      warn(`${pw} has no steps, so the diagram does not say what it touches or calls.`);
+    }
     for (const [si, s] of steps.entries()) {
       const sw = `${pw} step ${si + 1}`;
       if (!s || typeof s !== 'object') {
@@ -484,6 +513,10 @@ function validate(doc) {
           warn(`${sw} calls the node it belongs to; a recursive call draws no arrow, so it is only worth keeping for its note or code.`);
         } else if (s.codeId === prg.id) {
           err(`${sw} ${s.op}s the node it belongs to, which cannot be what was meant.`);
+        } else if (kind === 'procedure' && (s.op !== 'call' || codeKindOf.get(s.codeId) !== 'procedure')) {
+          err(`${sw} ${s.op}s a ${codeKindOf.get(s.codeId)}; a procedure runs inside the database and can only call another procedure.`);
+        } else if (codeKindOf.get(s.codeId) === 'procedure' && s.op !== 'call') {
+          err(`${sw} ${s.op}s a procedure; a stored procedure is only ever called.`);
         } else if (s.op === 'extends' && codeKindOf.get(s.codeId) !== 'class') {
           warn(`${sw} extends a ${codeKindOf.get(s.codeId)}; "extends" is meant for a class inheriting from a class.`);
         } else if (s.op === 'load' && codeKindOf.get(s.codeId) !== 'data') {

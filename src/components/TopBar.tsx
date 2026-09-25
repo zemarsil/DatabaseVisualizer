@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useReactFlow } from '@xyflow/react';
 import {
+  DatabaseZap,
   BookmarkPlus,
   Box,
   Boxes,
@@ -311,7 +312,7 @@ export function TopBar() {
   const codeFirst = emphasis === 'code';
   const addKind = (kind: CodeKind, close: () => void) => {
     close();
-    addProgram({ kind, parentId: kind === 'program' ? undefined : selection.programIds[0] });
+    addProgram({ kind, parentId: kind === 'program' || kind === 'procedure' ? undefined : selection.programIds[0] });
     setInspectorOpen(true);
   };
   // Written out rather than mapped over CODE_KINDS so each data-tour is a
@@ -345,6 +346,9 @@ export function TopBar() {
       </button>
       <button className="menu__item" onClick={() => void (close(), addTable(undefined, { kind: 'view' }))}>
         <Eye /> View
+      </button>
+      <button className="menu__item" data-tour="add-procedure" title={kindHint('procedure')} onClick={() => addKind('procedure', close)}>
+        <DatabaseZap /> Procedure
       </button>
       <button className="menu__item" onClick={() => void (close(), addCustomType('enum'), openDrawer('types'))}>
         <Shapes /> Enum type

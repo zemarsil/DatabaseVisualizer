@@ -1,8 +1,9 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
-import { ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Box, Braces, ChevronsUpDown, Cpu, FileCode, FileInput, Import, Layers, SquareFunction, Terminal, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Box, Braces, ChevronsUpDown, Cpu, DatabaseZap, FileCode, FileInput, Import, Layers, SquareFunction, Terminal, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { codeKindMeta, codeKindOf, programLanguageMeta, programRoleMeta, type CodeKind, type Program, type ProgramStepOp } from '@shared/types';
 import { paletteHue } from '@/lib/palette';
+import { procedureSignature } from '@/lib/procedures';
 import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import '@/styles/programs.css';
@@ -51,6 +52,7 @@ export const KIND_ICON: Record<CodeKind, LucideIcon> = {
   class: Box,
   function: SquareFunction,
   data: Braces,
+  procedure: DatabaseZap,
 };
 
 const OP_ICON: Record<ProgramStepOp, LucideIcon> = {
@@ -115,7 +117,18 @@ function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
   if (picking) classes.push('program-node--pick');
   if (program.collapsed) classes.push('program-node--collapsed');
 
-  const tooltip = [program.comment || '', program.entrypoint ? `in ${program.entrypoint}` : '', path.includes('/') ? path : ''].filter(Boolean).join('\n');
+  const procedure = kind === 'procedure';
+  const tooltip = [
+    procedure ? procedureSignature(program) : '',
+    program.comment || '',
+    program.entrypoint ? `in ${program.entrypoint}` : '',
+    path.includes('/') ? path : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  // A procedure's badge says which of the two routines it is, since that is
+  // what decides how anything calls it: CALL for one, inside a query for the other.
+  const badge = procedure ? (program.returns?.trim() ? 'Function' : 'Procedure') : kind === 'program' ? lang.label : kindMeta.label;
 
   return (
     <div className={classes.join(' ')} style={{ '--hue': paletteHue(program.color) } as React.CSSProperties}>
@@ -128,8 +141,11 @@ function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
         }}
       >
         <KindIcon className="program-node__prompt" />
-        <span className="program-node__lang" title={kind === 'program' ? `Written in ${lang.label}` : `${kindMeta.label}, in ${lang.label}`}>
-          {kind === 'program' ? lang.label : kindMeta.label}
+        <span
+          className="program-node__lang"
+          title={procedure ? `Stored ${badge.toLowerCase()}: the database runs it` : kind === 'program' ? `Written in ${lang.label}` : `${kindMeta.label}, in ${lang.label}`}
+        >
+          {badge}
         </span>
         {renaming ? <RenameInput program={program} /> : <span className="program-node__name">{program.name || `Untitled ${kindMeta.label.toLowerCase()}`}</span>}
         {role && (
@@ -166,7 +182,7 @@ function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
             if (s.missing) rowClasses.push('program-node__step--missing');
             const label = s.op === 'compute' ? s.note || 'compute' : (s.target ?? (s.op === 'read' || s.op === 'write' ? '(missing table)' : '(missing code)'));
             const tip = [
-              s.op === 'compute' ? 'Work the database never sees' : `${s.op} ${s.target ?? '?'}`,
+              s.op === 'compute' ? (procedure ? 'Procedural work inside the database' : 'Work the database never sees') : `${s.op} ${s.target ?? '?'}`,
               s.columns.length ? s.columns.join(', ') : '',
               s.note && s.op !== 'compute' ? s.note : '',
               s.missing ? 'What this step names is no longer in the diagram.' : '',

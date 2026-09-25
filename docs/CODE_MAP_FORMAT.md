@@ -17,7 +17,7 @@ C++, Java, JavaScript, TypeScript, Perl and the shell, and walks the YAML and
 JSON files they read. The walkthrough that builds a map by hand
 is [`walkthroughs/16-map-the-code-that-talks-to-it.md`](walkthroughs/16-map-the-code-that-talks-to-it.md).
 
-## One node family, five kinds
+## One node family, six kinds
 
 There is no separate "module" object. Everything in the code map is the same
 node the diagram already had for a program — *a node whose ordered steps are
@@ -34,6 +34,7 @@ other.
 | `class` | a class, a struct, a type with methods | a program, a module, or another class | classes, functions |
 | `function` | a function or a method | a program, a module or a class | nothing — a function is a leaf |
 | `data` | a YAML or JSON file other code reads | a program or a module | nothing — and it does nothing either |
+| `procedure` | a stored procedure or function: code the database runs | nothing — it lives in the database, not in a file | nothing |
 
 The last one is the only node that is not code. Nothing runs in a YAML or JSON
 file, so a data file has **no steps at all**, and the only arrow it may be on
@@ -42,6 +43,17 @@ the end of is a [`load`](#steps-the-ordered-list-of-what-a-node-does). Its
 or `json` loads as a data file whatever kind it claims, a data file written in
 anything else loads as `yaml`, and steps written on one are dropped on load
 rather than kept where they could never happen.
+
+`procedure` is the other edge of the family. It has steps like a function —
+`read`, `write`, `compute` and `call`, where a call names another procedure —
+but it is part of the **schema**, not the code map: the generated script
+creates it after the tables and views (`CREATE OR REPLACE PROCEDURE` or, with a
+`returns`, `FUNCTION`), a migration replaces it, reading a live database brings
+it back, and a pasted `CREATE PROCEDURE` imports as one. It counts towards the
+data half of the diagram, so a canvas holding tables and procedures is a schema.
+Code outside the database reaches one with a `call` step, and that call is the
+one a starter writes as a real `CALL` through the driver rather than as a stub.
+Its own fields are below.
 
 A `.dbviz.json` written before code maps existed has only programs and no
 `kind` or `parentId` anywhere, and it loads unchanged. A file written *by* this
@@ -88,6 +100,11 @@ already there.
 | `comment` | no | What it is for. Travels into the SQL annotation block, the Markdown export and the DBML note. |
 | `color`, `position` | no | As for a table. For an **expanded container** the position is only an anchor — see [What is derived](#what-is-derived-never-stored). |
 | `steps` | no | Ordered. What the node does, in the order it does it. |
+| `params` | no | **Procedures only.** `{ id, name, type, mode?, defaultValue? }` in declaration order; `mode` is `in` (left out), `out` or `inout`, and `defaultValue` is PostgreSQL's alone. Types are translated with the columns when the dialect changes. |
+| `returns` | no | **Procedures only.** A return type makes it a stored function: `integer`, `TABLE (id int)`, `SETOF orders`. |
+| `body` | no | **Procedures only.** The body as the engine takes it — between the dollar quotes on PostgreSQL, the `BEGIN … END` on MariaDB — used verbatim. Absent means the body is written from the steps. |
+| `routineLanguage` | no | **Procedures only, PostgreSQL.** `plpgsql` (the default, left out) or `sql`. |
+| `schema` | no | **Procedures only.** The schema it is created in. |
 
 ## Steps
 
@@ -293,7 +310,11 @@ that is missing does. Nothing is silently dropped.
 | `code-step-op-mismatch` | warning | a `load` naming something that is not a data file, or a `call`, `import` or `extends` naming one. Nothing runs in a YAML or JSON file, so it can only be loaded. Fix: change the op; the step keeps its code and its note. |
 | `code-data-unread` | info | a data file nothing in the map loads. A YAML or JSON file is on the canvas because something reads it, so either that step has not been drawn or the file is no longer used. |
 | `code-import-cycle` | warning | `a imports b imports a`: the circular import that fails at run time and hides well in a big map. Reported once per cycle. |
-| `duplicate-program-name` | warning | two nodes with the same name **in the same container**. Siblings only; `Order.save` and `Customer.save` are fine. |
+| `duplicate-program-name` | warning | two nodes with the same name **in the same container**. Siblings only; `Order.save` and `Customer.save` are fine. Procedures are compared with the procedures of their schema, so a program and the procedure it calls may share a name. |
+| `procedure-unsupported` | warning | a procedure on SQLite or DuckDB, which have none: the script writes it as a comment. It is kept for a diagram that targets PostgreSQL or MariaDB. |
+| `procedure-step-mismatch` | warning | a procedure calling code outside the database, or anything importing or extending a procedure. A routine calls routines, and is only ever called. |
+| `procedure-param-incomplete` | warning | a parameter with no name or no type, which the script leaves out. |
+| `procedure-empty` | info | no body and no steps: the script creates a procedure that does nothing. |
 
 The program rules still apply to every kind: a `write` to a column a data flow
 already computes, a write to a view or to a table marked as living in another
@@ -518,7 +539,7 @@ standard error, so the diagram on standard output stays a diagram.
 node scripts/validate-dbviz.mjs path/to/file.dbviz.json
 ```
 
-For the code map it checks that every `kind` is one of the four, that every
+For the code map it checks that every `kind` is one of the six, that every
 `parentId` names a node in the file, is of a kind that may hold this one and
 does not loop back to itself, that every `call`, `import` or `extends` names a
 node in the file (and not the node it belongs to), that `extends` points at a

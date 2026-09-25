@@ -167,7 +167,11 @@ export function describeProgram(d: Diagram, p: Program): string {
   }
   const kindOf = codeKindOf(p);
   const kind =
-    kindOf === 'program' ? (p.role ? programRoleMeta(p.role).label.toLowerCase() : `${programLanguageMeta(p.language).label} program`) : `${programLanguageMeta(p.language).label} ${codeKindMeta(kindOf).label.toLowerCase()}`;
+    kindOf === 'procedure'
+      ? p.returns?.trim()
+        ? 'stored function'
+        : 'stored procedure'
+      : kindOf === 'program' ? (p.role ? programRoleMeta(p.role).label.toLowerCase() : `${programLanguageMeta(p.language).label} program`) : `${programLanguageMeta(p.language).label} ${codeKindMeta(kindOf).label.toLowerCase()}`;
   const clauses: string[] = [];
   if (roundTrips.length) clauses.push(`reads and writes ${roundTrips.join(', ')}`);
   if (reads.length) clauses.push(`reads ${reads.join(', ')}`);
@@ -182,7 +186,7 @@ export function describeProgram(d: Diagram, p: Program): string {
   if (loads.length) clauses.push(`loads ${loads.join(', ')}`);
   if (calls.length) clauses.push(`calls ${calls.join(', ')}`);
   const computes = p.steps.filter((s) => s.op === 'compute').length;
-  if (computes) clauses.push(`${computes} step${computes === 1 ? '' : 's'} of work outside the database`);
+  if (computes) clauses.push(kindOf === 'procedure' ? `${computes} step${computes === 1 ? '' : 's'} of procedural work` : `${computes} step${computes === 1 ? '' : 's'} of work outside the database`);
   const article = /^[aeiou]/i.test(kind) ? 'an' : 'a';
   // A data file does nothing, so the sentence for one is about what reads it.
   // "does not touch the schema yet" would be true of every data file there
@@ -199,7 +203,7 @@ export function describeProgram(d: Diagram, p: Program): string {
   // On a diagram with no schema in it, "does not touch the schema yet" names
   // something the reader never asked for and invites them to go and find it.
   // What is actually missing there is the steps.
-  if (d.tables.length === 0) return `${p.name}, ${article} ${kind}, has no steps yet.`;
+  if (d.tables.length === 0 || kindOf === 'procedure') return `${p.name}, ${article} ${kind}, has no steps yet.`;
   return `${p.name}, ${article} ${kind}, does not touch the schema yet.`;
 }
 

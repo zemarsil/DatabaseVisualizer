@@ -62,6 +62,7 @@ import { nextProgramPosition, prevailingLanguage } from '@/lib/programs';
 import { placementSizes, type SizeMap } from '@/lib/geometry';
 import { PALETTE } from '@/lib/palette';
 import { translateType } from '@/lib/sql/dialect';
+import { translateProcedureTypes } from '@/lib/procedures';
 import { findPath, type TraceResult } from '@/lib/trace';
 import { parseWorkspaceFile, serializeWorkspace } from '@/lib/io';
 import { getCurrentWorkspaceId } from '@/lib/currentId';
@@ -351,6 +352,8 @@ interface Actions {
   removeProgramStep: (programId: string, stepId: string) => void;
   /** Reorder: delta is -1 for earlier, +1 for later. Out-of-range moves do nothing. */
   moveProgramStep: (programId: string, stepId: string, delta: number) => void;
+  /** Replace every step at once, in one history step: a procedure's steps read back out of its body. */
+  setProgramSteps: (programId: string, steps: ProgramStep[]) => void;
 
   // canvas
   /** Deletes tables, notes, programs and relationships together, as a single undo step. */
@@ -381,8 +384,14 @@ interface Actions {
     opts?: {
       customTypes?: CustomType[];
       extensions?: DiagramExtension[];
-      /** Programs an annotated script brought with it. */
+      /** Programs an annotated script brought with it, and procedures a script or a database defines. */
       programs?: Program[];
+      /**
+       * An imported procedure whose name the diagram already has replaces that
+       * one's definition in place, keeping where it sits, rather than landing
+       * beside it as a renamed copy: reading a database again restates it.
+       */
+      refreshProcedures?: boolean;
       /** Wrap everything imported in a new group, e.g. the database it came from. */
       group?: {
         name: string;
@@ -818,6 +827,10 @@ export const useStore = create<Store>()(
           if (translateTypes && from !== dialect) {
             // Named custom types keep their name across dialects; translateType leaves unknown names alone.
             for (const t of d.tables) for (const c of t.columns) c.type = translateType(c.type, from, dialect);
+            // A procedure's parameters and return type are column types too. Its
+            // body is not translated: it is written in the engine's own
+            // procedural language, and there is no faithful way to rewrite that.
+            for (const p of d.programs) if (p.kind === 'procedure') translateProcedureTypes(p as Program, from, dialect);
           }
         }),
       setEmphasis: (emphasis) => mutate((d) => void (d.emphasis = emphasis)),
@@ -1275,7 +1288,9 @@ export const useStore = create<Store>()(
       addProgram: (opts = {}) => {
         const d = get().diagram;
         const kind = opts.kind ?? 'program';
-        const parent = opts.parentId ? d.programs.find((p) => p.id === opts.parentId) : undefined;
+        // A procedure lives in the database, never inside a container, so a
+        // selected module is no reason to put one there.
+        const parent = opts.parentId && kind !== 'procedure' ? d.programs.find((p) => p.id === opts.parentId) : undefined;
         const parentId = parent && canContain(codeKindOf(parent), kind) ? parent.id : undefined;
         // A member speaks its container's language; a node with no container
         // speaks whatever most of the map already does.
@@ -1293,7 +1308,9 @@ export const useStore = create<Store>()(
                 ? 'NewClass'
                 : settled.kind === 'data'
                   ? `new_data.${programLanguageMeta(language).extension}`
-                  : 'new_function';
+                  : settled.kind === 'procedure'
+                    ? 'new_procedure'
+                    : 'new_function';
         const name = uniqueProgramName(d, opts.name ?? fallbackName, parentId);
         const prg = createProgram({
           name,
@@ -1338,6 +1355,10 @@ export const useStore = create<Store>()(
             // anything; Ctrl+Z is what brings them back.
             if (codeKindOf(p) === 'data') p.steps = [];
             if (codeKindOf(p) !== 'program') delete p.role;
+            // The CREATE-statement half belongs to procedures alone, and a
+            // procedure stands in no container.
+            if (codeKindOf(p) === 'procedure') delete p.parentId;
+            else for (const key of ['schema', 'params', 'returns', 'body', 'routineLanguage'] as const) delete p[key];
           },
           { coalesce: textPatchKey(`program:${id}`, patch) },
         ),
@@ -1467,6 +1488,11 @@ export const useStore = create<Store>()(
         set((s) => invalidateTrace(s));
         return step.id;
       },
+      setProgramSteps: (programId, steps) =>
+        mutate((d) => {
+          const p = d.programs.find((x) => x.id === programId);
+          if (p) p.steps = steps.map((st) => createProgramStep(st));
+        }),
       addProgramStep: (programId, partial = {}, at) => {
         const step = createProgramStep(partial);
         mutate((d) => {
@@ -1683,6 +1709,16 @@ export const useStore = create<Store>()(
               d.extensions.push(e);
             }
             for (const prg of importedPrograms) {
+              const same =
+                opts?.refreshProcedures && prg.kind === 'procedure'
+                  ? d.programs.find((x) => x.kind === 'procedure' && x.name.toLowerCase() === prg.name.toLowerCase() && (x.schema ?? '').toLowerCase() === (prg.schema ?? '').toLowerCase())
+                  : undefined;
+              if (same) {
+                const { id: _id, position: _position, color: _color, ...definition } = prg;
+                for (const key of ['schema', 'params', 'returns', 'body', 'routineLanguage', 'comment'] as const) delete same[key];
+                Object.assign(same, definition);
+                continue;
+              }
               prg.name = uniqueProgramName(d as Diagram, prg.name, prg.parentId);
               d.programs.push(prg);
             }

@@ -1,9 +1,10 @@
-import { codeKindMeta, codeKindOf, describeRelationship, dialectLabel, isCodeStepOp, programLanguageMeta, programRoleMeta, type Diagram, type Program, type Relationship, type Table } from '@shared/types';
+import { codeKindMeta, codeKindOf, describeRelationship, dialectLabel, isCodeStepOp, isProcedure, programLanguageMeta, programRoleMeta, type Diagram, type Program, type Relationship, type Table } from '@shared/types';
 import { codeChildren, codePath } from './codemap';
 import { derivationSummaries } from './derivation';
 import { buildLineage, type Lineage } from './lineage';
 import { exportMermaid } from './export/mermaid';
 import { describeProgram, programsForTable } from './programs';
+import { isStoredFunction, procedureBody, procedureSignature, proceduresOf } from './procedures';
 
 /**
  * Cell text is data, not markup. A CHECK expression like `qty * 2 * 3` or a
@@ -139,12 +140,30 @@ function groupsSection(d: Diagram): string {
  * and a data dictionary should hold what somebody wrote rather than what the
  * app can write again on demand.
  */
+/**
+ * The stored procedures and functions: each one's signature, what it is for,
+ * what it touches, and its body — the part of the schema that runs.
+ */
+function proceduresSection(d: Diagram): string {
+  const procedures = proceduresOf(d);
+  if (procedures.length === 0) return '';
+  const parts: string[] = ['## Procedures', '', 'Code the database holds and runs itself.'];
+  for (const p of procedures) {
+    parts.push(`\n### ${esc(p.name)}\n`);
+    parts.push(`\`${esc(procedureSignature(p))}\` · ${isStoredFunction(p) ? 'function' : 'procedure'}`);
+    if (p.comment?.trim()) parts.push(`\n${esc(p.comment.trim())}`);
+    parts.push(`\n${esc(describeProgram(d, p))}`);
+    parts.push(`\n\`\`\`sql\n${procedureBody(d, p)}\n\`\`\``);
+  }
+  return parts.join('\n');
+}
+
 function programsSection(d: Diagram): string {
-  if (d.programs.length === 0) return '';
+  if (!d.programs.some((p) => !isProcedure(p))) return '';
   const byId = new Map(d.tables.map((t) => [t.id, t]));
   const codeById = new Map(d.programs.map((p) => [p.id, p]));
   const children = codeChildren(d);
-  const onlyPrograms = d.programs.every((p) => codeKindOf(p) === 'program');
+  const onlyPrograms = d.programs.every((p) => codeKindOf(p) === 'program' || isProcedure(p));
   const parts: string[] = [
     onlyPrograms ? '## Programs' : '## Code',
     '',
@@ -161,6 +180,7 @@ function programsSection(d: Diagram): string {
   walk(null);
 
   for (const p of ordered) {
+    if (isProcedure(p)) continue;
     const lang = programLanguageMeta(p.language);
     const kind = codeKindOf(p);
     const members = children.get(p.id) ?? [];
@@ -276,6 +296,9 @@ export function generateMarkdown(d: Diagram, opts: MarkdownOptions = {}): string
 
   const rels = relationshipsSection(d);
   if (rels) parts.push(rels);
+
+  const procs = proceduresSection(d);
+  if (procs) parts.push(procs);
 
   const progs = programsSection(d);
   if (progs) parts.push(progs);

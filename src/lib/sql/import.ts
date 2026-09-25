@@ -1,5 +1,6 @@
 import {
   describeRelationship,
+  isProcedure,
   programStepOpMeta,
   type CustomType,
   type Derivation,
@@ -14,7 +15,8 @@ import {
 import { createColumn, createCustomTypeField, createDerivation, createExtension, createIndex, createProgram, createProgramStep, createRelationship, createTable } from '../model';
 import { newId } from '../ids';
 import { readAnnotations, type AnnotatedConnection, type AnnotatedProgram, type SqlAnnotations } from './annotations';
-import { parseSql, type ParseResult, type ParsedTable } from './parser';
+import { parseSql, type ParseResult, type ParsedRoutine, type ParsedTable } from './parser';
+import { createProcedureParam, proceduresFromRoutines } from '../procedures';
 
 export interface ImportResult {
   tables: Table[];
@@ -129,22 +131,43 @@ export function parseResultToDiagram(res: ParseResult, existing: Diagram | null 
 
   // Connections the DDL could not carry: the annotation block at the end of a
   // script this app wrote is the only place they exist.
+  const lookupTable = (name: string) => byName.get(keyOf(name)) ?? existing?.tables.find((t) => keyOf(t.name) === keyOf(name));
   const programs: Program[] = [];
   if (annotations) {
-    applyAnnotations(
-      annotations.connections,
-      (name) => byName.get(keyOf(name)) ?? existing?.tables.find((t) => keyOf(t.name) === keyOf(name)),
-      relationships,
-      existing,
-      warnings,
-    );
-    programs.push(
-      ...restorePrograms(
-        annotations.programs ?? [],
-        (name) => byName.get(keyOf(name)) ?? existing?.tables.find((t) => keyOf(t.name) === keyOf(name)),
-        warnings,
-      ),
-    );
+    applyAnnotations(annotations.connections, lookupTable, relationships, existing, warnings);
+    programs.push(...restorePrograms(annotations.programs ?? [], lookupTable, warnings));
+  }
+
+  // Procedures. The CREATE statement is the truth for what the routine is —
+  // its parameters, return type and body — and the annotation block, when the
+  // script has one, for how it was drawn: the steps someone arranged by hand
+  // are kept rather than read out of the body again. A routine with no
+  // annotation gets its steps from its body.
+  const routines = res.routines ?? [];
+  if (routines.length) {
+    const annotated = new Map(programs.filter(isProcedure).map((p) => [p.name.toLowerCase(), p] as const));
+    const fresh: ParsedRoutine[] = [];
+    for (const r of routines) {
+      const hit = annotated.get(r.name.toLowerCase());
+      if (!hit) {
+        fresh.push(r);
+        continue;
+      }
+      const [def] = proceduresFromRoutines([r], lookupTable);
+      hit.params = def.params;
+      if (def.schema) hit.schema = def.schema;
+      if (def.returns) hit.returns = def.returns;
+      else delete hit.returns;
+      if (def.routineLanguage) hit.routineLanguage = def.routineLanguage;
+      hit.body = def.body;
+      if (def.comment) hit.comment = def.comment;
+    }
+    const existingNames = new Set([...(existing?.programs ?? []), ...programs].filter(isProcedure).map((p) => p.name.toLowerCase()));
+    const made = proceduresFromRoutines(fresh, lookupTable, [...(existing?.programs ?? []), ...programs]);
+    for (const p of made) {
+      if (existingNames.has(p.name.toLowerCase())) warnings.push(`A procedure called ${p.name} is already in the diagram; the imported one sits beside it.`);
+      programs.push(p);
+    }
   }
 
   // simple grid so tables never stack before the user runs auto-layout
@@ -353,6 +376,15 @@ function restorePrograms(annotated: AnnotatedProgram[], lookup: (name: string) =
       ...(a.entrypoint ? { entrypoint: a.entrypoint } : {}),
       ...(a.comment ? { comment: a.comment } : {}),
       steps,
+      ...(a.kind === 'procedure' && a.routine
+        ? {
+            ...(a.routine.schema ? { schema: a.routine.schema } : {}),
+            ...(a.routine.params?.length ? { params: a.routine.params.map((x) => createProcedureParam(x)) } : {}),
+            ...(a.routine.returns ? { returns: a.routine.returns } : {}),
+            ...(a.routine.language ? { routineLanguage: a.routine.language } : {}),
+            ...(a.routine.body ? { body: a.routine.body } : {}),
+          }
+        : {}),
     });
     byPath.set((a.parent ? `${a.parent}/${a.name}` : a.name).toLowerCase(), node);
     pending.push({ node, parent: a.parent, targets });

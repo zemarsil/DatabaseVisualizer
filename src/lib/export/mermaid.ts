@@ -7,6 +7,7 @@ import { codeLinks, codePath } from '../codemap';
 import { externalTableIds } from '../groups';
 import { foreignKeyColumnIds } from '../model';
 import { programLinks } from '../programs';
+import { procedureSignature } from '../procedures';
 import { pkColumnIds, relationshipCardinality } from '../schemaInfo';
 
 export interface MermaidOptions {
@@ -102,7 +103,8 @@ function programBlock(d: Diagram, p: Program, name: string): string[] {
   // Marked the way a view and an external table are: with a comment naming
   // what it is and where it sits, since an erDiagram entity has no kind.
   const where = p.parentId && codeById.get(p.parentId) ? ` in ${codePath(d, codeById.get(p.parentId)!, codeById)}` : '';
-  const lines = [`    %% ${kind}: ${p.name} (${programLanguageMeta(p.language).label})${where}`, `    ${name} {`];
+  const what = kind === 'procedure' ? procedureSignature(p) : `${p.name} (${programLanguageMeta(p.language).label})`;
+  const lines = [`    %% ${kind}: ${what}${where}`, `    ${name} {`];
   for (const s of p.steps) {
     const what =
       s.op === 'compute'

@@ -13,13 +13,14 @@ import {
   Trash2,
 } from 'lucide-react';
 import { alignTables, distributeTables, type AlignMode } from '@/lib/canvasOps';
-import { codeKindMeta, codeKindOf, kindMeta } from '@shared/types';
+import { codeKindMeta, codeKindOf, isProcedure, kindMeta } from '@shared/types';
 import { selectSelectedGroup, selectSelectedNote, selectSelectedProgram, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
 import { TableEditor } from './TableEditor';
 import { RelationshipEditor } from './RelationshipEditor';
 import { NoteEditor } from './NoteEditor';
 import { GroupEditor } from './GroupEditor';
 import { ProgramEditor } from './ProgramEditor';
+import { ProcedureEditor } from './ProcedureEditor';
 import { DiagramPanel } from './DiagramPanel';
 import { ResizeHandle } from '@/components/ui/ResizeHandle';
 
@@ -73,6 +74,9 @@ export function Inspector() {
   } else if (note) {
     title = 'Note';
     body = <NoteEditor note={note} />;
+  } else if (program && isProcedure(program)) {
+    title = program.returns?.trim() ? 'Stored function' : 'Stored procedure';
+    body = <ProcedureEditor program={program} />;
   } else if (program) {
     title = codeKindMeta(codeKindOf(program)).label;
     body = <ProgramEditor program={program} />;

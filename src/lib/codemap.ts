@@ -446,6 +446,8 @@ export function defaultCodeOp(from: Pick<Program, 'kind'>, to: Pick<Program, 'ki
   // Only one thing can be meant by an arrow into a data file, and nothing can
   // be meant by one out of it — `canLinkCode` refuses that before this is asked.
   if (b === 'data') return 'load';
+  // A stored routine is only ever called, from anywhere.
+  if (b === 'procedure') return 'call';
   if (a === 'class' && b === 'class') return 'extends';
   if (a === 'module' || a === 'program') return b === 'function' || b === 'class' ? 'import' : 'import';
   return 'call';
@@ -461,7 +463,7 @@ export function defaultCodeOp(from: Pick<Program, 'kind'>, to: Pick<Program, 'ki
  */
 export function canLinkCode(from: Pick<Program, 'kind'>, to: Pick<Program, 'kind'>, op?: CodeLinkOp): boolean {
   if (codeKindOf(from) === 'data') return false;
-  return canStepName(op ?? defaultCodeOp(from, to), codeKindOf(to));
+  return canStepName(op ?? defaultCodeOp(from, to), codeKindOf(to), codeKindOf(from));
 }
 
 /** The kinds a node of `kind` may be dropped into, for pickers. */

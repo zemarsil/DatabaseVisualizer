@@ -12,6 +12,7 @@ import {
   tableDdl,
 } from '../sql/generator';
 import { externalTableIds } from '../groups';
+import { dropProcedureStatement, procedureDdl } from '../procedures';
 import type { Change, SchemaSnapshot, SnapColumn, SnapTable } from './diff';
 
 /**
@@ -45,7 +46,8 @@ export interface MigrationScript {
   rebuilt: string[];
 }
 
-type Section = { title: string; lines: { changeId: string; sql: string; note?: string }[] };
+/** `script`, when set, is what the readable script shows in place of `sql` (MariaDB's DELIMITER-wrapped routines). */
+type Section = { title: string; lines: { changeId: string; sql: string; note?: string; script?: string }[] };
 
 /** A value that lets a NOT NULL column be added to a table that already has rows. */
 export function placeholderFor(type: string, dialect: Dialect): string | null {
@@ -183,6 +185,13 @@ export function generateMigration(d: Diagram, changes: Change[], current: Schema
       continue;
     }
     drops.lines.push({ changeId: c.id, sql: dialect === 'mariadb' ? `ALTER TABLE ${tn(op.table)} DROP FOREIGN KEY ${q(op.fk.name)};` : `ALTER TABLE ${tn(op.table)} DROP CONSTRAINT ${q(op.fk.name)};` });
+  }
+  for (const c of changes) {
+    const op = c.op;
+    if (op.kind !== 'drop-routine' && !(op.kind === 'replace-routine' && op.recreate)) continue;
+    const r = op.kind === 'replace-routine' ? op.current : op.routine;
+    const sql = dropProcedureStatement({ name: r.name, schema: r.schema, returns: r.kind === 'function' ? r.returns || 'void' : undefined, params: r.params.map((x) => ({ id: '', ...x })) }, dialect);
+    if (sql) drops.lines.push({ changeId: c.id, sql });
   }
   for (const c of changes) {
     const op = c.op;
@@ -508,6 +517,17 @@ export function generateMigration(d: Diagram, changes: Change[], current: Schema
     if (stmt) views.lines.push({ changeId: c.id, sql: stmt });
   }
 
+  /* ---- 7b. Procedures, once everything they read and write exists ---- */
+  const routines = section('Procedures');
+  for (const c of changes) {
+    const op = c.op;
+    if ((op.kind !== 'create-routine' && op.kind !== 'replace-routine') || !op.routine.program) continue;
+    const ddl = procedureDdl(d, op.routine.program, warnings);
+    // MariaDB's script wraps the body in DELIMITER for the command-line client;
+    // the statement a driver runs is the plain one.
+    ddl.statements.forEach((sql, i) => routines.lines.push({ changeId: c.id, sql, ...(i === 0 && dialect === 'mariadb' ? { script: ddl.script } : {}) }));
+  }
+
   /* ---- 8. Comments ---- */
   const comments = section('Comments');
   for (const cm of newTableComments) comments.lines.push(cm);
@@ -559,7 +579,7 @@ export function generateMigration(d: Diagram, changes: Change[], current: Schema
       }
       if (l.note) lines.push(`--   ${l.note}`);
       if (!l.sql) continue;
-      lines.push(l.sql);
+      lines.push(l.script ?? l.sql);
       statements.push(l.sql);
       entries.push({ changeId: l.changeId, sql: l.sql });
     }

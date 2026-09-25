@@ -25,6 +25,7 @@ import {
   type Table,
 } from '@shared/types';
 import { codeChildren, codeNoun, importCycles } from './codemap';
+import { dialectHasProcedures } from './procedures';
 import { flowDerivations, isDerivationComplete } from './derivation';
 import { externalTableIds } from './groups';
 import { createColumn, createExtension, createIndex, customTypeByName } from './model';
@@ -627,7 +628,9 @@ export function lintDiagram(d: Diagram): LintFinding[] {
   // Names only have to be distinct among siblings: two classes may each have a
   // `save`, and the map is read through its containers.
   const programNames = new Map<string, number>();
-  const siblingKey = (prg: Program) => `${prg.parentId ?? ''}|${prg.name.trim().toLowerCase()}`;
+  // A procedure's namespace is the database schema it is created in, not the
+  // code map: a program and the stored procedure it calls may share a name.
+  const siblingKey = (prg: Program) => `${codeKindOf(prg) === 'procedure' ? `db:${(prg.schema ?? '').trim().toLowerCase()}` : (prg.parentId ?? '')}|${prg.name.trim().toLowerCase()}`;
   for (const prg of d.programs) programNames.set(siblingKey(prg), (programNames.get(siblingKey(prg)) ?? 0) + 1);
   const codeById = new Map(d.programs.map((p) => [p.id, p]));
   const children = codeChildren(d);
@@ -692,6 +695,42 @@ export function lintDiagram(d: Diagram): LintFinding[] {
       }
     }
 
+    if (kind === 'procedure') {
+      if (!dialectHasProcedures(d.dialect)) {
+        push({
+          rule: 'procedure-unsupported',
+          severity: 'warning',
+          message: `${engineName(d.dialect)} has no stored procedures, so ${prg.name || 'this procedure'} is written into the script as a comment and never created. It is kept, and comes back as soon as the diagram targets PostgreSQL or MariaDB.`,
+          programId: prg.id,
+        });
+      }
+      if (!prg.body?.trim() && prg.steps.length === 0) {
+        push({
+          rule: 'procedure-empty',
+          severity: 'info',
+          message: `${prg.name || 'A procedure'} has no body and no steps, so the script creates one that does nothing.`,
+          programId: prg.id,
+        });
+      }
+      (prg.params ?? []).forEach((x, i) => {
+        if (x.name.trim() && x.type.trim()) return;
+        push({
+          rule: 'procedure-param-incomplete',
+          severity: 'warning',
+          message: `Parameter ${i + 1} of ${prg.name} has no ${x.name.trim() ? 'type' : 'name'}, so the script leaves it out and the routine takes one argument fewer than drawn.`,
+          programId: prg.id,
+          fix: {
+            label: 'Remove the parameter',
+            safe: false,
+            apply: (dd) => {
+              const target = dd.programs.find((p) => p.id === prg.id);
+              if (target?.params) target.params = target.params.filter((y) => y.id !== x.id);
+            },
+          },
+        });
+      });
+    }
+
     if (kind === 'data' && !d.programs.some((x) => x.steps.some((s) => s.op === 'load' && s.codeId === prg.id))) {
       push({
         rule: 'code-data-unread',
@@ -744,6 +783,36 @@ export function lintDiagram(d: Diagram): LintFinding[] {
             severity: 'warning',
             message: `Step ${i + 1} of ${prg.name} ${s.op}s ${prg.name} itself, which cannot be what was meant.`,
             programId: prg.id,
+          });
+        } else if (!canStepName(s.op, codeKindOf(codeById.get(s.codeId)!), kind) && (kind === 'procedure' || codeKindOf(codeById.get(s.codeId)!) === 'procedure')) {
+          // A stored routine runs inside the database: it can call another one
+          // there and nothing else, and all anything can do to one is call it.
+          const target = codeById.get(s.codeId)!;
+          const fromProcedure = kind === 'procedure' && codeKindOf(target) !== 'procedure';
+          push({
+            rule: 'procedure-step-mismatch',
+            severity: 'warning',
+            message: fromProcedure
+              ? `Step ${i + 1} of ${prg.name} ${stepVerb(s.op)} ${target.name}, which is a ${codeNoun(target)} in the code map. A stored procedure runs inside the database and can only call other routines there.`
+              : `Step ${i + 1} of ${prg.name} ${stepVerb(s.op)} ${target.name}, which is a stored procedure. A routine is only ever called.`,
+            programId: prg.id,
+            fix: fromProcedure
+              ? {
+                  label: 'Remove the step',
+                  safe: false,
+                  apply: (dd) => {
+                    const x = dd.programs.find((p) => p.id === prg.id);
+                    if (x) x.steps = x.steps.filter((y) => y.id !== s.id);
+                  },
+                }
+              : {
+                  label: 'Make it a call',
+                  safe: false,
+                  apply: (dd) => {
+                    const step = dd.programs.find((x) => x.id === prg.id)?.steps.find((x) => x.id === s.id);
+                    if (step) step.op = 'call';
+                  },
+                },
           });
         } else if (!canStepName(s.op, codeKindOf(codeById.get(s.codeId)!))) {
           // The one pairing rule the data files bring: a data file is loaded,

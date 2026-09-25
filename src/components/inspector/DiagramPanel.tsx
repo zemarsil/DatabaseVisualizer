@@ -1,5 +1,5 @@
 import { Boxes, Code2, Cpu, Database, FileDown, Plus, Route, Shuffle } from 'lucide-react';
-import { DIALECTS, RELATIONSHIP_KINDS, isCodeStepOp, verbsForKind, type RelationshipKind } from '@shared/types';
+import { DIALECTS, RELATIONSHIP_KINDS, isCodeStepOp, isProcedure, verbsForKind, type RelationshipKind } from '@shared/types';
 import { flowDerivations } from '@/lib/derivation';
 import { selectShowsDatabaseTools, useStore } from '@/store/useStore';
 import { Checkpoints } from './Checkpoints';
@@ -63,7 +63,9 @@ export function DiagramPanel() {
   const externalTables = diagram.tables.filter((t) => diagram.groups.some((g) => g.id === t.groupId && g.external)).length;
   // The code half's own numbers, so a code map's panel is not five zeroes about
   // foreign keys. Steps are the code equivalent of columns: the detail inside.
-  const steps = diagram.programs.reduce((n, p) => n + p.steps.length, 0);
+  // Stored procedures are counted with the schema, not with the code map.
+  const procedures = diagram.programs.filter(isProcedure).length;
+  const steps = diagram.programs.filter((p) => !isProcedure(p)).reduce((n, p) => n + p.steps.length, 0);
   const codeLinks = diagram.programs.reduce((n, p) => n + p.steps.filter((st) => isCodeStepOp(st.op) && st.codeId).length, 0);
   const addCode = () => {
     addProgram();
@@ -103,10 +105,16 @@ export function DiagramPanel() {
             </div>
           </>
         )}
-        {diagram.programs.length > 0 && (
+        {procedures > 0 && (
+          <div className="stat">
+            <div className="stat__value">{procedures}</div>
+            <div className="stat__label">procedure{procedures === 1 ? '' : 's'}</div>
+          </div>
+        )}
+        {diagram.programs.length > procedures && (
           <>
             <div className="stat">
-              <div className="stat__value">{diagram.programs.length}</div>
+              <div className="stat__value">{diagram.programs.length - procedures}</div>
               <div className="stat__label">code nodes · {steps} steps</div>
             </div>
             <div className="stat">

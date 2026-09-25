@@ -1,5 +1,6 @@
 import type { Dialect, ReferentialAction } from '@shared/types';
 import { SqlSyntaxError, tokenize, type Token } from './tokenizer';
+import { parseRoutineParams } from '@shared/routines';
 
 /* ------------------------------------------------------------------ */
 /* Output model                                                        */
@@ -81,9 +82,26 @@ export interface ParsedExtension {
   version?: string;
 }
 
+/** A stored procedure or function: CREATE PROCEDURE / CREATE FUNCTION. */
+export interface ParsedRoutine {
+  schema?: string;
+  name: string;
+  kind: 'procedure' | 'function';
+  params: { name: string; type: string; mode?: 'in' | 'out' | 'inout'; defaultValue?: string }[];
+  /** Functions only: the RETURNS clause as written. */
+  returns?: string;
+  /** PostgreSQL's LANGUAGE, lower-cased; absent on MariaDB, which has one. */
+  language?: string;
+  /** PostgreSQL: what was inside the quotes after AS. MariaDB: the routine body, BEGIN … END included. */
+  body: string;
+  comment?: string;
+}
+
 export interface ParseResult {
   tables: ParsedTable[];
   views: ParsedView[];
+  /** Absent from results built before procedures existed; the importer treats that as none. */
+  routines?: ParsedRoutine[];
   extensions: ParsedExtension[];
   enums: { name: string; values: string[] }[];
   compositeTypes: ParsedCompositeType[];
@@ -132,7 +150,7 @@ const ACTIONS: Record<string, ReferentialAction> = {
 
 class Parser {
   private pos = 0;
-  readonly result: ParseResult = { tables: [], views: [], extensions: [], enums: [], compositeTypes: [], errors: [], warnings: [], statementCount: 0 };
+  readonly result: ParseResult & { routines: ParsedRoutine[] } = { tables: [], views: [], routines: [], extensions: [], enums: [], compositeTypes: [], errors: [], warnings: [], statementCount: 0 };
 
   constructor(private readonly sql: string, private readonly tokens: Token[], private readonly dialect: Dialect) {}
 
@@ -406,7 +424,7 @@ class Parser {
         this.skipStatement();
         return;
       default:
-        this.warn(`Skipped ${t.value.toUpperCase()} statement (only CREATE TABLE / VIEW / INDEX / TYPE / EXTENSION, ALTER TABLE, COMMENT ON and INSTALL / LOAD are imported)`);
+        this.warn(`Skipped ${t.value.toUpperCase()} statement (only CREATE TABLE / VIEW / INDEX / TYPE / EXTENSION / PROCEDURE / FUNCTION, ALTER TABLE, COMMENT ON and INSTALL / LOAD are imported)`);
         this.skipStatement();
     }
   }
@@ -460,6 +478,10 @@ class Parser {
     }
     if (this.isWord('EXTENSION')) {
       this.parseCreateExtension();
+      return;
+    }
+    if (this.isWord('PROCEDURE', 'FUNCTION')) {
+      this.parseCreateRoutine();
       return;
     }
     if (this.isWord('SEQUENCE')) {
@@ -562,6 +584,161 @@ class Parser {
     const existing = this.result.views.findIndex((v) => v.name.toLowerCase() === name.toLowerCase());
     if (existing !== -1) this.result.views.splice(existing, 1);
     this.result.views.push({ schema, name, columns, sql, sources, materialized: materialized || undefined });
+  }
+
+  /** Words that describe a routine between its parameter list and its body, on either engine. */
+  private static readonly ROUTINE_CHARACTERISTICS = new Set([
+    // PostgreSQL
+    'IMMUTABLE', 'STABLE', 'VOLATILE', 'STRICT', 'CALLED', 'EXTERNAL', 'SECURITY', 'PARALLEL', 'COST', 'ROWS', 'SUPPORT', 'LEAKPROOF', 'WINDOW', 'TRANSFORM',
+    // MariaDB
+    'ON', 'NULL', 'INPUT', 'SAFE', 'UNSAFE', 'RESTRICTED',
+    // MariaDB
+    'DETERMINISTIC', 'NOT', 'CONTAINS', 'NO', 'READS', 'MODIFIES', 'SQL', 'DATA', 'INVOKER', 'DEFINER',
+  ]);
+
+  /** Where a RETURNS clause ends: the next characteristic, the body, or the end of the statement. */
+  private static readonly AFTER_RETURNS = new Set([...Parser.ROUTINE_CHARACTERISTICS, 'LANGUAGE', 'AS', 'BEGIN', 'RETURN', 'COMMENT', 'SET', 'CHARSET', 'COLLATE']);
+
+  /**
+   * CREATE [OR REPLACE] PROCEDURE | FUNCTION name (params) … body.
+   *
+   * PostgreSQL puts the body in a string after AS (dollar-quoted, as a rule),
+   * or since version 14 writes it inline as BEGIN ATOMIC … END or RETURN expr.
+   * MariaDB writes it inline: one statement, or a BEGIN … END compound whose
+   * semicolons are why a script moves the DELIMITER first (parseSql undoes
+   * that before this ever sees the tokens). The inline forms are found by
+   * counting blocks: BEGIN and CASE open one, END closes one, and END IF,
+   * END LOOP, END WHILE, END REPEAT and END FOR close control flow whose
+   * opening word was never counted.
+   */
+  private parseCreateRoutine(): void {
+    const kw = this.next();
+    const kind: ParsedRoutine['kind'] = kw.upper === 'FUNCTION' ? 'function' : 'procedure';
+    if (this.acceptWord('IF')) {
+      this.expectWord('NOT');
+      this.expectWord('EXISTS');
+    }
+    const { schema, name } = this.parseQualifiedName();
+    const params = this.isPunct('(') ? parseRoutineParams(this.parseParenRaw(), this.dialect === 'postgresql') : [];
+    let returns: string | undefined;
+    let language: string | undefined;
+    let body: string | undefined;
+    let comment: string | undefined;
+    for (;;) {
+      const t = this.peek();
+      if (t.type === 'eof' || (t.type === 'punct' && t.value === ';')) break;
+      if (this.acceptWord('RETURNS')) {
+        // RETURNS NULL ON NULL INPUT is PostgreSQL's STRICT, not a return type.
+        if (this.isWord('NULL')) continue;
+        const first = this.peek();
+        let last: Token | null = null;
+        let depth = 0;
+        for (;;) {
+          const x = this.peek();
+          if (x.type === 'eof') break;
+          if (x.type === 'punct') {
+            if (x.value === '(') depth++;
+            else if (x.value === ')') depth--;
+            else if (x.value === ';' && depth === 0) break;
+          }
+          if (depth === 0 && last && ((x.type === 'word' && Parser.AFTER_RETURNS.has(x.upper)) || x.type === 'string')) break;
+          last = this.next();
+        }
+        if (last) returns = this.sql.slice(first.start, last.end).trim();
+        continue;
+      }
+      if (this.acceptWord('LANGUAGE')) {
+        const l = this.next().value.toLowerCase();
+        // MariaDB's LANGUAGE SQL is the only language it has, and says nothing.
+        if (this.dialect === 'postgresql') language = l;
+        continue;
+      }
+      if (this.acceptWord('AS')) {
+        const b = this.next();
+        if (b.type === 'string') body = b.value;
+        // AS 'obj_file', 'link_symbol': a C function; the second string names the symbol.
+        if (this.acceptPunct(',')) this.next();
+        continue;
+      }
+      if (this.acceptWord('COMMENT')) {
+        this.acceptPunct('=');
+        const c = this.next();
+        if (c.type === 'string') comment = c.value;
+        continue;
+      }
+      if (this.isWord('SET') && this.dialect === 'postgresql') {
+        // SET configuration_parameter { TO | = } value | FROM CURRENT
+        this.next();
+        this.skipUntil([';']);
+        break;
+      }
+      if (t.type === 'word' && t.upper === 'BEGIN') {
+        body = this.readBlock();
+        break;
+      }
+      // A labelled compound statement: `main: BEGIN … END main`.
+      if (this.isIdent(t) && this.isPunct(':', 1) && this.peek(2).type === 'word' && this.peek(2).upper === 'BEGIN') {
+        const label = this.next();
+        this.next();
+        const block = this.readBlock();
+        body = `${label.value}: ${block}`;
+        if (this.isIdent() && this.peek().value.toLowerCase() === label.value.toLowerCase()) body += ` ${this.next().value}`;
+        break;
+      }
+      if (t.type === 'word' && Parser.ROUTINE_CHARACTERISTICS.has(t.upper)) {
+        this.next();
+        // COST 100, ROWS 1000
+        if (this.peek().type === 'number') this.next();
+        continue;
+      }
+      // Anything else starts a single-statement body (MariaDB, or PostgreSQL's RETURN expr).
+      const first = this.peek();
+      this.skipUntil([';']);
+      const last = this.tokens[this.pos - 1];
+      body = last && last.end > first.start ? this.sql.slice(first.start, last.end).trim() : '';
+      break;
+    }
+    this.skipStatement();
+    if (body === undefined) {
+      this.warn(`CREATE ${kw.upper} ${name} has no body, so it was skipped`, kw);
+      return;
+    }
+    const existing = this.result.routines.findIndex((r) => r.name.toLowerCase() === name.toLowerCase() && (r.schema ?? '') === (schema ?? ''));
+    if (existing !== -1) this.result.routines.splice(existing, 1);
+    this.result.routines.push({
+      ...(schema ? { schema } : {}),
+      name,
+      kind,
+      params,
+      ...(kind === 'function' && returns ? { returns } : {}),
+      ...(language ? { language } : {}),
+      body,
+      ...(comment ? { comment } : {}),
+    });
+  }
+
+  /** BEGIN … END with everything nested inside it, as raw text; consumes it. */
+  private readBlock(): string {
+    const first = this.expectWord('BEGIN');
+    let depth = 1;
+    let last = first;
+    while (depth > 0) {
+      const t = this.next();
+      if (t.type === 'eof') this.fail('BEGIN without a matching END', first);
+      last = t;
+      if (t.type !== 'word') continue;
+      if (t.upper === 'BEGIN' || t.upper === 'CASE') depth++;
+      else if (t.upper === 'END') {
+        const n = this.peek();
+        if (n.type === 'word' && ['IF', 'LOOP', 'WHILE', 'REPEAT', 'FOR'].includes(n.upper)) {
+          last = this.next();
+          continue;
+        }
+        if (n.type === 'word' && n.upper === 'CASE') last = this.next();
+        depth--;
+      }
+    }
+    return this.sql.slice(first.start, last.end);
   }
 
   private parseCreateTable(): void {
@@ -1274,6 +1451,14 @@ class Parser {
         if (col) col.comment = text ?? undefined;
         else this.warn(`COMMENT ON COLUMN ${parts.join('.')}: column not found`, start);
       }
+    } else if (kind.upper === 'PROCEDURE' || kind.upper === 'FUNCTION') {
+      const { schema, name } = this.parseQualifiedName();
+      if (this.isPunct('(')) this.parseParenRaw();
+      this.expectWord('IS');
+      const s = this.next();
+      const routine = this.result.routines.find((r) => r.name.toLowerCase() === name.toLowerCase() && (!schema || !r.schema || r.schema === schema));
+      if (routine) routine.comment = s.type === 'string' ? s.value : undefined;
+      else this.warn(`COMMENT ON ${kind.upper} ${name}: ${kind.value.toLowerCase()} not found`, start);
     } else {
       this.warn(`Skipped COMMENT ON ${kind.value.toUpperCase()}`, start);
     }
@@ -1288,16 +1473,81 @@ class Parser {
   }
 }
 
+/**
+ * The `DELIMITER` lines of a mysql / mariadb client script, undone.
+ *
+ * DELIMITER is not SQL: it tells the command-line client to stop splitting at
+ * `;` so a procedure body full of semicolons reaches the server whole. The
+ * parser reads a body by counting its BEGIN and END instead, so here each
+ * DELIMITER line is blanked and every use of the custom delimiter is turned
+ * back into `;`. Both are replaced with text of the same length, so every line
+ * and column a message reports still points at the script as it was pasted.
+ * Strings and comments are left alone: a `//` inside a string is not a
+ * delimiter.
+ */
+export function undoDelimiters(sql: string): string {
+  if (!/^[ \t]*DELIMITER[ \t]/im.test(sql)) return sql;
+  let out = '';
+  let delim = ';';
+  let i = 0;
+  const n = sql.length;
+  while (i < n) {
+    const lineStart = i === 0 || sql[i - 1] === '\n';
+    if (lineStart) {
+      const eol = sql.indexOf('\n', i);
+      const line = sql.slice(i, eol === -1 ? n : eol);
+      const m = /^[ \t]*DELIMITER[ \t]+(\S+)[ \t]*\r?$/i.exec(line);
+      if (m) {
+        delim = m[1];
+        out += ' '.repeat(line.length);
+        i += line.length;
+        continue;
+      }
+    }
+    const ch = sql[i];
+    if (ch === "'" || ch === '"' || ch === '`') {
+      let j = i + 1;
+      while (j < n && sql[j] !== ch) j += sql[j] === '\\' ? 2 : 1;
+      out += sql.slice(i, j + 1);
+      i = j + 1;
+      continue;
+    }
+    if ((ch === '-' && sql[i + 1] === '-') || ch === '#') {
+      const eol = sql.indexOf('\n', i);
+      const end = eol === -1 ? n : eol;
+      out += sql.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (ch === '/' && sql[i + 1] === '*') {
+      const close = sql.indexOf('*/', i + 2);
+      const end = close === -1 ? n : close + 2;
+      out += sql.slice(i, end);
+      i = end;
+      continue;
+    }
+    if (delim !== ';' && sql.startsWith(delim, i)) {
+      out += ';' + ' '.repeat(delim.length - 1);
+      i += delim.length;
+      continue;
+    }
+    out += ch;
+    i++;
+  }
+  return out;
+}
+
 /** Parse a DDL script. Never throws for SQL errors: they are collected in `errors`. */
 export function parseSql(sql: string, dialect: Dialect): ParseResult {
   let tokens: Token[];
+  const text = undoDelimiters(sql);
   try {
-    tokens = tokenize(sql, { bracketIdentifiers: dialect === 'sqlite' });
+    tokens = tokenize(text, { bracketIdentifiers: dialect === 'sqlite' });
   } catch (e) {
     if (e instanceof SqlSyntaxError) {
-      return { tables: [], views: [], extensions: [], enums: [], compositeTypes: [], errors: [{ message: e.message, line: e.line, col: e.col }], warnings: [], statementCount: 0 };
+      return { tables: [], views: [], routines: [], extensions: [], enums: [], compositeTypes: [], errors: [{ message: e.message, line: e.line, col: e.col }], warnings: [], statementCount: 0 };
     }
     throw e;
   }
-  return new Parser(sql, tokens, dialect).parse();
+  return new Parser(text, tokens, dialect).parse();
 }

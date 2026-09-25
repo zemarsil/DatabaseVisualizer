@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  DatabaseZap,
   Boxes,
   BookmarkPlus,
   Code2,
@@ -215,9 +216,19 @@ function buildItems(): PaletteItem[] {
   if (dbTools) {
     act('add-table', 'Edit', 'Add table', () => s.addTable(), { icon: Table2, hint: 'T' });
     act('add-view', 'Edit', 'Add view', () => s.addTable(undefined, { kind: 'view' }), { icon: Eye });
+    act(
+      'add-procedure',
+      'Edit',
+      'Add procedure',
+      () => {
+        s.addProgram({ kind: 'procedure' });
+        s.setInspectorOpen(true);
+      },
+      { icon: DatabaseZap, keywords: ['stored', 'routine', 'function', 'plpgsql', 'call'] },
+    );
   }
   act('add-note', 'Edit', 'Add note', () => s.addNote(), { icon: StickyNote, hint: 'N' });
-  for (const k of CODE_KINDS) {
+  for (const k of CODE_KINDS.filter((x) => x.id !== 'procedure')) {
     act(
       `add-${k.id}`,
       'Edit',
