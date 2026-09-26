@@ -352,6 +352,12 @@ interface Actions {
   removeProgramStep: (programId: string, stepId: string) => void;
   /** Reorder: delta is -1 for earlier, +1 for later. Out-of-range moves do nothing. */
   moveProgramStep: (programId: string, stepId: string, delta: number) => void;
+  /**
+   * Run several actions as one history step: whatever they each pushed is
+   * folded into the single entry from before the first, so one Ctrl+Z undoes
+   * them all.
+   */
+  batch: (fn: () => void) => void;
   /** Replace every step at once, in one history step: a procedure's steps read back out of its body. */
   setProgramSteps: (programId: string, steps: ProgramStep[]) => void;
   /**
@@ -1492,6 +1498,13 @@ export const useStore = create<Store>()(
         });
         set((s) => invalidateTrace(s));
         return step.id;
+      },
+      batch: (fn) => {
+        const before = get().diagram;
+        fn();
+        const past = get().past;
+        const at = past.lastIndexOf(before);
+        if (at >= 0 && at < past.length - 1) set((s) => void (s.past = past.slice(0, at + 1)));
       },
       redefineProcedure: (programId, patch, steps) =>
         mutate((d) => {

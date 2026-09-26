@@ -39,6 +39,7 @@ import { programLinks } from '../src/lib/programs';
 import { INTROSPECT_QUERIES, routineFromRow } from '../server/db/postgres';
 import { classifyPastedText } from '../src/lib/clipboard';
 import { useStore } from '../src/store/useStore';
+import { pasteRoutineInto } from '../src/lib/canvasActions';
 
 /** Orders, an archive, and a procedure that moves one into the other. */
 function shop(dialect: Diagram['dialect'] = 'postgresql'): { d: Diagram; archive: Program; total: Program } {
@@ -473,6 +474,110 @@ END $$;`;
     const res = importSql(pasted, 'postgresql');
     expect(res.tables).toEqual([]);
     expect(res.programs.map((p) => [p.name, p.kind])).toEqual([['myproc', 'procedure']]);
+  });
+});
+
+describe('a paste with tables and views in it', () => {
+  /** A procedure that builds a temp table, a summary table and a view, then works on them. */
+  const proc = `CREATE OR REPLACE PROCEDURE rebuild(nslices int DEFAULT 16)
+LANGUAGE plpgsql AS $$
+DECLARE
+    n bigint;
+BEGIN
+  DROP TABLE IF EXISTS slices;
+  CREATE TEMP TABLE slices (id bigint PRIMARY KEY, n int);
+  CREATE TABLE IF NOT EXISTS summary AS SELECT id, count(*) AS c FROM orders GROUP BY id;
+  CREATE OR REPLACE VIEW recent AS SELECT * FROM orders WHERE placed_at > now() - interval '1 day';
+  INSERT INTO slices SELECT id, 1 FROM orders;
+  TRUNCATE orders_archive;
+  UPDATE orders SET placed_at = now();
+END $$;`;
+  const script = `CREATE TABLE orders (id int PRIMARY KEY, placed_at date, total_cents int);
+CREATE TABLE summary (id int PRIMARY KEY, c bigint);
+CREATE VIEW recent AS SELECT * FROM orders;
+${proc}
+CREATE FUNCTION helper() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;`;
+
+  it('reads a table or view the body creates, or empties, as a write to it', () => {
+    const { d } = shop();
+    const recent = createTable({ name: 'recent', kind: 'view', viewSql: 'SELECT * FROM orders' });
+    const summary = createTable({ name: 'summary' });
+    d.tables.push(recent, summary);
+    const name = (id?: string) => d.tables.find((t) => t.id === id)?.name;
+    const def = readCreateRoutine(proc, d)!;
+    expect(def.steps.map((s) => `${s.op} ${name(s.tableId)}`)).toEqual([
+      'read orders',
+      'write summary',
+      'read orders',
+      'write recent',
+      'read orders',
+      'write orders_archive',
+      'write orders',
+    ]);
+    // The statement each step carries starts where the statement does: no stray "REPLACE VIEW …".
+    expect(def.steps[3].sql!.startsWith('CREATE OR REPLACE VIEW recent AS SELECT')).toBe(true);
+    expect(def.steps[1].sql!.startsWith('CREATE TABLE IF NOT EXISTS summary AS SELECT')).toBe(true);
+    expect(def.steps[5].sql).toBe('TRUNCATE orders_archive');
+  });
+
+  it('recognises a routine that comes after other statements, and not one commented out', () => {
+    expect(looksLikeCreateRoutine(script)).toBe(true);
+    expect(looksLikeCreateRoutine('CREATE TABLE t (id int);\n-- CREATE PROCEDURE p() …')).toBe(false);
+  });
+
+  it('pasted into a procedure: redefines it, imports the rest beside it, keeps the tables it already had, in one undo step', () => {
+    const { d } = shop();
+    const blank = createProgram({ name: 'new_procedure', kind: 'procedure', language: 'other' });
+    d.programs.push(blank);
+    useStore.setState({ diagram: d, past: [], future: [] });
+    const r = pasteRoutineInto(blank.id, script)!;
+    expect(r).toMatchObject({ name: 'rebuild', params: 1, keptSteps: false, alongside: { tables: 1, views: 1, procedures: 1 } });
+    expect(r.warnings).toContain('orders is already in the diagram and was kept as it is.');
+
+    const after = useStore.getState().diagram;
+    // orders was not duplicated; summary and recent came in; helper came in as a procedure of its own.
+    expect(after.tables.map((t) => t.name).sort()).toEqual(['orders', 'orders_archive', 'recent', 'summary']);
+    expect(after.programs.filter((p) => p.kind === 'procedure').map((p) => p.name).sort()).toEqual(['archive_orders', 'helper', 'order_total', 'rebuild']);
+    const rebuilt = after.programs.find((p) => p.id === blank.id)!;
+    expect(rebuilt.name).toBe('rebuild');
+    expect(rebuilt.body).not.toContain('CREATE TABLE orders');
+    // The steps reach summary and recent, which the same paste created.
+    const names = rebuilt.steps.map((s) => `${s.op} ${after.tables.find((t) => t.id === s.tableId)?.name}`);
+    expect(names).toContain('write summary');
+    expect(names).toContain('write recent');
+    expect(useStore.getState().selection.programIds).toEqual([blank.id]);
+    // Defining a view is not writing rows into one, so Problems has nothing to say about it.
+    expect(lintDiagram(after).filter((f) => f.rule === 'program-writes-view' && f.programId === blank.id)).toEqual([]);
+
+    useStore.getState().undo();
+    const undone = useStore.getState().diagram;
+    expect(undone.tables.map((t) => t.name).sort()).toEqual(['orders', 'orders_archive']);
+    expect(undone.programs.find((p) => p.id === blank.id)!.name).toBe('new_procedure');
+    expect(undone.programs.some((p) => p.name === 'helper')).toBe(false);
+  });
+
+  it('reads the routine the procedure is already called when the paste has several', () => {
+    const { d } = shop();
+    const named = createProgram({ name: 'helper', kind: 'procedure', language: 'other' });
+    d.programs.push(named);
+    useStore.setState({ diagram: d, past: [], future: [] });
+    const r = pasteRoutineInto(named.id, script)!;
+    expect(r.name).toBe('helper');
+    expect(r.returns).toBe('int');
+    expect(useStore.getState().diagram.programs.filter((p) => p.name.startsWith('rebuild'))).toHaveLength(1);
+  });
+
+  it('draws the same writes through Import SQL, where the script defines the tables itself', () => {
+    const res = importSql(script, 'postgresql');
+    const rebuild = res.programs.find((p) => p.name === 'rebuild')!;
+    const names = rebuild.steps.map((s) => `${s.op} ${res.tables.find((t) => t.id === s.tableId)?.name}`);
+    expect(names).toEqual(['read orders', 'write summary', 'read orders', 'write recent', 'read orders', 'write orders']);
+  });
+
+  it('pastes a plain body as text', () => {
+    const { d } = shop();
+    useStore.setState({ diagram: d, past: [], future: [] });
+    expect(pasteRoutineInto(d.programs[0].id, 'BEGIN\n  CREATE TEMP TABLE x (id int);\nEND;')).toBeNull();
   });
 });
 

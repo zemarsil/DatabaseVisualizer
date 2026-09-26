@@ -23,6 +23,7 @@ import { useStore } from '@/store/useStore';
 import { useConnection } from '@/store/useConnection';
 import { classifyPastedText, decodeClipboard } from './clipboard';
 import { importSql } from './sql/import';
+import { looksLikeCreateRoutine, readCreateRoutine } from './procedures';
 import { parseDiagramFile, parseWorkspaceFile } from './io';
 import { getSqliteEngine } from './sqlite/engine';
 import { getDuckdbEngine } from './duckdb/engine';
@@ -38,6 +39,67 @@ function importedWhat(res: { tables: unknown[]; programs: Program[] }): string {
   const procedures = res.programs.filter(isProcedure).length;
   const parts = [res.tables.length || !procedures ? plural(res.tables.length, 'table') : '', procedures ? plural(procedures, 'procedure') : ''].filter(Boolean);
   return parts.join(' and ');
+}
+
+/** What pasting a CREATE PROCEDURE into a procedure did, for the editor to say. */
+export interface RoutinePasteResult {
+  name: string;
+  params: number;
+  returns?: string;
+  /** Steps drawn from the body; 0 when the procedure kept the ones it had. */
+  steps: number;
+  keptSteps: boolean;
+  /** What the paste brought besides the routine: tables, views, other procedures. */
+  alongside: { tables: number; views: number; procedures: number };
+  warnings: string[];
+}
+
+/**
+ * A pasted CREATE PROCEDURE / FUNCTION, read into an existing procedure node.
+ *
+ * The paste is often more than the routine: a migration file or a dump that
+ * creates the tables and views first, or several routines. The routine this
+ * procedure is (by name, else the first) redefines it; everything else is
+ * imported beside it, with a table or view the diagram already has kept as it
+ * is rather than copied. The import happens first, so the steps read out of
+ * the body can reach the tables the same paste created. All of it is one undo
+ * step. Null when the text holds no routine, so the paste lands as plain text.
+ */
+export function pasteRoutineInto(programId: string, text: string): RoutinePasteResult | null {
+  const s = useStore.getState();
+  const target = s.diagram.programs.find((p) => p.id === programId);
+  if (!target || !isProcedure(target) || !looksLikeCreateRoutine(text)) return null;
+  const first = readCreateRoutine(text, s.diagram, target.name);
+  if (!first) return null;
+  const name = first.patch.name;
+  const around = importSql(text, s.diagram.dialect, s.diagram, { keepExisting: true, skipRoutines: [name] });
+  // An exported script also carries the routine in its annotation block.
+  const others = around.programs.filter((p) => !(isProcedure(p) && p.name.toLowerCase() === name.toLowerCase()));
+  const brings = around.tables.length + others.length + around.customTypes.length + around.extensions.length > 0;
+  let def = first;
+  const keptSteps = target.steps.length > 0;
+  s.batch(() => {
+    if (brings) {
+      useStore.getState().importTables(around.tables, around.relationships, 'merge', { customTypes: around.customTypes, extensions: around.extensions, programs: others });
+      def = readCreateRoutine(text, useStore.getState().diagram, target.name) ?? first;
+    }
+    useStore.getState().redefineProcedure(programId, def.patch, keptSteps ? undefined : def.steps);
+  });
+  // An import clears the selection; the procedure being edited stays the one in the inspector.
+  useStore.getState().setSelection({ programIds: [programId], tableIds: [], noteIds: [], relationshipId: null, groupId: null });
+  return {
+    name,
+    params: def.patch.params?.length ?? 0,
+    returns: def.patch.returns,
+    steps: keptSteps ? 0 : def.steps.length,
+    keptSteps,
+    alongside: {
+      tables: around.tables.filter((t) => t.kind !== 'view').length,
+      views: around.tables.filter((t) => t.kind === 'view').length,
+      procedures: others.filter(isProcedure).length,
+    },
+    warnings: [...def.warnings, ...(brings ? around.warnings : [])],
+  };
 }
 
 /** The diagram-fragment flavor as a `copy` event spells it. */

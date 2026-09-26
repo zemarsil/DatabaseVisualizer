@@ -897,7 +897,9 @@ export function lintDiagram(d: Diagram): LintFinding[] {
         });
       }
 
-      if (s.op === 'write' && table?.kind === 'view') {
+      // A step that defines the view (a procedure's CREATE OR REPLACE VIEW)
+      // is not writing rows into it.
+      if (s.op === 'write' && table?.kind === 'view' && !/^\s*CREATE\b/i.test(s.sql ?? '')) {
         push({
           rule: 'program-writes-view',
           severity: 'warning',
