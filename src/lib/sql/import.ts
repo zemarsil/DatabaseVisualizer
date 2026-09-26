@@ -455,9 +455,36 @@ function parsedTableToTable(pt: ParsedTable): Table {
  * the text rather than out of the parse; a script without one imports exactly
  * as it always did.
  */
-export function importSql(sql: string, dialect: Dialect, existing: Diagram | null = null): ImportResult {
+export interface ImportOptions {
+  /**
+   * A table or view the diagram already has by name is left as it is rather
+   * than imported again as a renamed copy; references to it land on the one
+   * the diagram has. For a paste that restates part of the schema around the
+   * thing it is really about.
+   */
+  keepExisting?: boolean;
+  /** Routines not to import, by name: one the caller is reading into a procedure of its own. */
+  skipRoutines?: string[];
+}
+
+export function importSql(sql: string, dialect: Dialect, existing: Diagram | null = null, opts: ImportOptions = {}): ImportResult {
   const { annotations, error } = readAnnotations(sql);
-  const res = parseResultToDiagram(parseSql(sql, dialect), existing, annotations);
+  let parsed = parseSql(sql, dialect);
+  const had = new Set(opts.keepExisting ? (existing?.tables ?? []).map((t) => t.name.toLowerCase()) : []);
+  const skip = new Set((opts.skipRoutines ?? []).map((n) => n.toLowerCase()));
+  const keptTables = parsed.tables.filter((t) => had.has(t.name.toLowerCase())).map((t) => t.name);
+  const keptViews = parsed.views.filter((v) => had.has(v.name.toLowerCase())).map((v) => v.name);
+  if (had.size || skip.size) {
+    parsed = {
+      ...parsed,
+      tables: parsed.tables.filter((t) => !had.has(t.name.toLowerCase())),
+      views: parsed.views.filter((v) => !had.has(v.name.toLowerCase())),
+      routines: (parsed.routines ?? []).filter((r) => !skip.has(r.name.toLowerCase())),
+    };
+  }
+  const res = parseResultToDiagram(parsed, existing, annotations);
+  const kept = [...keptTables, ...keptViews];
+  if (kept.length) res.warnings.push(`${kept.join(', ')} ${kept.length === 1 ? 'is' : 'are'} already in the diagram and ${kept.length === 1 ? 'was' : 'were'} kept as ${kept.length === 1 ? 'it is' : 'they are'}.`);
   if (error) res.warnings.push(error);
   return res;
 }

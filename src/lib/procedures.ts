@@ -326,15 +326,53 @@ const READ_WORDS = new Set(['SELECT', 'WITH', 'PERFORM']);
 /** Where the first top-level word of a set starts in a statement, or -1. */
 function firstTopLevel(text: string, words: Set<string>): number {
   let depth = 0;
+  let prev = '';
   for (const s of scanSql(text)) {
+    if (s.kind === 'space' || s.kind === 'comment') continue;
     if (s.kind === 'punct') {
       if (s.text === '(') depth++;
       else if (s.text === ')') depth = Math.max(0, depth - 1);
+      prev = s.text;
       continue;
     }
-    if (depth === 0 && s.kind === 'word' && words.has(s.text.toUpperCase())) return s.start;
+    const up = s.kind === 'word' ? s.text.toUpperCase() : '';
+    // The REPLACE of CREATE OR REPLACE is not MariaDB's REPLACE INTO.
+    if (depth === 0 && words.has(up) && !(up === 'REPLACE' && prev === 'OR')) return s.start;
+    prev = up;
   }
   return -1;
+}
+
+/**
+ * The table or view a statement makes or empties: `CREATE [OR REPLACE]
+ * [TEMP | UNLOGGED | MATERIALIZED …] TABLE | VIEW [IF NOT EXISTS] name` or
+ * `TRUNCATE [TABLE] [ONLY] name`. A procedure that builds a table is writing
+ * it as surely as one that inserts into it, and the canvas should say so.
+ */
+function madeOrEmptied(text: string): { name: string; at: number } | null {
+  const segs = scanSql(text).filter((x) => x.kind !== 'space' && x.kind !== 'comment');
+  const up = (i: number) => (segs[i]?.kind === 'word' ? segs[i].text.toUpperCase() : '');
+  const nameAt = (i: number): string | null => {
+    if (!segs[i] || (segs[i].kind !== 'word' && segs[i].kind !== 'quoted')) return null;
+    let j = i;
+    while (segs[j + 1]?.text === '.' && segs[j + 2]) j += 2;
+    return segs[j].text.replace(/^["`]|["`]$/g, '');
+  };
+  const at = segs.findIndex((x) => x.kind === 'word' && /^(CREATE|TRUNCATE)$/i.test(x.text));
+  if (at < 0) return null;
+  let i = at + 1;
+  if (up(at) === 'TRUNCATE') {
+    if (up(i) === 'TABLE') i++;
+    if (up(i) === 'ONLY') i++;
+  } else {
+    if (up(i) === 'OR' && up(i + 1) === 'REPLACE') i += 2;
+    while (['TEMP', 'TEMPORARY', 'UNLOGGED', 'GLOBAL', 'LOCAL', 'MATERIALIZED', 'RECURSIVE'].includes(up(i))) i++;
+    if (up(i) !== 'TABLE' && up(i) !== 'VIEW') return null;
+    i++;
+    if (up(i) === 'IF' && up(i + 1) === 'NOT' && up(i + 2) === 'EXISTS') i += 3;
+  }
+  const name = nameAt(i);
+  return name ? { name, at: segs[at].start } : null;
 }
 
 /** A read inside `FOR r IN SELECT … LOOP` ends where the loop body begins. */
@@ -395,9 +433,10 @@ export function stepsFromBody(
       if (target) steps.push(createProgramStep({ op: 'call', codeId: target.id, code: ensureSemicolon(text.slice(firstTopLevel(text, new Set(['CALL'])))) }));
       continue;
     }
-    const refs = referencedTables(text);
+    const made = madeOrEmptied(text);
+    const refs = [...referencedTables(text), ...(made ? [{ name: made.name, role: 'write' as const }] : [])];
     if (!refs.length) continue;
-    const writeAt = firstTopLevel(text, WRITE_WORDS);
+    const writeAt = made ? made.at : firstTopLevel(text, WRITE_WORDS);
     const readAt = firstTopLevel(text, READ_WORDS);
     const writeSql = writeAt >= 0 ? text.slice(writeAt).trim() : '';
     const readSql = readAt >= 0 && (writeAt < 0 || readAt < writeAt) ? cutAtLoop(text.slice(readAt)) : writeSql || text.trim();
@@ -463,7 +502,9 @@ export function proceduresFromRoutines(routines: RoutineSource[], resolveTable: 
  * or a SQL client. A leading DELIMITER line (the mariadb client's) is allowed.
  */
 export function looksLikeCreateRoutine(text: string): boolean {
-  return /^\s*(?:DELIMITER[ \t]+\S+[ \t]*\r?\n\s*)?CREATE\s+(?:OR\s+REPLACE\s+)?(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\b/i.test(text);
+  // Anywhere a statement can start, so a paste that restates the tables and
+  // views before the procedure counts too; a commented-out one does not.
+  return /(?:^|[;\n])\s*CREATE\s+(?:OR\s+REPLACE\s+)?(?:DEFINER\s*=\s*\S+\s+)?(?:PROCEDURE|FUNCTION)\b/i.test(text);
 }
 
 export interface RoutineDefinition {
@@ -480,15 +521,21 @@ export interface RoutineDefinition {
  * (only what is inside the dollar quotes, or the BEGIN … END), and a COMMENT
  * if the paste carries one. Null when the text holds no routine the parser can
  * read, so the caller can let the paste land as plain text instead.
+ *
+ * A paste may restate the tables and views the routine works on, or hold
+ * several routines. `prefer` picks the routine by name (the one the procedure
+ * is already called), else the first is read; everything else in the paste is
+ * the caller's to import beside it.
  */
-export function readCreateRoutine(text: string, d: Diagram): RoutineDefinition | null {
+export function readCreateRoutine(text: string, d: Diagram, prefer?: string): RoutineDefinition | null {
   const res = parseSql(text, d.dialect);
   const routines = res.routines ?? [];
   if (!routines.length) return null;
   const warnings = res.errors.map((e) => `line ${e.line}: ${e.message}`);
-  if (routines.length > 1) warnings.push(`The paste defines ${routines.length} routines; only ${routines[0].name} was read. Import SQL brings in several at once.`);
+  // Of several, the one this procedure is already called, else the first.
+  const chosen = routines.find((r) => prefer && r.name.toLowerCase() === prefer.toLowerCase()) ?? routines[0];
   const byName = (name: string) => d.tables.find((t) => t.name.toLowerCase() === name.toLowerCase());
-  const [def] = proceduresFromRoutines([routines[0]], byName, d.programs);
+  const [def] = proceduresFromRoutines([chosen], byName, d.programs);
   return {
     patch: {
       name: def.name,

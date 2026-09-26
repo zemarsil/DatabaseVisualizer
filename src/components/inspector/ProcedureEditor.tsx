@@ -6,7 +6,8 @@ import { useUi } from '@/store/useUi';
 import { diagramScope } from '@/lib/sqlScope';
 import { describeProgram } from '@/lib/programs';
 import { callersOf, codePath } from '@/lib/codemap';
-import { bodyFromSteps, createProcedureParam, dialectHasProcedures, isStoredFunction, looksLikeCreateRoutine, readCreateRoutine, stepsFromBody } from '@/lib/procedures';
+import { bodyFromSteps, createProcedureParam, dialectHasProcedures, isStoredFunction, stepsFromBody } from '@/lib/procedures';
+import { pasteRoutineInto } from '@/lib/canvasActions';
 import { generateProcedureSql } from '@/lib/sql/generator';
 import { TYPE_SUGGESTIONS } from '@/lib/sql/dialect';
 import { SqlCode, SqlEditor } from '@/components/ui/SqlEditor';
@@ -33,7 +34,6 @@ export function ProcedureEditor({ program }: { program: Program }) {
   const duplicateProgram = useStore((s) => s.duplicateProgram);
   const addProgramStep = useStore((s) => s.addProgramStep);
   const setProgramSteps = useStore((s) => s.setProgramSteps);
-  const redefineProcedure = useStore((s) => s.redefineProcedure);
   const setSelection = useStore((s) => s.setSelection);
   const focusTable = useStore((s) => s.focusTable);
   const toast = useStore((s) => s.toast);
@@ -84,17 +84,18 @@ export function ProcedureEditor({ program }: { program: Program }) {
    * that is not a routine the parser can read pastes as plain text.
    */
   const pasteCreate = (text: string): boolean => {
-    if (!looksLikeCreateRoutine(text)) return false;
-    const def = readCreateRoutine(text, diagram);
-    if (!def) return false;
-    const drawSteps = program.steps.length === 0;
-    redefineProcedure(program.id, def.patch, drawSteps ? def.steps : undefined);
-    const n = def.patch.params?.length ?? 0;
-    const parts = [`${n} parameter${n === 1 ? '' : 's'}`];
-    if (def.patch.returns) parts.push(`returns ${def.patch.returns}`);
-    if (drawSteps && def.steps.length) parts.push(`${def.steps.length} step${def.steps.length === 1 ? '' : 's'} drawn from the body`);
-    toast('success', `Read ${def.patch.name} from the CREATE statement: ${parts.join(', ')}.${!drawSteps ? ' Its steps were kept; Detect steps redraws them from the new body.' : ''}`);
-    for (const w of def.warnings) toast('info', w);
+    const r = pasteRoutineInto(program.id, text);
+    if (!r) return false;
+    const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+    const parts = [plural(r.params, 'parameter')];
+    if (r.returns) parts.push(`returns ${r.returns}`);
+    if (r.steps) parts.push(`${plural(r.steps, 'step')} drawn from the body`);
+    const alongside = [r.alongside.tables ? plural(r.alongside.tables, 'table') : '', r.alongside.views ? plural(r.alongside.views, 'view') : '', r.alongside.procedures ? plural(r.alongside.procedures, 'other procedure') : ''].filter(Boolean);
+    toast(
+      'success',
+      `Read ${r.name} from the CREATE statement: ${parts.join(', ')}.${alongside.length ? ` Also imported ${alongside.join(', ')} from the paste.` : ''}${r.keptSteps ? ' Its steps were kept; Detect steps redraws them from the new body.' : ''}`,
+    );
+    for (const w of r.warnings) toast('info', w);
     return true;
   };
 
