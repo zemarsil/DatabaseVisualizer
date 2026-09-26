@@ -21,7 +21,8 @@
  */
 import { useStore } from '@/store/useStore';
 import { useConnection } from '@/store/useConnection';
-import { classifyPastedText, decodeClipboard } from './clipboard';
+import { classifyPastedText, decodeClipboard, type PastedKind } from './clipboard';
+import { guessLanguage, languageFromFilename } from './code/lex';
 import { importSql } from './sql/import';
 import { parseDiagramFile, parseWorkspaceFile } from './io';
 import { getSqliteEngine } from './sqlite/engine';
@@ -30,7 +31,7 @@ import { introspectionToDiagram } from './introspectImport';
 import { estimateNodeSize } from './geometry';
 import { selectionFlavors, type ClipboardFlavors } from './selectionExport';
 import { confirmDialog } from '@/components/ui/Modal';
-import { isProcedure, type Program, type Table } from '@shared/types';
+import { codeKindMeta, isProcedure, programLanguageMeta, type Program, type Table } from '@shared/types';
 
 /** "3 tables and 1 procedure": what an import brought, for its toast. */
 function importedWhat(res: { tables: unknown[]; programs: Program[] }): string {
@@ -259,7 +260,7 @@ function gridAt(tables: Table[], at: { x: number; y: number }): void {
 }
 
 /** Paste clipboard text onto the canvas. Returns what it recognised. */
-export function pasteText(text: string, at?: { x: number; y: number }): 'clipboard' | 'sql' | 'diagram' | 'unknown' {
+export function pasteText(text: string, at?: { x: number; y: number }): PastedKind {
   const s = useStore.getState();
   const kind = classifyPastedText(text);
   if (kind === 'clipboard') {
@@ -291,6 +292,8 @@ export function pasteText(text: string, at?: { x: number; y: number }): 'clipboa
     }
     const problems = res.errors.length ? ` (${res.errors.length} statement${res.errors.length === 1 ? '' : 's'} had errors)` : '';
     s.toast('success', `Imported ${importedWhat(res)} from the pasted SQL${problems}.`);
+  } else if (kind === 'code') {
+    addCode(text, guessLanguage(text)!, at);
   } else if (kind === 'diagram') {
     try {
       const d = parseDiagramFile(text);
@@ -307,6 +310,25 @@ export function pasteText(text: string, at?: { x: number; y: number }): 'clipboa
     }
   }
   return kind;
+}
+
+/**
+ * Code pasted or dropped on the canvas, as a node holding it: inside the
+ * selected container when there is one that can take it, its steps read and
+ * the classes and functions it defines made into members.
+ */
+function addCode(text: string, language: Program['language'], at?: { x: number; y: number }, file?: string): void {
+  const s = useStore.getState();
+  const selected = s.selection.programIds.length === 1 ? s.selection.programIds[0] : undefined;
+  const made = s.addCodeFromSource({ source: text, language, ...(file ? { name: file, file: true } : {}), ...(at ? { position: at } : {}), parentId: selected });
+  if (!made) return;
+  const { reading } = made;
+  const node = useStore.getState().diagram.programs.find((p) => p.id === made.id);
+  const parts: string[] = [];
+  if (reading.created) parts.push(`${reading.created} ${reading.created === 1 ? 'member' : 'members'} inside`);
+  if (reading.steps) parts.push(`${reading.steps} step${reading.steps === 1 ? '' : 's'}`);
+  const noun = codeKindMeta(made.kind).label.toLowerCase();
+  s.toast('success', `${file ? `Read ${file}` : `Pasted the ${programLanguageMeta(language).label} code`} as the ${noun} ${node?.name ?? ''}${parts.length ? `: ${parts.join(', ')}` : ''}.`);
 }
 
 /**
@@ -377,7 +399,7 @@ export async function pasteFromClipboard(at?: { x: number; y: number }): Promise
     useStore.getState().toast('info', 'Nothing to paste. Copy tables or SQL first.');
     return;
   }
-  if (pasteText(text, at) === 'unknown') useStore.getState().toast('info', 'The clipboard holds neither tables, SQL nor a diagram file.');
+  if (pasteText(text, at) === 'unknown') useStore.getState().toast('info', 'The clipboard holds neither tables, SQL, code nor a diagram file.');
 }
 
 /** Open files dropped on the canvas: .sql, .dbviz.json, or a SQLite / DuckDB database. */
@@ -455,7 +477,12 @@ export async function openDroppedFiles(files: File[], at?: { x: number; y: numbe
         s.toast('success', `Imported ${importedWhat(res)} from ${file.name}.`);
         continue;
       }
-      s.toast('error', `${file.name}: drop a .sql, .dbviz.json, .sqlite or .duckdb file.`);
+      const language = languageFromFilename(file.name);
+      if (language) {
+        addCode(text, language, at, file.name);
+        continue;
+      }
+      s.toast('error', `${file.name}: drop a .sql, .dbviz.json, .sqlite or .duckdb file, or a source file in a language the code map reads.`);
     } catch (e) {
       s.toast('error', `${file.name}: ${e instanceof Error ? e.message : String(e)}`);
     }

@@ -40,9 +40,16 @@ export interface CodeEditorProps {
   className?: string;
   style?: CSSProperties;
   disabled?: boolean;
+  /**
+   * Sees pasted text before it lands. `whole` says the paste replaces
+   * everything in the box (it was empty, or all of it was selected), which is
+   * when a paste is a new piece of code rather than an edit to this one.
+   * Returning true means the paste was handled and the text is not inserted.
+   */
+  onPaste?: (text: string, whole: boolean) => boolean;
 }
 
-export function CodeEditor({ value, onChange, language, rows = 6, placeholder, ariaLabel, className, style, disabled }: CodeEditorProps) {
+export function CodeEditor({ value, onChange, language, rows = 6, placeholder, ariaLabel, className, style, disabled, onPaste }: CodeEditorProps) {
   const taRef = useRef<HTMLTextAreaElement>(null);
   const hlRef = useRef<HTMLPreElement>(null);
   const spans = useMemo(() => (value.length > HIGHLIGHT_LIMIT ? null : highlightCode(value, language)), [value, language]);
@@ -90,6 +97,12 @@ export function CodeEditor({ value, onChange, language, rows = 6, placeholder, a
           onChange={(e) => onChange(e.target.value)}
           onScroll={syncScroll}
           onKeyDown={onKeyDown}
+          onPaste={(e) => {
+            if (!onPaste) return;
+            const ta = e.currentTarget;
+            const whole = !value.trim() || (ta.selectionStart === 0 && ta.selectionEnd === value.length);
+            if (onPaste(e.clipboardData.getData('text/plain'), whole)) e.preventDefault();
+          }}
         />
       </div>
     </div>

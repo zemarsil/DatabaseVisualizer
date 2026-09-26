@@ -1107,6 +1107,15 @@ export interface Program {
   comment?: string;
   /** Always empty on a data file, which runs nothing and so does nothing in order. */
   steps: ProgramStep[];
+  /**
+   * The code itself, as it was pasted: a function, a class, a whole file. Kept
+   * so the steps read out of it can be read again, and so the part of the code
+   * no step claims is not lost. The steps stay what the canvas draws; this is
+   * where they came from, and editing it redraws nothing until it is read
+   * again. Never on a data file, which holds no code, or a procedure, whose
+   * code is its `body`. See src/lib/code/read.ts.
+   */
+  source?: string;
 
   /*
    * The fields below belong to procedures alone, and are dropped from every

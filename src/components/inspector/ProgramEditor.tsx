@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ArrowDown, ArrowUp, ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Code2, Copy, Crosshair, Plus, Trash2, TriangleAlert, Ungroup } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Code2, Copy, Crosshair, Plus, ScanSearch, Trash2, TriangleAlert, Ungroup } from 'lucide-react';
 import {
   CODE_KINDS,
   PROGRAM_LANGUAGES,
@@ -26,6 +26,8 @@ import { describeProgram } from '@/lib/programs';
 import { callersOf, codeChildren, codeDescendantIds, codePath, wouldNestInItself } from '@/lib/codemap';
 import { generateProgramCode, hasStarter, programCodeFilename } from '@/lib/code/generate';
 import { hasDriver } from '@/lib/code/drivers';
+import { guessLanguage, readsAs } from '@/lib/code/lex';
+import type { SourceReading } from '@/lib/code/read';
 import { SqlEditor } from '@/components/ui/SqlEditor';
 import { CodeBlock, CodeEditor } from '@/components/ui/CodeEditor';
 import { confirmDialog } from '@/components/ui/Modal';
@@ -51,6 +53,7 @@ export function ProgramEditor({ program }: { program: Program }) {
   const setCodeCollapsed = useStore((s) => s.setCodeCollapsed);
   const addProgram = useStore((s) => s.addProgram);
   const addProgramStep = useStore((s) => s.addProgramStep);
+  const readCode = useStore((s) => s.readCode);
   const setSelection = useStore((s) => s.setSelection);
   const focusTable = useStore((s) => s.focusTable);
   const toast = useStore((s) => s.toast);
@@ -107,6 +110,69 @@ export function ProgramEditor({ program }: { program: Program }) {
   };
 
   const memberKinds = CODE_KINDS.filter((k) => canContain(kind, k.id));
+  const hasSource = Boolean(program.source?.trim());
+
+  const announce = (r: SourceReading | null) => {
+    if (!r) return;
+    const parts: string[] = [];
+    if (r.steps) parts.push(`${r.steps} step${r.steps === 1 ? '' : 's'}`);
+    if (r.created) parts.push(`${r.created} new ${r.created === 1 ? 'member' : 'members'} inside`);
+    if (r.updated) parts.push(`${r.updated} ${r.updated === 1 ? 'member' : 'members'} read again`);
+    const label = programLanguageMeta(r.language).label;
+    if (parts.length) toast('success', `Read the ${label} code${r.renamed ? ` as ${r.renamed}` : ''}: ${parts.join(', ')}.`);
+    else
+      toast(
+        'info',
+        `Kept the ${label} code. Nothing in it runs a query on a table in this diagram, or calls, imports or loads another node on the canvas, so there are no steps to draw from it yet.`,
+      );
+  };
+
+  /**
+   * Read the code the node holds: its steps are drawn again from it, and the
+   * members it defines made or read again. Replacing steps someone drew — and
+   * the notes on them — asks first.
+   */
+  const readSteps = async () => {
+    const source = program.source ?? '';
+    if (!source.trim()) return;
+    if (program.steps.length || members.length) {
+      const bits = [
+        program.steps.length === 1 ? 'its step (and any note on it) is replaced' : program.steps.length ? `its ${program.steps.length} steps (and any notes on them) are replaced` : '',
+        members.length ? 'the members the code defines are read again; members it does not mention are left alone' : '',
+      ].filter(Boolean);
+      const ok = await confirmDialog({
+        title: `Read ${program.name} again from its code?`,
+        message: `${bits.join(', and ')}. This can be undone with Ctrl+Z.`.replace(/^./, (c) => c.toUpperCase()),
+        confirmLabel: 'Read the code',
+      });
+      if (!ok) return;
+    }
+    announce(readCode(program.id, source));
+  };
+
+  /**
+   * Code pasted over everything in the box is a new piece of code, and is read
+   * straight away — unless the node already has steps, which are kept (they may
+   * carry notes nothing in the code could bring back) with the button there to
+   * redraw them. A paste into the middle of the code is an edit, and lands as
+   * one.
+   */
+  const pasteCode = (text: string, whole: boolean): boolean => {
+    if (!whole || !text.trim()) return false;
+    if (program.steps.length) {
+      updateProgram(program.id, { source: text });
+      toast('info', `Kept the code. The ${program.steps.length} step${program.steps.length === 1 ? '' : 's'} already on ${program.name} were kept; Read steps from the code draws them from it instead.`);
+      return true;
+    }
+    announce(readCode(program.id, text));
+    return true;
+  };
+
+  /** A whole definition pasted into the name box is the node's code, not its name. */
+  const pasteIntoName = (text: string): boolean => {
+    if (!text.includes('\n') || !(guessLanguage(text) || readsAs(text, program.language))) return false;
+    return pasteCode(text, true);
+  };
 
   /**
    * Turning a node into a data file drops its steps, because nothing runs in
@@ -134,6 +200,9 @@ export function ProgramEditor({ program }: { program: Program }) {
           className="input input--mono"
           value={program.name}
           onChange={(e) => updateProgram(program.id, { name: e.target.value })}
+          onPaste={(e) => {
+            if (!isData && pasteIntoName(e.clipboardData.getData('text/plain'))) e.preventDefault();
+          }}
           placeholder={kind === 'module' ? 'e.g. orders.py' : kind === 'class' ? 'e.g. OrderService' : kind === 'function' ? 'e.g. place_order' : kind === 'data' ? `e.g. settings.${lang.extension}` : 'e.g. ingest_worker'}
           autoFocus
         />
@@ -322,6 +391,40 @@ export function ProgramEditor({ program }: { program: Program }) {
         </div>
       ) : (
         <>
+          <div className="field">
+            <span className="field__label">Code</span>
+            <CodeEditor
+              value={program.source ?? ''}
+              onChange={(v) => updateProgram(program.id, { source: v || undefined })}
+              onPaste={pasteCode}
+              language={program.language}
+              rows={hasSource ? 10 : 3}
+              placeholder={
+                kind === 'function'
+                  ? 'Paste the function here, and its steps are read out of it.'
+                  : kind === 'class'
+                    ? 'Paste the class here: its methods become members, each with its steps.'
+                    : kind === 'module'
+                      ? 'Paste the file here: its classes and functions become members, each with its steps.'
+                      : 'Paste the code here — a script, a file, a function — and its steps are read out of it.'
+              }
+              ariaLabel="Code"
+              className="program-source"
+            />
+            <div className="row" style={{ marginTop: 6 }}>
+              <button className="btn btn--sm" onClick={() => void readSteps()} disabled={!hasSource} title="Draw the steps again from the code, and read the members it defines">
+                <ScanSearch /> Read steps from the code
+              </button>
+            </div>
+            <span className="field__hint">
+              {hasSource
+                ? `Kept with the ${kindMeta.label.toLowerCase()}. Each query on a table becomes a read or a write, each call to a node on the canvas a call, and a run of other work a compute step; editing the code redraws nothing until it is read again.`
+                : kindMeta.container
+                  ? `Pasting a file makes a member for each class and function in it, and reads each one's steps. Pasting again reads them again in place.`
+                  : 'Kept with the function, so its steps can be read again and nothing pasted is lost.'}
+            </span>
+          </div>
+
           <div className="field">
             <span className="field__label">Steps, in order</span>
             <span className="field__hint">{describeProgram(diagram, program)}</span>

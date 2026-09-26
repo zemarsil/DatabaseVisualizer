@@ -145,6 +145,9 @@ function parsePrograms(v: unknown): Program[] {
       color: str(p.color, 'slate'),
       ...(typeof p.comment === 'string' && p.comment ? { comment: p.comment } : {}),
       steps,
+      // The code a node was read from. Never on a data file, which holds none,
+      // or a procedure, whose code is its body.
+      ...(kind !== 'data' && kind !== 'procedure' && typeof p.source === 'string' && p.source.trim() ? { source: p.source } : {}),
       ...(kind === 'procedure' ? parseRoutineFields(p) : {}),
     });
   }

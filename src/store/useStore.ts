@@ -59,6 +59,7 @@ import {
 } from '@/lib/model';
 import { nextGroupPosition } from '@/lib/groups';
 import { nextProgramPosition, prevailingLanguage } from '@/lib/programs';
+import { outlineSource, pastedKind, readSourceInto, type SourceReading } from '@/lib/code/read';
 import { placementSizes, type SizeMap } from '@/lib/geometry';
 import { PALETTE } from '@/lib/palette';
 import { translateType } from '@/lib/sql/dialect';
@@ -359,6 +360,30 @@ interface Actions {
    * given, its steps, in one history step so one Ctrl+Z puts the old one back.
    */
   redefineProcedure: (programId: string, patch: Partial<Omit<Program, 'id' | 'steps'>>, steps?: ProgramStep[]) => void;
+  /**
+   * Code pasted into a code node, read: kept on the node as its source, its
+   * steps drawn from it, and what it defines made into members (or read again
+   * in place, when a member by that name is already inside). One history step,
+   * so one Ctrl+Z puts the node back as it was. Null when the node cannot hold
+   * code: a data file, or a procedure, whose code is its body.
+   */
+  readCode: (programId: string, source: string) => SourceReading | null;
+  /**
+   * A new code node made from code pasted on the canvas or a file dropped on
+   * it, read in the same history step. What the code defines decides the kind:
+   * one function is a function, one class a class, several a module, and code
+   * that does work at the top level a program (a script). A dropped file is
+   * always a file: a module, or a program when it is a script. Lands inside
+   * `parentId` when that can hold it.
+   */
+  addCodeFromSource: (opts: {
+    source: string;
+    language: Program['language'];
+    name?: string;
+    file?: boolean;
+    position?: { x: number; y: number };
+    parentId?: string;
+  }) => { id: string; kind: CodeKind; reading: SourceReading } | null;
 
   // canvas
   /** Deletes tables, notes, programs and relationships together, as a single undo step. */
@@ -1364,6 +1389,8 @@ export const useStore = create<Store>()(
             // procedure stands in no container.
             if (codeKindOf(p) === 'procedure') delete p.parentId;
             else for (const key of ['schema', 'params', 'returns', 'body', 'routineLanguage'] as const) delete p[key];
+            // A data file holds no code, and a procedure's code is its body.
+            if (codeKindOf(p) === 'data' || codeKindOf(p) === 'procedure') delete p.source;
           },
           { coalesce: textPatchKey(`program:${id}`, patch) },
         ),
@@ -1504,6 +1531,47 @@ export const useStore = create<Store>()(
           }
           if (steps) p.steps = steps.map((st) => createProgramStep(st));
         }),
+      readCode: (programId, source) => {
+        const node = get().diagram.programs.find((p) => p.id === programId);
+        if (!node || codeKindOf(node) === 'data' || codeKindOf(node) === 'procedure') return null;
+        const sizes = get().placementSizes();
+        let reading: SourceReading | null = null;
+        mutate((d) => {
+          reading = readSourceInto(d as Diagram, programId, source, { sizes });
+        });
+        set((s) => invalidateTrace(s));
+        return reading;
+      },
+      addCodeFromSource: ({ source, language, name, file, position, parentId }) => {
+        const d = get().diagram;
+        const sizes = get().placementSizes();
+        const what = pastedKind(outlineSource(source, language));
+        // A file is a file whatever it holds: one function in orders.py is
+        // still orders.py, with the function inside it.
+        const kind: CodeKind = file ? (what.kind === 'program' ? 'program' : 'module') : what.kind;
+        const parent = parentId ? d.programs.find((p) => p.id === parentId) : undefined;
+        const inside = parent && canContain(codeKindOf(parent), kind) ? parent.id : undefined;
+        const ext = programLanguageMeta(language).extension;
+        const fallback = kind === 'module' ? `pasted.${ext}` : kind === 'class' ? 'PastedClass' : kind === 'function' ? 'pasted_function' : 'pasted_script';
+        const prg = createProgram({
+          name: uniqueProgramName(d, name ?? (file ? undefined : what.name) ?? fallback, inside),
+          ...(kind !== 'program' ? { kind } : {}),
+          ...(inside ? { parentId: inside } : {}),
+          ...(kind === 'program' ? { role: 'script' as const } : {}),
+          position: position ?? nextCodePosition(d, inside, nextProgramPosition(d), sizes),
+          language,
+        });
+        let reading: SourceReading | null = null;
+        mutate((dd) => {
+          dd.programs.push(prg);
+          reading = readSourceInto(dd as Diagram, prg.id, source, { sizes, language });
+        });
+        set((s) => {
+          s.selection = { ...emptySelection(), programIds: [prg.id] };
+          invalidateTrace(s);
+        });
+        return reading ? { id: prg.id, kind, reading } : null;
+      },
       setProgramSteps: (programId, steps) =>
         mutate((d) => {
           const p = d.programs.find((x) => x.id === programId);
