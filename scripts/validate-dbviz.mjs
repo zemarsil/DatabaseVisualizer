@@ -425,6 +425,11 @@ function validate(doc) {
 
     // A procedure is part of the schema: these fields are what its CREATE
     // statement is written from, and they are dropped from any other kind.
+    if (prg.source !== undefined) {
+      if (typeof prg.source !== 'string') err(`${pw}: "source" must be the code as text.`);
+      else if (kind === 'data') warn(`${pw} is a data file with "source"; a data file holds no code, so it is dropped on load.`);
+      else if (kind === 'procedure') warn(`${pw} is a procedure with "source"; a procedure's code is its "body", so "source" is dropped on load.`);
+    }
     const ROUTINE_FIELDS = ['schema', 'params', 'returns', 'body', 'routineLanguage'];
     if (kind !== 'procedure') {
       for (const f of ROUTINE_FIELDS) if (prg[f] !== undefined) warn(`${pw} is a ${noun} with "${f}"; only a procedure has one, so it is dropped on load.`);

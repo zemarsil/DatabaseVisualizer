@@ -98,6 +98,7 @@ already there.
 | `role` | no | `service`, `job`, `script` or `etl`. **Programs only**; on any other kind it is dropped on load, because a file is not scheduled. |
 | `entrypoint` | no | Free text with a per-kind meaning: where a program starts, a module's path, a class's declaration, a function's signature. The inspector labels the box accordingly. A function's, when it reads as a signature in the node's own language, is the signature the generated starter writes. |
 | `comment` | no | What it is for. Travels into the SQL annotation block, the Markdown export and the DBML note. |
+| `source` | no | The code the node was read from, as pasted: a function, a class, a whole file. The steps stay what the canvas draws; this is where they came from, kept so they can be read again. Rides in the SQL annotation block and the Markdown export. Never on a `data` node, which holds no code, or a procedure, whose code is its `body`: on either it is dropped on load. |
 | `color`, `position` | no | As for a table. For an **expanded container** the position is only an anchor — see [What is derived](#what-is-derived-never-stored). |
 | `steps` | no | Ordered. What the node does, in the order it does it. |
 | `params` | no | **Procedures only.** `{ id, name, type, mode?, defaultValue? }` in declaration order; `mode` is `in` (left out), `out` or `inout`, and `defaultValue` is PostgreSQL's alone. Types are translated with the columns when the dialect changes. |

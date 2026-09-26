@@ -6,6 +6,7 @@ import type { CustomType, Diagram, DiagramExtension, Program, Relationship, Tabl
 import { codeSubtreeIds } from './codemap';
 import { customTypesUsedBy } from './model';
 import { extensionsUsedBy } from './extensions/registry';
+import { guessLanguage } from './code/lex';
 
 export interface ClipboardPayload {
   dbvizClipboard: 1;
@@ -48,7 +49,7 @@ export function decodeClipboard(text: string): ClipboardPayload | null {
   }
 }
 
-export type PastedKind = 'clipboard' | 'sql' | 'diagram' | 'unknown';
+export type PastedKind = 'clipboard' | 'sql' | 'diagram' | 'code' | 'unknown';
 
 export function classifyPastedText(text: string): PastedKind {
   const trimmed = text.trim();
@@ -65,5 +66,8 @@ export function classifyPastedText(text: string): PastedKind {
   if (/\bcreate\s+(or\s+replace\s+)?(temp(orary)?\s+)?(unlogged\s+)?(materialized\s+)?(table|view|type|index|unique)\b/i.test(trimmed)) return 'sql';
   // A stored procedure or function on its own is a script too: it imports as a procedure node.
   if (/\bcreate\s+(or\s+replace\s+)?(definer\s*=\s*\S+\s+)?(procedure|function)\b/i.test(trimmed)) return 'sql';
+  // Code in a language the app reads becomes a code node holding it. Only a
+  // confident guess counts, so a paragraph of prose is still nothing.
+  if (guessLanguage(trimmed)) return 'code';
   return 'unknown';
 }

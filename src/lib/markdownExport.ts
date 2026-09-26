@@ -212,10 +212,20 @@ function programsSection(d: Diagram): string {
 
     for (const [i, s] of p.steps.entries()) {
       if (s.sql?.trim()) parts.push(`\n**Step ${i + 1} statement**\n\n\`\`\`sql\n${s.sql.trim()}\n\`\`\``);
-      if (s.code?.trim()) parts.push(`\n**Step ${i + 1} code**\n\n\`\`\`${lang.extension}\n${s.code.trim()}\n\`\`\``);
+      // A step's code read out of the node's source is a piece of the code
+      // printed once below, so it is not printed twice.
+      if (s.code?.trim() && !p.source?.trim()) parts.push(`\n**Step ${i + 1} code**\n\n\`\`\`${lang.extension}\n${s.code.trim()}\n\`\`\``);
     }
+    if (p.source?.trim()) parts.push(`\n**Code**\n\n${fence(p.source.replace(/\s+$/, ''), lang.extension)}`);
   }
   return parts.join('\n');
+}
+
+/** A fenced block long enough that no run of backticks inside the code closes it early. */
+function fence(code: string, tag: string): string {
+  const longest = Math.max(2, ...[...code.matchAll(/`+/g)].map((m) => m[0].length));
+  const bar = '`'.repeat(longest + 1);
+  return `${bar}${tag}\n${code}\n${bar}`;
 }
 
 function relationshipsSection(d: Diagram): string {

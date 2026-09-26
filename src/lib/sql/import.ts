@@ -375,6 +375,7 @@ function restorePrograms(annotated: AnnotatedProgram[], lookup: (name: string) =
       ...(a.role ? { role: a.role } : {}),
       ...(a.entrypoint ? { entrypoint: a.entrypoint } : {}),
       ...(a.comment ? { comment: a.comment } : {}),
+      ...(a.source ? { source: a.source } : {}),
       steps,
       ...(a.kind === 'procedure' && a.routine
         ? {

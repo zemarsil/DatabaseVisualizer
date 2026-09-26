@@ -124,6 +124,8 @@ export interface AnnotatedProgram {
   entrypoint?: string;
   comment?: string;
   steps: AnnotatedProgramStep[];
+  /** The code the node was read from, when it holds any. */
+  source?: string;
   /**
    * A procedure's definition. The CREATE statement above the block already
    * carries it on an engine that has procedures, and the importer takes it from
@@ -273,6 +275,7 @@ export function collectAnnotations(d: Diagram, emittedAsDdl: ReadonlySet<string>
     ...(trimmed(prg.entrypoint) ? { entrypoint: trimmed(prg.entrypoint) } : {}),
     ...(trimmed(prg.comment) ? { comment: trimmed(prg.comment) } : {}),
     ...(prg.kind === 'procedure' ? { routine: annotatedRoutine(prg, d.dialect) } : {}),
+    ...(prg.source?.trim() && prg.kind !== 'procedure' && prg.kind !== 'data' ? { source: prg.source.replace(/\s+$/, '') } : {}),
     steps: prg.steps.map((s) => {
       const meta = programStepOpMeta(s.op);
       const table = meta.touchesDatabase ? tableName.get(s.tableId ?? '') : undefined;
@@ -427,6 +430,7 @@ function program(v: unknown): AnnotatedProgram | null {
     ...(str(o.entrypoint) ? { entrypoint: str(o.entrypoint) } : {}),
     ...(str(o.comment) ? { comment: str(o.comment) } : {}),
     steps: settled.kind === 'data' ? [] : (Array.isArray(o.steps) ? o.steps : []).map(programStep).filter((s): s is AnnotatedProgramStep => s !== null),
+    ...(settled.kind !== 'data' && settled.kind !== 'procedure' && str(o.source) ? { source: str(o.source) } : {}),
     ...(settled.kind === 'procedure' && o.routine && typeof o.routine === 'object' ? { routine: routine(o.routine as Record<string, unknown>) } : {}),
   };
 }

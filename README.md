@@ -14,6 +14,7 @@ Drawn together they answer the question neither can alone: *which function reads
 ### Code
 
 - **Code maps**: modules as regions, classes inside them, functions as the nodes whose steps say what each one reads, writes, calls and loads, plus the YAML and JSON files it reads settings out of. Every arrow and every region is derived from the steps and the containment, never stored; collapse a module and its arrows gather onto it. Trace and focus work across the map, so *what reaches this function* is one click.
+- **Paste code, get its steps**: paste a function, a class, a whole file or a script into a code node — or straight onto the canvas, or drop the file there — and the node keeps the code and reads its steps out of it: every query on a table becomes a read or a write, every call to a node on the canvas a call, the work in between a compute step, and each class and function a member of its own. See [Pasting code into a node](#pasting-code-into-a-node).
 - **Scan a codebase into a map**: `npm run scan:code` reads Python, Rust, Go, C, C++, Java, JavaScript, TypeScript, Perl, shell, YAML and JSON, and writes the map somebody was otherwise going to draw by hand.
 - **Programs**: the work that happens outside a database gets a node of its own — an ordered list of steps, each carrying the statement it runs and the host-language code around it, with the app writing a starter for your language and engine.
 - **Problems** reads code as well as schemas: containment that cannot hold, import cycles, a data file nothing loads, a function nothing calls.
@@ -287,7 +288,7 @@ src/lib/programs.ts      programs: the arrows derived from their steps, round-tr
 src/lib/procedures.ts    stored procedures: CREATE / DROP per engine, the body written from the steps and the steps read out of a body
 src/shared/routines.ts   a routine's parameter list, read the same way from a CREATE statement and from PostgreSQL's catalog
 src/lib/codemap.ts       code maps: the containment tree, what a collapsed container stands in for, gathered arrows, container regions, paths
-src/lib/code/           drivers.ts: which package each language reaches each engine with; generate.ts: the starter, one file per container; highlight.ts: a lexer per host language
+src/lib/code/           drivers.ts: which package each language reaches each engine with; generate.ts: the starter, one file per container; highlight.ts: a lexer per host language; lex.ts + read.ts: pasted code read into steps and members, in the browser
 src/lib/layout.ts        dagre-based "detangle" (groups become dagre clusters)
 src/lib/trace.ts         BFS path finding + join-query builder
 src/lib/lineage.ts       which columns are computed rather than stored, what each one reads, and the chain in both directions
@@ -445,6 +446,81 @@ signature when what you typed reads as one in the file's own language, so
 `def place_order(self, email, cart) -> int` is the signature you get; a
 signature that already names the connection is handed it, and one that does not
 opens its own, because the diagram cannot say where yours comes from.
+
+### Pasting code into a node
+
+Drawing the steps by hand is right when the code does not exist yet. When it
+does, paste it. Every program, module, class and function in the inspector has
+a **Code** box, and pasting over everything in it keeps the code on the node and
+reads the steps out of it:
+
+```python
+# Score every pending job and write the result back.
+rows = cur.execute("SELECT id, payload FROM jobs WHERE status = 'pending'").fetchall()
+for job_id, payload in rows:
+    # turn the payload into model features
+    features = extract(payload)
+    score = model.predict(features)
+    label = "hot" if score > 0.8 else "cold"
+    cur.execute("INSERT INTO results (job_id, score, label) VALUES (?, ?, ?)", (job_id, score, label))
+    cur.execute("UPDATE jobs SET status = 'done' WHERE id = ?", (job_id,))
+conn.commit()
+```
+
+reads as `1 read jobs`, `2 compute` (noted *turn the payload into model
+features*), `3 write results`, `4 write jobs`, each with the columns it names.
+The reading follows the scanner's rules, in the browser, for all ten of its
+languages:
+
+| In the code | Becomes |
+| --- | --- |
+| A string holding SQL — adjacent and `+`-joined literals, a Rust `r#"…"#`, a Java text block, a Go backtick, a Perl or shell heredoc — naming a table in the diagram | A **read** or **write** of that table, the statement as its SQL, the columns it names ticked (`SELECT *` means the whole row) |
+| A query kept in a named constant (``const insertOrder = `…` ``, `LOCK='SELECT …'`) | The step goes where the constant is **used**, not where it is defined |
+| `name(` — or, in the shell, a word where a command goes — naming a node on the canvas | A **call**, to the nearest node by that name: a sibling method before a function in another file |
+| `import`, `from … import`, `use`, `#include "…"`, `require(…)`, `source …` naming a module | An **import** |
+| A class's bases: `class A(Base)`, `extends`, `: public Base`, `impl Trait for T`, `use parent` | An **extends** |
+| A path to a YAML or JSON file the canvas holds | A **load** |
+| `CALL name(…)` or `callproc('name')` naming a stored procedure | A **call** to the procedure |
+| Three or more statements of real work between two of those | A **compute** step holding them, noted with the comment above them if there is one |
+
+Every step keeps the code it came from — its statement, plus the lines that led
+into it since the step before — so the steps read in order as the code does,
+and nothing pasted is lost from them. Bookkeeping does not count as work: a
+`fetchone()`, a `commit()`, an `if err != nil`, a closing brace.
+
+What the paste defines decides what else happens. Pasted into a **function**,
+one `def` / `fn` / `func` / `function` is that function: the node takes its
+name, its signature (unless the box holds a path you typed) and its docstring or
+doc comment (unless it already says what it is for). Pasted into a **class**,
+a class definition's bases become extends steps and its methods become
+function members. Pasted into a **module** or a **program**, every class and
+function in it becomes a member, methods inside their class — a Go method under
+the struct its receiver names, a C++ `Repo::save` under `Repo`, every Rust `impl`
+merged into one type — and what is left at the top level (the imports, a
+script's own statements) is the node's own steps. Pasting again reads them
+again *in place*: a member by the same name is updated and keeps where you
+dragged it, rather than growing a second copy.
+
+**On the canvas**, `Ctrl+V` with code on the clipboard makes the node for it —
+a function for one function, a class for one class, a module for several, a
+program for a script — inside the selected container if one is selected; drop a
+`.py`, `.rs`, `.go`, `.c`, `.cpp`, `.java`, `.js`, `.ts`, `.pl` or `.sh` file and
+you get that file as a module. The language is read off the file name, or off
+the code itself for a paste, and only a confident guess counts, so a paragraph
+of prose is still nothing. The same goes for a node still set to *Other*, and
+for a brand-new node whose language the paste plainly is not in.
+
+The code stays on the node — in the saved file, in the SQL annotation block, in
+the Markdown export (once, not once per step) — and editing it redraws nothing
+until **Read steps from the code** is pressed, which asks before replacing steps
+somebody drew, since their notes would go with them. A paste into a node that
+already has steps keeps them too. One `Ctrl+Z` undoes a whole reading, members
+and all.
+
+It is a reading, not a parse, and has the scanner's blind spots: a query an ORM
+builds has no string to read, a table name substituted in at run time is a hole,
+and a call through an interface names nothing. The code is kept either way, so a
+step list that missed something is fixed by hand.
 
 ### Where they show up
 
