@@ -39,7 +39,17 @@ export interface ProgramSizeOptions {
   hiddenMembers?: number;
 }
 
+/**
+ * A procedure has no members to fold, so collapsing one folds its step rows
+ * away instead, the way a table folds its columns. Arrows leave the header.
+ */
+export function isFoldedProcedure(p: Program): boolean {
+  return Boolean(p.collapsed) && codeKindOf(p) === 'procedure';
+}
+
 export function estimateProgramSize(p: Program, opts: ProgramSizeOptions = {}): { width: number; height: number } {
+  // A folded procedure keeps one line saying how many steps it hides.
+  if (isFoldedProcedure(p)) return { width: PROGRAM_WIDTH, height: PROGRAM_HEADER_HEIGHT + PROGRAM_STEP_HEIGHT + PROGRAM_FOOTER_HEIGHT };
   const rows = p.steps.length ? p.steps.length * PROGRAM_STEP_HEIGHT : PROGRAM_EMPTY_HEIGHT;
   const folded = opts.hiddenMembers ? PROGRAM_STEP_HEIGHT : 0;
   return { width: PROGRAM_WIDTH, height: PROGRAM_HEADER_HEIGHT + rows + folded + PROGRAM_FOOTER_HEIGHT };

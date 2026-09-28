@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
 import type { Program } from '@shared/types';
 import type { CodeLinkOp } from '@/lib/codemap';
-import { estimateProgramSize, PROGRAM_HEADER_HEIGHT, stepCenterY } from '@/lib/programs';
+import { estimateProgramSize, isFoldedProcedure, PROGRAM_HEADER_HEIGHT, stepCenterY } from '@/lib/programs';
 
 /**
  * The arrow between two code nodes: a call, an import or an extends, one per
@@ -80,7 +80,8 @@ function CodeEdgeInner({ id, source, target, data, selected }: EdgeProps<CodeEdg
   // of whatever they reach: a callee is named as a whole.
   const handles = sourceNode.internals.handleBounds?.source ?? [];
   const handle = data.stepId ? handles.find((h) => h.id === `${data.stepId}|l` || h.id === `${data.stepId}|r`) : undefined;
-  const ay = a.y + (handle ? handle.y + handle.height / 2 : data.stepIndex >= 0 ? Math.min(stepCenterY(data.stepIndex), a.h - 8) : PROGRAM_HEADER_HEIGHT / 2);
+  const srcProgram = (sourceNode.data as { program?: Program }).program;
+  const ay = a.y + (handle ? handle.y + handle.height / 2 : data.stepIndex >= 0 && !(srcProgram && isFoldedProcedure(srcProgram)) ? Math.min(stepCenterY(data.stepIndex), a.h - 8) : PROGRAM_HEADER_HEIGHT / 2);
   const by = b.y + PROGRAM_HEADER_HEIGHT / 2;
   const g = curve(a, ay, b, by);
 

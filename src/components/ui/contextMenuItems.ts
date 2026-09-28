@@ -745,7 +745,7 @@ function selectionMenu(env: MenuEnv): MenuNode[] {
             id: 'fold',
             label: `Collapse the ${plural(programIds.length, 'container')}`,
             icon: ChevronsDownUp,
-            disabled: !programIds.some((id) => codeChildren(s.diagram).get(id)?.length),
+            disabled: !programIds.some((id) => codeChildren(s.diagram).get(id)?.length || s.diagram.programs.find((p) => p.id === id && codeKindOf(p) === 'procedure')),
             run: () => s.setCodeCollapsed(programIds, true),
           },
           {
@@ -860,6 +860,13 @@ function programMenu(programId: string, env: MenuEnv): MenuNode[] {
     })),
     { kind: 'swatches', id: 'color', label: 'Color', value: prg.color, pick: (key) => s.updateProgram(prg.id, { color: key }) },
     sep('s-fold'),
+    ...(codeKindOf(prg) === 'procedure' && prg.steps.length
+      ? [
+          prg.collapsed
+            ? { kind: 'action' as const, id: 'unfold', label: 'Show the steps', icon: ChevronsUpDown, run: () => s.setCodeCollapsed([prg.id], false) }
+            : { kind: 'action' as const, id: 'fold', label: 'Hide the steps', icon: ChevronsDownUp, run: () => s.setCodeCollapsed([prg.id], true) },
+        ]
+      : []),
     ...(members.length
       ? [
           prg.collapsed
