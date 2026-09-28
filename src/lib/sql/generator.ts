@@ -78,7 +78,9 @@ function assignFkNames(d: Diagram, tableById: Map<string, Table>): Map<string, s
 }
 
 function tableName(t: Table, dialect: Dialect): string {
-  return quoteQualified(t.name, t.schema, dialect);
+  // A temporary table lives in the session's own schema, so a schema prefix
+  // would be an error (PostgreSQL) or name somewhere it is not (the others).
+  return quoteQualified(t.name, t.storage === 'temporary' ? undefined : t.schema, dialect);
 }
 
 function columnNames(ids: string[], t: Table, dialect: Dialect): string[] {
@@ -337,6 +339,33 @@ interface CreatedTable {
   before: string[];
 }
 
+/**
+ * The words that make a table unlogged or temporary: `keyword` goes between
+ * CREATE and TABLE (with its trailing space), `suffix` after the column list.
+ *
+ * Only PostgreSQL has unlogged tables and ON COMMIT; a setting the dialect
+ * cannot express is left out with a warning rather than emitted as SQL the
+ * engine would reject, and stays on the table for when the dialect changes back.
+ */
+function createStorage(t: Table, dialect: Dialect, warnings: string[]): { keyword: string; suffix: string } {
+  if (t.storage === 'unlogged') {
+    if (dialect === 'postgresql') return { keyword: 'UNLOGGED ', suffix: '' };
+    warnings.push(`${engineName(dialect)} has no unlogged tables, so ${t.name} was written as an ordinary table.`);
+  }
+  if (t.storage === 'temporary') {
+    if (dialect !== 'sqlite' && t.schema?.trim()) warnings.push(`${t.name} is temporary, so its schema "${t.schema.trim()}" was left out: a temporary table lives in the session's own schema.`);
+    if (dialect === 'postgresql') {
+      const onCommit = t.onCommit === 'delete' ? ' ON COMMIT DELETE ROWS' : t.onCommit === 'drop' ? ' ON COMMIT DROP' : '';
+      return { keyword: 'TEMPORARY ', suffix: onCommit };
+    }
+    if (t.onCommit && t.onCommit !== 'preserve') {
+      warnings.push(`${engineName(dialect)} has no ON COMMIT clause, so ${t.name} keeps its rows until the session ends.`);
+    }
+    return { keyword: 'TEMPORARY ', suffix: '' };
+  }
+  return { keyword: '', suffix: '' };
+}
+
 function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string[]): CreatedTable {
   const { dialect } = ctx;
   const pkCols = t.columns.filter((c) => c.primaryKey);
@@ -375,12 +404,13 @@ function createTable(ctx: Ctx, t: Table, opts: TableSqlOptions, warnings: string
     else warnings.push(`Foreign key ${ctx.fkNames.get(r.id) ?? r.id} on ${t.name} is incomplete and was skipped.`);
   }
 
-  let create = `CREATE TABLE ${tableName(t, dialect)} (\n  ${lines.join(',\n  ')}\n)`;
+  const storage = createStorage(t, dialect, warnings);
+  let create = `CREATE ${storage.keyword}TABLE ${tableName(t, dialect)} (\n  ${lines.join(',\n  ')}\n)`;
   if (dialect === 'mariadb') {
     create += ' ENGINE=InnoDB DEFAULT CHARSET=utf8mb4';
     if (t.comment && t.comment.trim()) create += ` COMMENT=${quoteString(t.comment.trim())}`;
   }
-  create += ';';
+  create += `${storage.suffix};`;
 
   const notes: string[] = [];
   const before = autoIncrementSequenceColumns(ctx, t).map((c) => sequenceStatement(t, c, dialect));
@@ -1115,6 +1145,19 @@ export function generateTableSql(d: Diagram, tableId: string): string {
   ].join('\n');
 }
 
+/**
+ * DROP TABLE for one table. A temporary table is dropped by name in the
+ * session's own schema (PostgreSQL) or with DROP TEMPORARY TABLE (MariaDB), so
+ * a permanent table of the same name is never the one that goes.
+ */
+function dropTableStatement(t: Table, dialect: Dialect): string {
+  if (t.storage === 'temporary') {
+    if (dialect === 'postgresql') return `DROP TABLE IF EXISTS pg_temp.${quoteIdent(t.name, dialect)} CASCADE;`;
+    if (dialect === 'mariadb') return `DROP TEMPORARY TABLE IF EXISTS ${tableName(t, dialect)};`;
+  }
+  return `DROP TABLE IF EXISTS ${tableName(t, dialect)}${dialect === 'postgresql' ? ' CASCADE' : ''};`;
+}
+
 /** DROP TABLE statements in reverse dependency order. */
 export function generateDropStatements(d: Diagram): string[] {
   const external = externalTableIds(d);
@@ -1134,12 +1177,12 @@ export function generateDropStatements(d: Diagram): string[] {
   if (d.dialect === 'postgresql') {
     return [
       ...viewDrops,
-      ...reversed.map((t) => `DROP TABLE IF EXISTS ${tableName(t, d.dialect)} CASCADE;`),
+      ...reversed.map((t) => dropTableStatement(t, d.dialect)),
       ...d.customTypes.map((ct) => `DROP TYPE IF EXISTS ${quoteIdent(ct.name, d.dialect)};`),
     ];
   }
   if (d.dialect === 'sqlite') {
-    return [...viewDrops, ...reversed.map((t) => `DROP TABLE IF EXISTS ${tableName(t, d.dialect)};`)];
+    return [...viewDrops, ...reversed.map((t) => dropTableStatement(t, d.dialect))];
   }
   if (d.dialect === 'duckdb') {
     // Children before parents (DuckDB refuses to drop a referenced table even
@@ -1148,7 +1191,7 @@ export function generateDropStatements(d: Diagram): string[] {
     const ctx = buildCtx(d);
     return [
       ...viewDrops,
-      ...reversed.map((t) => `DROP TABLE IF EXISTS ${tableName(t, d.dialect)};`),
+      ...reversed.map((t) => dropTableStatement(t, d.dialect)),
       ...reversed.flatMap((t) => autoIncrementSequenceColumns(ctx, t).map((c) => dropSequenceStatement(t, c, d.dialect))),
       ...d.customTypes.map((ct) => `DROP TYPE IF EXISTS ${quoteIdent(ct.name, d.dialect)};`),
     ];
@@ -1156,7 +1199,7 @@ export function generateDropStatements(d: Diagram): string[] {
   return [
     'SET FOREIGN_KEY_CHECKS = 0;',
     ...viewDrops,
-    ...reversed.map((t) => `DROP TABLE IF EXISTS ${tableName(t, d.dialect)};`),
+    ...reversed.map((t) => dropTableStatement(t, d.dialect)),
     'SET FOREIGN_KEY_CHECKS = 1;',
   ];
 }

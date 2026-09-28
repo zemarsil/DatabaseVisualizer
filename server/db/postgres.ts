@@ -86,7 +86,7 @@ const SYSTEM_SCHEMAS = `n.nspname NOT IN ('pg_catalog', 'information_schema') AN
  */
 export const INTROSPECT_QUERIES = {
   version: `SELECT version() AS v`,
-  tables: `SELECT n.nspname AS schema, c.relname AS name, obj_description(c.oid, 'pg_class') AS comment, c.relkind,
+  tables: `SELECT n.nspname AS schema, c.relname AS name, obj_description(c.oid, 'pg_class') AS comment, c.relkind, c.relpersistence = 'u' AS unlogged,
               CASE WHEN c.relkind IN ('v', 'm') THEN pg_get_viewdef(c.oid, true) ELSE NULL END AS view_sql
        FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
        WHERE c.relkind IN ('r', 'p', 'v', 'm') AND ${SYSTEM_SCHEMAS}
@@ -189,7 +189,7 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
   try {
     const version = String((await c.query(INTROSPECT_QUERIES.version)).rows[0].v);
 
-    const tables = await c.query<{ schema: string; name: string; comment: string | null; relkind: string; view_sql: string | null }>(INTROSPECT_QUERIES.tables);
+    const tables = await c.query<{ schema: string; name: string; comment: string | null; relkind: string; unlogged: boolean; view_sql: string | null }>(INTROSPECT_QUERIES.tables);
 
     const columns = await c.query<{
       schema: string;
@@ -233,6 +233,7 @@ export async function introspect(cfg: ConnectionConfig): Promise<IntrospectRespo
         name: t.name,
         kind: isView ? 'view' : 'table',
         materialized: t.relkind === 'm' || undefined,
+        unlogged: (!isView && t.unlogged) || undefined,
         viewSql: isView ? (t.view_sql ?? '').trim().replace(/;$/, '') : undefined,
         comment: t.comment,
         columns: [],

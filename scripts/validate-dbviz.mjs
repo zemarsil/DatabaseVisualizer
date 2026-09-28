@@ -246,6 +246,10 @@ function validate(doc) {
     if (!isView && t.viewSql) warn(`${where}: "viewSql" is ignored unless "kind" is "view".`);
     if (t.color !== undefined && !COLORS.includes(t.color)) warn(`${where}: colour "${t.color}" is not in the palette; it renders as blue. Use one of ${COLORS.join(', ')}.`);
     if (t.groupId !== undefined && !groupIds.has(t.groupId)) err(`${where}: groupId "${t.groupId}" is not a group in this file; the app silently drops the grouping.`);
+    if (t.storage !== undefined && t.storage !== 'temporary' && t.storage !== 'unlogged') warn(`${where}: "storage" is "temporary" or "unlogged" (omit it for a permanent table); ${JSON.stringify(t.storage)} is ignored.`);
+    if (t.storage !== undefined && isView) warn(`${where}: "storage" is ignored on a view.`);
+    if (t.onCommit !== undefined && t.storage !== 'temporary') warn(`${where}: "onCommit" only applies when "storage" is "temporary"; it is ignored.`);
+    if (t.onCommit !== undefined && t.onCommit !== 'preserve' && t.onCommit !== 'delete' && t.onCommit !== 'drop') warn(`${where}: "onCommit" is "delete" or "drop" (omit it to preserve rows); ${JSON.stringify(t.onCommit)} is ignored.`);
     if (t.collapsed !== undefined && t.collapsed !== 'keys' && t.collapsed !== 'header') warn(`${where}: "collapsed" is "keys" or "header"; ${JSON.stringify(t.collapsed)} is ignored.`);
     if (!t.position || typeof t.position.x !== 'number' || typeof t.position.y !== 'number') warn(`${where} has no numeric position; it lands at (0, 0).`);
     else {

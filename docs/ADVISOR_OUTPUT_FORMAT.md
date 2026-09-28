@@ -95,6 +95,13 @@ omit an array rather than sending an empty one you have nothing to put in.
 - `color` is one of: `blue`, `teal`, `green`, `yellow`, `orange`, `red`, `pink`,
   `purple`, `indigo`, `slate`. Use colour to group: e.g. source tables blue, derived /
   materialized tables orange, tables you are proposing to add green.
+- A table is permanent unless it says otherwise. `"storage": "temporary"` makes it
+  `CREATE TEMPORARY TABLE` (dropped when the session ends; every dialect; leave `schema`
+  off) and, on PostgreSQL, `"onCommit": "delete"` or `"drop"` adds `ON COMMIT DELETE
+  ROWS` / `ON COMMIT DROP`. `"storage": "unlogged"` makes it `CREATE UNLOGGED TABLE`
+  (PostgreSQL only: faster writes, emptied after a crash). PostgreSQL rejects a
+  foreign key from a permanent table to an unlogged or temporary one, and from a
+  temporary table to a permanent one, so keep a key's two ends in the same class.
 - A **view** is a table with `"kind": "view"` and a `viewSql` holding the SELECT body
   (without `CREATE VIEW … AS`). Still list its `columns`: that is what the canvas draws
   and what other edges can point at.

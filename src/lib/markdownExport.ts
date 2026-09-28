@@ -33,7 +33,7 @@ function anchor(t: Table): string {
 function tableSection(d: Diagram, t: Table, rels: Relationship[], level: number, lineage: Lineage): string {
   const parts: string[] = [];
   const heading = t.schema ? `${t.schema}.${t.name}` : t.name;
-  parts.push(`${'#'.repeat(level)} ${heading}${t.kind === 'view' ? (t.materialized ? ' _(materialized view)_' : ' _(view)_') : ''}`);
+  parts.push(`${'#'.repeat(level)} ${heading}${t.kind === 'view' ? (t.materialized ? ' _(materialized view)_' : ' _(view)_') : t.storage ? ` _(${t.storage} table)_` : ''}`);
   const group = d.groups.find((g) => g.id === t.groupId);
   if (group?.external) parts.push(`\n_Lives in another database (${esc(group.name)}); documented here, not created by the script._`);
   if (t.comment) parts.push(`\n${t.comment}`);
@@ -114,7 +114,7 @@ function summarySection(d: Diagram, includeMermaid: boolean): string {
   const parts = [facts.join(' · ')];
   if (includeMermaid) parts.push(`\`\`\`mermaid\n${exportMermaid(d, { includeComments: false }).trimEnd()}\n\`\`\``);
   const toc = d.tables.map(
-    (t) => `- [${esc(t.schema ? `${t.schema}.${t.name}` : t.name)}](#${anchor(t)})${t.kind === 'view' ? (t.materialized ? ' (materialized view)' : ' (view)') : ''}`,
+    (t) => `- [${esc(t.schema ? `${t.schema}.${t.name}` : t.name)}](#${anchor(t)})${t.kind === 'view' ? (t.materialized ? ' (materialized view)' : ' (view)') : t.storage ? ` (${t.storage} table)` : ''}`,
   );
   if (toc.length) parts.push(toc.join('\n'));
   return parts.join('\n\n');

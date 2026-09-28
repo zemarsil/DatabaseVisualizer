@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Braces, ChevronDown, ChevronRight, Code2, Copy, Database, Eye, GitBranch, GripVertical, Link2, Plus, Sigma, Table2, Trash2, Waypoints } from 'lucide-react';
-import { verbLabel, type Column, type Index, type RelationshipKind, type Table } from '@shared/types';
+import { engineName, verbLabel, type Column, type Index, type RelationshipKind, type Table, type TableStorage, type TempOnCommit } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { ViewEditor } from './ViewEditor';
 import { flowDerivations } from '@/lib/derivation';
@@ -23,6 +23,62 @@ function RelIcon({ kind }: { kind: RelationshipKind }) {
   if (kind === 'embed') return <Braces style={{ color: 'var(--embed)' }} />;
   if (kind === 'dependency') return <Waypoints style={{ color: 'var(--dep)' }} />;
   return <Link2 style={{ color: 'var(--accent)' }} />;
+}
+
+const STORAGE_HINTS: Record<TableStorage | 'permanent', string> = {
+  permanent: 'An ordinary table: its rows are kept until you delete them.',
+  temporary: 'Dropped automatically when the session ends, so nothing is left behind. Only the session that created it can see it, and it lives in the session\'s own schema, not a named one.',
+  unlogged: 'Skips the write-ahead log, so writes are faster, but the rows are emptied after a crash and are not copied to replicas. Good for caches and scratch data.',
+};
+
+const ON_COMMIT_HINTS: Record<TempOnCommit, string> = {
+  preserve: 'Rows stay until the session ends (the default).',
+  delete: 'Rows are emptied at the end of every transaction; the table itself stays.',
+  drop: 'The whole table is dropped at the end of the transaction that created it.',
+};
+
+/** Permanent / unlogged / temporary, and what a temporary table does at commit. */
+function StorageField({ table }: { table: Table }) {
+  const updateTable = useStore((s) => s.updateTable);
+  const dialect = useStore((s) => s.diagram.dialect);
+  const storage: TableStorage | 'permanent' = table.storage ?? 'permanent';
+  const engine = engineName(dialect);
+  const set = (value: string) => {
+    const next = value === 'permanent' ? undefined : (value as TableStorage);
+    updateTable(table.id, { storage: next, ...(next === 'temporary' ? {} : { onCommit: undefined }) });
+  };
+  return (
+    <div className="field">
+      <span className="field__label">Storage</span>
+      <div className="row">
+        <select className="select grow" value={storage} onChange={(e) => set(e.target.value)} title="How long the table's data lives">
+          <option value="permanent">Permanent</option>
+          <option value="temporary">Temporary (dropped at session end)</option>
+          <option value="unlogged">Unlogged (not crash-safe)</option>
+        </select>
+      </div>
+      {storage === 'temporary' && dialect === 'postgresql' && (
+        <div className="row" style={{ marginTop: 6 }}>
+          <select
+            className="select grow"
+            value={table.onCommit ?? 'preserve'}
+            onChange={(e) => updateTable(table.id, { onCommit: e.target.value === 'preserve' ? undefined : (e.target.value as TempOnCommit) })}
+            title="What happens to the rows when a transaction commits"
+          >
+            <option value="preserve">ON COMMIT PRESERVE ROWS</option>
+            <option value="delete">ON COMMIT DELETE ROWS</option>
+            <option value="drop">ON COMMIT DROP</option>
+          </select>
+        </div>
+      )}
+      <div className="field__hint">
+        {STORAGE_HINTS[storage]}
+        {storage === 'temporary' && dialect === 'postgresql' && ` ${ON_COMMIT_HINTS[table.onCommit ?? 'preserve']}`}
+        {storage === 'unlogged' && dialect !== 'postgresql' && ` ${engine} has no unlogged tables, so the script writes an ordinary table; the setting is kept for when you switch back to PostgreSQL.`}
+        {storage === 'temporary' && dialect !== 'postgresql' && table.onCommit && table.onCommit !== 'preserve' && ` ${engine} has no ON COMMIT clause, so the rows stay until the session ends.`}
+      </div>
+    </div>
+  );
 }
 
 function FlagButton({ on, label, title, className, onClick }: { on: boolean; label: string; title: string; className?: string; onClick: () => void }) {
@@ -530,6 +586,7 @@ export function TableEditor({ table }: { table: Table }) {
       </div>
 
       {isView && <ViewEditor table={table} />}
+      {!isView && <StorageField table={table} />}
 
       <div className="section">
         <div className="section__head">

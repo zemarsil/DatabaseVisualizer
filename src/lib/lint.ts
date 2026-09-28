@@ -189,6 +189,23 @@ export function lintDiagram(d: Diagram): LintFinding[] {
       push({ rule: 'reserved-word', severity: 'info', message: `"${t.name}" is a reserved word; it will be quoted everywhere, which is easy to forget in hand-written queries.`, tableId: t.id });
     }
 
+    if (!isView && t.storage === 'unlogged' && d.dialect !== 'postgresql') {
+      push({
+        rule: 'unlogged-unsupported',
+        severity: 'warning',
+        message: `${engineName(d.dialect)} has no unlogged tables, so "${t.name}" is written as an ordinary table.`,
+        tableId: t.id,
+        fix: {
+          label: 'Make it a regular table',
+          safe: false,
+          apply: (dd) => {
+            const x = draftTable(dd, t.id);
+            if (x) x.storage = undefined;
+          },
+        },
+      });
+    }
+
     if (isView) {
       if (!t.viewSql || !t.viewSql.trim()) {
         push({ rule: 'view-without-sql', severity: 'warning', message: `View "${t.name}" has no SELECT yet, so it is left out of the script.`, tableId: t.id });
@@ -377,6 +394,32 @@ export function lintDiagram(d: Diagram): LintFinding[] {
         message: `${src.name} references ${tgt.name}, which lives in another database; the script documents the link instead of creating a constraint.`,
         relationshipId: r.id,
       });
+    }
+
+    if (r.kind === 'fk' && src.kind !== 'view' && tgt.kind !== 'view') {
+      const srcStorage = src.storage ?? 'permanent';
+      const tgtStorage = tgt.storage ?? 'permanent';
+      if (d.dialect === 'postgresql' && srcStorage !== tgtStorage) {
+        // Constraints may only point at a table that lasts at least as long as the one holding them.
+        const allowed = srcStorage === 'unlogged' ? tgtStorage === 'permanent' : false;
+        if (!allowed) {
+          push({
+            rule: 'fk-storage-mismatch',
+            severity: 'error',
+            message: `${src.name} (${srcStorage}) references ${tgt.name} (${tgtStorage}). PostgreSQL allows ${
+              srcStorage === 'permanent' ? 'a permanent table to reference only permanent tables' : srcStorage === 'unlogged' ? 'an unlogged table to reference only permanent or unlogged tables' : 'a temporary table to reference only temporary tables'
+            }.`,
+            relationshipId: r.id,
+          });
+        }
+      } else if (d.dialect === 'mariadb' && (srcStorage === 'temporary' || tgtStorage === 'temporary')) {
+        push({
+          rule: 'fk-storage-mismatch',
+          severity: 'warning',
+          message: `${src.name} → ${tgt.name} involves a temporary table; MariaDB does not support foreign keys on temporary tables.`,
+          relationshipId: r.id,
+        });
+      }
     }
 
     if (!fkTargetIsUnique(d, r)) {

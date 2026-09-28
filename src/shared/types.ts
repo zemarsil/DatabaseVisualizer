@@ -222,6 +222,19 @@ export interface CustomType {
 /** table -> a real table. view -> CREATE VIEW; its SELECT lives in viewSql and its inputs are flow links. */
 export type TableKind = 'table' | 'view';
 
+/**
+ * How long a table's data lives. Absent means an ordinary, permanent table.
+ *
+ * - `unlogged`: kept but not written to the write-ahead log, so writes are
+ *   faster and the rows are lost after a crash. PostgreSQL only.
+ * - `temporary`: dropped automatically, when the session ends (or, with
+ *   `onCommit: 'drop'`, when the transaction does). Every dialect has one.
+ */
+export type TableStorage = 'unlogged' | 'temporary';
+
+/** What a PostgreSQL temporary table does at the end of each transaction. */
+export type TempOnCommit = 'preserve' | 'delete' | 'drop';
+
 /** How much of a table the canvas shows. Undefined means every column. */
 export type TableDisplay = 'keys' | 'header';
 
@@ -241,6 +254,14 @@ export interface Table {
    * not lose it. Ignored when kind is not 'view'.
    */
   materialized?: boolean;
+  /**
+   * Unlogged or temporary instead of permanent (see TableStorage). Ignored for
+   * views. Kept when the dialect cannot express it, so switching dialect and
+   * back does not lose it; the generator warns and writes a plain table.
+   */
+  storage?: TableStorage;
+  /** For a temporary table on PostgreSQL: what happens to its rows at commit. Absent means PRESERVE ROWS, the default. */
+  onCommit?: TempOnCommit;
   columns: Column[];
   indexes: Index[];
   /** Table-level CHECK constraints (bodies only). */
@@ -1318,6 +1339,8 @@ export interface IntrospectedTable {
   viewSql?: string | null;
   /** True for a PostgreSQL materialized view (pg_class.relkind 'm'). */
   materialized?: boolean;
+  /** True for a PostgreSQL unlogged table (pg_class.relpersistence 'u'). */
+  unlogged?: boolean;
   comment: string | null;
   columns: IntrospectedColumn[];
   primaryKey: string[];

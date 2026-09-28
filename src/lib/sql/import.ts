@@ -413,7 +413,15 @@ function restorePrograms(annotated: AnnotatedProgram[], lookup: (name: string) =
 }
 
 function parsedTableToTable(pt: ParsedTable): Table {
-  const t = createTable({ name: pt.name, schema: pt.schema, comment: pt.comment });
+  const t = createTable({
+    name: pt.name,
+    // A temporary table lives in the session's own schema (pg_temp, temp); that is where it is, not a schema it belongs to.
+    schema: pt.storage === 'temporary' && pt.schema && /^(pg_temp\w*|temp)$/i.test(pt.schema) ? undefined : pt.schema,
+    comment: pt.comment,
+    storage: pt.storage,
+    // PRESERVE ROWS is the default, so only the two that change something are kept.
+    onCommit: pt.storage === 'temporary' && pt.onCommit !== 'preserve' ? pt.onCommit : undefined,
+  });
   for (const pc of pt.columns) {
     let defaultValue = pc.defaultValue;
     let autoIncrement = pc.autoIncrement;

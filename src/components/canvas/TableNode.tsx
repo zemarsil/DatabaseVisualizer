@@ -153,6 +153,14 @@ function TableNodeInner({ data, selected }: NodeProps<TableNodeType>) {
         {table.schema && <span className="table-node__schema">{table.schema}</span>}
         <div className="table-node__badges">
           {isView && <span className="table-node__badge table-node__badge--view">{table.materialized ? 'MAT VIEW' : 'VIEW'}</span>}
+          {!isView && table.storage && (
+            <span
+              className="table-node__badge table-node__badge--storage"
+              title={table.storage === 'temporary' ? 'Temporary table: dropped when the session ends' : 'Unlogged table: faster writes, emptied after a crash'}
+            >
+              {table.storage === 'temporary' ? 'TEMP' : 'UNLOGGED'}
+            </span>
+          )}
           {joinTable && !isView && (
             <span className="table-node__badge table-node__badge--join" title="Join table: every key column references another table (many-to-many)">
               N:M
