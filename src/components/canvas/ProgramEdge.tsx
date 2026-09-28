@@ -2,7 +2,7 @@ import { memo } from 'react';
 import { BaseEdge, EdgeLabelRenderer, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
 import type { Program, Table } from '@shared/types';
 import { estimateNodeSize, HEADER_HEIGHT, rowCenterY } from '@/lib/geometry';
-import { estimateProgramSize, PROGRAM_HEADER_HEIGHT, stepCenterY } from '@/lib/programs';
+import { estimateProgramSize, isFoldedProcedure, PROGRAM_HEADER_HEIGHT, stepCenterY } from '@/lib/programs';
 
 /**
  * The arrow between a program and a table, one per step that names one.
@@ -97,7 +97,7 @@ function ProgramEdgeInner({ id, source, target, data, selected }: EdgeProps<Prog
   const handles = sourceNode.internals.handleBounds?.source ?? [];
   const handle = data.stepId ? handles.find((h) => h.id === `${data.stepId}|l` || h.id === `${data.stepId}|r`) : undefined;
   // A gathered arrow, or one whose step row is folded away, leaves the header.
-  const py = p.y + (handle ? handle.y + handle.height / 2 : data.stepIndex >= 0 ? Math.min(stepCenterY(data.stepIndex), p.h - 8) : PROGRAM_HEADER_HEIGHT / 2);
+  const py = p.y + (handle ? handle.y + handle.height / 2 : data.stepIndex >= 0 && !(prg && isFoldedProcedure(prg)) ? Math.min(stepCenterY(data.stepIndex), p.h - 8) : PROGRAM_HEADER_HEIGHT / 2);
   const ty = t.y + (data.tableRow >= 0 ? rowCenterY(data.tableRow) : HEADER_HEIGHT / 2);
   const g = curve(p, py, t, ty);
 

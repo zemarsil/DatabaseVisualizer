@@ -1446,9 +1446,14 @@ export const useStore = create<Store>()(
         const chosen = new Set(ids);
         mutate((dd) => {
           for (const p of dd.programs) {
-            if (!chosen.has(p.id) || !codeKindMeta(codeKindOf(p)).container) continue;
+            const procedure = codeKindOf(p) === 'procedure';
+            if (!chosen.has(p.id) || !(procedure || codeKindMeta(codeKindOf(p)).container)) continue;
             if (Boolean(p.collapsed) === collapsed) continue;
-            if (collapsed) {
+            if (procedure) {
+              // Nothing to gather: the node keeps its place and just draws less.
+              if (collapsed) p.collapsed = true;
+              else delete p.collapsed;
+            } else if (collapsed) {
               // The folded node takes the place the region had, so nothing
               // jumps; expanding later derives the region from the members
               // again, exactly where they were left.

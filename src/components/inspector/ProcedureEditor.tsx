@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ClipboardCopy, Code2, Copy, Plus, ScanSearch, Trash2, WandSparkles } from 'lucide-react';
+import { ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Code2, Copy, Plus, ScanSearch, Trash2, WandSparkles } from 'lucide-react';
 import { PROCEDURE_PARAM_MODES, PROGRAM_STEP_OPS, engineName, programStepOpMeta, stepOpsForKind, type Program, type ProcedureParam, type ProcedureParamMode } from '@shared/types';
 import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
@@ -33,6 +33,7 @@ export function ProcedureEditor({ program }: { program: Program }) {
   const deleteProgram = useStore((s) => s.deleteProgram);
   const duplicateProgram = useStore((s) => s.duplicateProgram);
   const addProgramStep = useStore((s) => s.addProgramStep);
+  const setCodeCollapsed = useStore((s) => s.setCodeCollapsed);
   const setProgramSteps = useStore((s) => s.setProgramSteps);
   const setSelection = useStore((s) => s.setSelection);
   const focusTable = useStore((s) => s.focusTable);
@@ -286,7 +287,14 @@ export function ProcedureEditor({ program }: { program: Program }) {
       <div className="divider" />
 
       <div className="field">
-        <span className="field__label">Steps, in order</span>
+        <div className="section__head">
+          <span className="field__label">Steps, in order</span>
+          {program.steps.length > 0 && (
+            <button className="btn btn--sm" onClick={() => setCodeCollapsed([program.id], !program.collapsed)} title={program.collapsed ? 'Draw the step rows on the canvas again' : 'Fold the step rows on the canvas into the header; arrows leave the header'}>
+              {program.collapsed ? <ChevronsUpDown /> : <ChevronsDownUp />} {program.collapsed ? 'Expand' : 'Collapse'}
+            </button>
+          )}
+        </div>
         <span className="field__hint">{describeProgram(diagram, program)}</span>
       </div>
       <div className="program-steps">

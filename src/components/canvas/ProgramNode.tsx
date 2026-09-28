@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
-import { ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Box, Braces, ChevronsUpDown, Cpu, DatabaseZap, FileCode, FileInput, Import, Layers, SquareFunction, Terminal, TriangleAlert, type LucideIcon } from 'lucide-react';
+import { ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Box, Braces, ChevronDown, ChevronUp, ChevronsUpDown, Cpu, DatabaseZap, FileCode, FileInput, Import, Layers, SquareFunction, Terminal, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { codeKindMeta, codeKindOf, programLanguageMeta, programRoleMeta, type CodeKind, type Program, type ProgramStepOp } from '@shared/types';
 import { paletteHue } from '@/lib/palette';
 import { procedureSignature } from '@/lib/procedures';
@@ -115,9 +115,11 @@ function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
   if (dimmed) classes.push('program-node--dim');
   if (traceRole) classes.push('program-node--trace');
   if (picking) classes.push('program-node--pick');
-  if (program.collapsed) classes.push('program-node--collapsed');
+  // A folded container stacks like a pile of nodes; a folded procedure just draws less.
+  if (program.collapsed && container) classes.push('program-node--collapsed');
 
   const procedure = kind === 'procedure';
+  const folded = procedure && Boolean(program.collapsed) && steps.length > 0;
   const tooltip = [
     procedure ? procedureSignature(program) : '',
     program.comment || '',
@@ -168,6 +170,20 @@ function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
             <ChevronsUpDown />
           </button>
         )}
+        {procedure && steps.length > 0 && !lod && (
+          <button
+            type="button"
+            className="program-node__fold nodrag"
+            title={folded ? 'Show the steps' : 'Hide the steps'}
+            onClick={(e) => {
+              e.stopPropagation();
+              useStore.getState().setCodeCollapsed([program.id], !folded);
+            }}
+            onDoubleClick={(e) => e.stopPropagation()}
+          >
+            {folded ? <ChevronDown /> : <ChevronUp />}
+          </button>
+        )}
         <Handle type="source" position={Position.Left} id={`${program.id}|hdrl`} className="program-node__handle program-node__handle--left" />
         <Handle type="source" position={Position.Right} id={`${program.id}|hdr`} className="program-node__handle" />
       </div>
@@ -175,7 +191,16 @@ function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
       {!lod && (
         <div className="program-node__steps">
           {steps.length === 0 && !hiddenMembers && <div className="program-node__empty">{kind === 'function' ? 'no steps yet' : container ? 'nothing inside yet' : 'no steps yet'}</div>}
-          {steps.map((s, i) => {
+          {folded && (
+            <div className="program-node__step program-node__step--folded" title="Steps hidden. Click to show them." onClick={() => useStore.getState().setCodeCollapsed([program.id], false)}>
+              <span className="program-node__num">…</span>
+              <ChevronsUpDown className="program-node__op" />
+              <span className="program-node__label program-node__label--folded">
+                {steps.length} step{steps.length === 1 ? '' : 's'}
+              </span>
+            </div>
+          )}
+          {(folded ? [] : steps).map((s, i) => {
             const Icon = OP_ICON[s.op];
             const rowClasses = ['program-node__step', `program-node__step--${s.op}`];
             if (s.id === activeStepId) rowClasses.push('program-node__step--active');
@@ -225,7 +250,7 @@ function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
         </div>
       )}
 
-      {!lod && roundTrips.length > 0 && (
+      {!lod && !folded && roundTrips.length > 0 && (
         <div className="program-node__footer" title="Tables this node both reads and writes">
           round trip: {roundTrips.join(', ')}
         </div>
