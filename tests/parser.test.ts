@@ -218,3 +218,48 @@ describe('importSql', () => {
     expect(r.relationships[0].targetColumnIds).toEqual([p.columns[0].id]);
   });
 });
+
+describe('CREATE TABLE ... AS SELECT', () => {
+  const sql = `
+    CREATE TABLE assoc_sets AS
+        SELECT
+            (row_number() OVER (ORDER BY set_id))::int - 1 AS set_idx,
+            set_id,
+            is_ref,
+            CASE WHEN is_ref THEN (row_number() OVER (PARTITION BY is_ref ORDER BY set_id))::int - 1 END AS ref_rank
+        FROM
+            assoc_source_sets;
+    ALTER TABLE assoc_sets ADD PRIMARY KEY (set_idx);
+    CREATE UNIQUE INDEX ON assoc_sets (set_id);`;
+
+  it('imports the select list as columns, then applies the later ALTER / INDEX', () => {
+    const r = parseSql(sql, 'postgresql');
+    expect(r.errors).toEqual([]);
+    const t = r.tables.find((x) => x.name === 'assoc_sets')!;
+    expect(t.columns.map((c) => [c.name, c.type])).toEqual([
+      ['set_idx', 'INT'],
+      ['set_id', 'text'],
+      ['is_ref', 'text'],
+      ['ref_rank', 'INT'],
+    ]);
+    expect(t.primaryKey).toEqual(['set_idx']);
+    expect(t.columns[0].primaryKey).toBe(true);
+    expect(t.indexes).toEqual([{ name: undefined, columns: ['set_id'], unique: true }]);
+    expect(r.warnings.some((w) => /could not infer a type for set_id, is_ref/.test(w.message))).toBe(true);
+  });
+
+  it('copies types from a source table defined in the script, through aliases', () => {
+    const r = parseSql(
+      `CREATE TABLE src (set_id uuid NOT NULL, is_ref boolean);
+       CREATE TABLE d AS SELECT s.set_id, s.is_ref AS r, CAST(count(*) AS bigint) AS n FROM src s;`,
+      'postgresql',
+    );
+    const d = r.tables.find((x) => x.name === 'd')!;
+    expect(d.columns.map((c) => [c.name, c.type, c.nullable])).toEqual([
+      ['set_id', 'UUID', false],
+      ['r', 'BOOLEAN', true],
+      ['n', 'BIGINT', true],
+    ]);
+    expect(r.warnings).toEqual([]);
+  });
+});
