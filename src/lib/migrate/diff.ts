@@ -50,6 +50,8 @@ export interface SnapTable {
   kind: 'table' | 'view';
   viewSql: string;
   comment: string | null;
+  /** PostgreSQL: not written to the write-ahead log (CREATE UNLOGGED TABLE). */
+  unlogged?: boolean;
   columns: SnapColumn[];
   primaryKey: string[];
   indexes: SnapIndex[];
@@ -102,6 +104,7 @@ export type MigrationOp =
   | { kind: 'add-index'; table: SnapTable; index: SnapIndex }
   | { kind: 'drop-index'; table: SnapTable; index: SnapIndex }
   | { kind: 'set-comment'; table: SnapTable; column?: SnapColumn; comment: string | null }
+  | { kind: 'set-unlogged'; table: SnapTable; unlogged: boolean }
   | { kind: 'create-enum'; enum: SnapEnum }
   | { kind: 'add-enum-values'; enum: SnapEnum; values: string[] }
   | { kind: 'enum-values-removed'; enum: SnapEnum; values: string[] }
@@ -331,7 +334,8 @@ export function snapshotFromDiagram(d: Diagram, defaultSchema: string): SchemaSn
   const keyOf = (t: Table) => (d.dialect === 'sqlite' ? t.name.toLowerCase() : tableKey(t.name, t.schema, defaultSchema));
   const tables: SnapTable[] = [];
   for (const t of d.tables) {
-    if (external.has(t.id)) continue;
+    // A temporary table does not outlive the session that made it, so no database holds one to compare with.
+    if (external.has(t.id) || (t.kind !== 'view' && t.storage === 'temporary')) continue;
     const columns = t.columns.filter((c) => c.name.trim());
     const colName = (id: string) => t.columns.find((c) => c.id === id)?.name;
     const snap: SnapTable = {
@@ -341,6 +345,7 @@ export function snapshotFromDiagram(d: Diagram, defaultSchema: string): SchemaSn
       kind: t.kind === 'view' ? 'view' : 'table',
       viewSql: (t.viewSql ?? '').trim(),
       comment: t.comment?.trim() || null,
+      unlogged: d.dialect === 'postgresql' && t.kind !== 'view' && t.storage === 'unlogged',
       columns: columns.map((c) => ({
         name: c.name,
         type: emittedType(d, c, columns.filter((x) => x.primaryKey).length === 1),
@@ -367,7 +372,7 @@ export function snapshotFromDiagram(d: Diagram, defaultSchema: string): SchemaSn
       for (const r of d.relationships) {
         if (r.kind !== 'fk' || r.sourceTableId !== t.id) continue;
         const tgt = byId.get(r.targetTableId);
-        if (!tgt || external.has(tgt.id) || tgt.kind === 'view') continue;
+        if (!tgt || external.has(tgt.id) || tgt.kind === 'view' || tgt.storage === 'temporary') continue;
         const cols = r.sourceColumnIds.map(colName).filter((n): n is string => Boolean(n));
         const refCols = r.targetColumnIds.map((id) => tgt.columns.find((c) => c.id === id)?.name).filter((n): n is string => Boolean(n));
         if (!cols.length || cols.length !== refCols.length) continue;
@@ -430,6 +435,7 @@ export function snapshotFromIntrospection(res: IntrospectResponse, dialect: Dial
       kind: t.kind === 'view' ? 'view' : 'table',
       viewSql: (t.viewSql ?? '').trim(),
       comment: t.comment?.trim() || null,
+      unlogged: t.kind !== 'view' && t.unlogged === true,
       columns: t.columns.map((c) => ({ name: c.name, type: c.type, nullable: c.nullable, defaultValue: c.defaultValue, autoIncrement: c.autoIncrement, comment: c.comment?.trim() || null })),
       primaryKey: t.primaryKey,
       indexes,
@@ -631,6 +637,14 @@ export function diffSchemas(target: SchemaSnapshot, current: SchemaSnapshot): Ch
     for (const [sig, fk] of curFk) {
       if (tgtFk.has(sig)) continue;
       out.push(change({ kind: 'drop-foreign-key', table: t, fk }, t.key, `Drop foreign key ${fk.name} on ${t.name}`, 'safe', { detail: `(${fk.columns.join(', ')}) → ${fk.refTable}` }));
+    }
+
+    if (dialect === 'postgresql' && t.kind === 'table' && !!t.unlogged !== !!cur.unlogged) {
+      out.push(
+        change({ kind: 'set-unlogged', table: t, unlogged: !!t.unlogged }, t.key, `Make ${t.name} ${t.unlogged ? 'unlogged' : 'logged'}`, 'risky', {
+          detail: t.unlogged ? 'Rewrites the table; its rows are lost after a crash.' : 'Rewrites the table and writes it to the write-ahead log.',
+        }),
+      );
     }
 
     if (dialect !== 'sqlite' && (t.comment ?? '') !== (cur.comment ?? '')) {

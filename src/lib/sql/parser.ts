@@ -49,6 +49,10 @@ export interface ParsedTable {
   checks: string[];
   foreignKeys: ParsedForeignKey[];
   comment?: string;
+  /** CREATE UNLOGGED TABLE / CREATE TEMP[ORARY] TABLE; absent for an ordinary table. */
+  storage?: 'unlogged' | 'temporary';
+  /** ON COMMIT {PRESERVE ROWS | DELETE ROWS | DROP} on a temporary table. */
+  onCommit?: 'preserve' | 'delete' | 'drop';
 }
 
 export interface ParseMessage {
@@ -434,11 +438,14 @@ class Parser {
     if (this.acceptWord('OR')) this.expectWord('REPLACE');
     let unique = false;
     let materialized = false;
+    let storage: ParsedTable['storage'];
     for (;;) {
       if (this.isWord('TEMP', 'TEMPORARY', 'UNLOGGED', 'GLOBAL', 'LOCAL', 'UNIQUE', 'MATERIALIZED', 'RECURSIVE')) {
         const w = this.next().upper;
         if (w === 'UNIQUE') unique = true;
         if (w === 'MATERIALIZED') materialized = true;
+        if (w === 'TEMP' || w === 'TEMPORARY') storage = 'temporary';
+        if (w === 'UNLOGGED') storage = 'unlogged';
         continue;
       }
       // MariaDB view prefixes: ALGORITHM = MERGE, DEFINER = user@host, SQL SECURITY DEFINER
@@ -461,7 +468,7 @@ class Parser {
       break;
     }
     if (this.isWord('TABLE')) {
-      this.parseCreateTable();
+      this.parseCreateTable(storage);
       return;
     }
     if (this.isWord('VIEW')) {
@@ -756,7 +763,7 @@ class Parser {
     return this.sql.slice(first.start, last.end);
   }
 
-  private parseCreateTable(): void {
+  private parseCreateTable(storage?: ParsedTable['storage']): void {
     this.expectWord('TABLE');
     if (this.acceptWord('IF')) {
       this.expectWord('NOT');
@@ -764,6 +771,7 @@ class Parser {
     }
     const { schema, name } = this.parseQualifiedName();
     const table: ParsedTable = { schema, name, columns: [], primaryKey: [], uniques: [], indexes: [], checks: [], foreignKeys: [] };
+    if (storage) table.storage = storage;
 
     if (this.isWord('AS') || this.isCtasOptionsThenAs(0) || (this.isPunct('(') && this.isColumnListThenAs())) {
       this.parseCreateTableAs(table);
@@ -787,6 +795,12 @@ class Parser {
 
     // table options up to ';'
     while (this.peek().type !== 'eof' && !this.isPunct(';')) {
+      const onCommit = this.readOnCommit(0);
+      if (onCommit) {
+        table.onCommit = onCommit.value;
+        this.pos += onCommit.length;
+        continue;
+      }
       if (this.isWord('COMMENT')) {
         this.next();
         this.acceptPunct('=');
@@ -881,6 +895,19 @@ class Parser {
     }
   }
 
+  /** `ON COMMIT {PRESERVE ROWS | DELETE ROWS | DROP}` at offset `k`: which one, and how many tokens it spans. */
+  private readOnCommit(k: number): { value: NonNullable<ParsedTable['onCommit']>; length: number } | null {
+    const word = (at: number, ...w: string[]) => {
+      const t = this.peek(at);
+      return t.type === 'word' && w.includes(t.upper);
+    };
+    if (!word(k, 'ON') || !word(k + 1, 'COMMIT')) return null;
+    if (word(k + 2, 'DROP')) return { value: 'drop', length: 3 };
+    if (word(k + 2, 'PRESERVE') && word(k + 3, 'ROWS')) return { value: 'preserve', length: 4 };
+    if (word(k + 2, 'DELETE') && word(k + 3, 'ROWS')) return { value: 'delete', length: 4 };
+    return null;
+  }
+
   /** Are the tokens from offset `k` some CTAS storage options (or none) followed by AS? */
   private isCtasOptionsThenAs(k: number): boolean {
     const end = this.ctasOptionsEnd(k);
@@ -894,7 +921,12 @@ class Parser {
    */
   private parseCreateTableAs(table: ParsedTable): void {
     const renamed = this.isPunct('(') ? this.parseColumnList() : [];
-    this.pos += this.ctasOptionsEnd(0);
+    const optionsEnd = this.ctasOptionsEnd(0);
+    for (let k = 0; k < optionsEnd; k++) {
+      const onCommit = this.readOnCommit(k);
+      if (onCommit) table.onCommit = onCommit.value;
+    }
+    this.pos += optionsEnd;
     this.expectWord('AS');
     const sel = this.peek();
     if (!(sel.type === 'word' && sel.upper === 'SELECT')) {

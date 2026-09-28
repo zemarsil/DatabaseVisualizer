@@ -60,6 +60,7 @@ export function introspectionToDiagram(res: IntrospectResponse, dialect: Diagram
       schema: dropSchema ? undefined : t.schema,
       name: t.name,
       comment: t.comment ?? undefined,
+      storage: t.unlogged ? 'unlogged' : undefined,
       columns: t.columns.map((c) => ({
         name: c.name,
         type: canonicalType(c.type, dialect, namedTypes),

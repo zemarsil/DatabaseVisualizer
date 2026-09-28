@@ -138,9 +138,24 @@ Source: `src/components/drawer/Drawer.tsx` and the panels beside it
 Source: `src/components/inspector/*.tsx`
 
 **Table** (`TableEditor.tsx`) — a Table / View switch, *Name*, *Schema*,
-*Comment*, *Colour*, *Group*, the column grid with **PK / NN / UQ / AI**
+*Comment*, *Colour*, *Group*, *Storage* (Permanent, Temporary or Unlogged; a
+temporary table on PostgreSQL also gets an *ON COMMIT* choice), the column grid with **PK / NN / UQ / AI**
 toggles (expand a row for *Default*, *Check*, *Comment*), *Indexes (N)*,
 *Table checks (N)*, *Connections (N)* and *Quick actions*.
+
+*Storage* is a real field on the table (`storage`: `"temporary"` or `"unlogged"`,
+plus `onCommit`: `"delete"` or `"drop"` for a temporary table), carried through the
+parser (`CREATE TEMP TABLE … ON COMMIT …`, `CREATE UNLOGGED TABLE`), the
+`.dbviz.json`, share links and PostgreSQL introspection (`relpersistence` `'u'`). The
+canvas header shows a **TEMP** or **UNLOGGED** badge. Temporary works on every
+dialect (`CREATE TEMPORARY TABLE`, written without a schema, since a temporary table
+lives in the session's own schema); only PostgreSQL has unlogged tables and
+`ON COMMIT`, so elsewhere the generator warns and writes an ordinary table (or omits
+the clause) and keeps the setting for switching back. A temporary table is left out
+of *Migrate* — no database holds one to compare with. Problems flags foreign keys
+PostgreSQL rejects between storage classes (a permanent table may reference only
+permanent tables, an unlogged one permanent or unlogged, a temporary one only
+temporary).
 
 A new table opens with the cursor in *Name*. `Enter` walks the order a table is
 actually typed in — *Name*, *Schema*, then the column grid, which gets its first

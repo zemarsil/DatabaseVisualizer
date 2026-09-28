@@ -528,6 +528,12 @@ export function generateMigration(d: Diagram, changes: Change[], current: Schema
     ddl.statements.forEach((sql, i) => routines.lines.push({ changeId: c.id, sql, ...(i === 0 && dialect === 'mariadb' ? { script: ddl.script } : {}) }));
   }
 
+  /* ---- 7c. Logged / unlogged (PostgreSQL) ---- */
+  const storage = section('Storage');
+  for (const c of changes) {
+    if (c.op.kind === 'set-unlogged') storage.lines.push({ changeId: c.id, sql: `ALTER TABLE ${tn(c.op.table)} SET ${c.op.unlogged ? 'UNLOGGED' : 'LOGGED'};` });
+  }
+
   /* ---- 8. Comments ---- */
   const comments = section('Comments');
   for (const cm of newTableComments) comments.lines.push(cm);

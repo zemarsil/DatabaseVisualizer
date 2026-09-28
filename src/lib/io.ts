@@ -256,6 +256,8 @@ function parseDiagramValue(raw: unknown): Diagram {
       kind,
       viewSql: kind === 'view' && typeof t.viewSql === 'string' && t.viewSql ? t.viewSql : undefined,
       materialized: kind === 'view' && t.materialized === true ? true : undefined,
+      storage: kind !== 'view' && (t.storage === 'unlogged' || t.storage === 'temporary') ? t.storage : undefined,
+      onCommit: kind !== 'view' && t.storage === 'temporary' && (t.onCommit === 'delete' || t.onCommit === 'drop') ? t.onCommit : undefined,
       collapsed,
       comment: typeof t.comment === 'string' && t.comment ? t.comment : undefined,
       color: str(t.color, 'blue'),

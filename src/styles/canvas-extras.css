@@ -74,6 +74,11 @@
   border: 1px dashed var(--accent);
   color: var(--accent);
 }
+.table-node__badge--storage {
+  background: transparent;
+  border: 1px dotted var(--text-muted);
+  color: var(--text-muted);
+}
 .table-node__badge--join {
   background: color-mix(in srgb, var(--flow) 22%, transparent);
   color: var(--flow);
