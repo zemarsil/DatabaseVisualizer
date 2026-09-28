@@ -551,6 +551,7 @@ class Parser {
     }
     this.next();
     const first = this.peek();
+    const bodyPos = this.pos;
     const sources: string[] = [];
     let depth = 0;
     for (;;) {
@@ -573,6 +574,20 @@ class Parser {
         continue;
       }
       this.next();
+    }
+    const bodyEnd = this.pos;
+    // Work out the column types now, so a later CREATE TABLE ... AS SELECT can read from this view.
+    if (first.type === 'word' && first.upper === 'SELECT') {
+      const warnings = this.result.warnings.length;
+      this.pos = bodyPos;
+      try {
+        const cols = this.deriveColumns(`View ${name}`, columns);
+        if (cols.length) this.viewColumns.set(name.toLowerCase(), cols);
+      } catch {
+        // best effort: the view is still recorded below
+      }
+      this.pos = bodyEnd;
+      this.result.warnings.length = warnings; // a view's own untyped columns are not an import problem
     }
     const last = this.tokens[this.pos - 1];
     const sql = last && last.end > first.start ? this.sql.slice(first.start, last.end).trim() : '';
@@ -834,10 +849,8 @@ class Parser {
   }
 
   /**
-   * CREATE TABLE name [(cols)] AS SELECT … : the columns come from the select
-   * list. A column's type is the `::type` cast or CAST(… AS type) in its
-   * expression, else the type of the source column it copies, else `text`
-   * (with a warning, since the SELECT alone does not say).
+   * CREATE TABLE name [(cols)] AS SELECT … : the columns come from the select list.
+   * See `deriveColumns` for how each column's type is found.
    */
   private parseCreateTableAs(table: ParsedTable): void {
     const renamed = this.isPunct('(') ? this.parseColumnList() : [];
@@ -848,7 +861,40 @@ class Parser {
       this.skipStatement();
       return;
     }
-    this.next();
+    const cols = this.deriveColumns(table.name, renamed);
+    this.skipStatement();
+    table.columns.push(...cols);
+
+    const existing = this.findTable(table.name, table.schema);
+    if (existing) {
+      this.warn(`Table ${table.name} is defined more than once; the later definition replaces the earlier one`);
+      this.result.tables.splice(this.result.tables.indexOf(existing), 1);
+    }
+    this.result.tables.push(table);
+  }
+
+  /** Columns (with types) of each view seen so far, worked out from its SELECT; keyed by lower-cased name. */
+  private readonly viewColumns = new Map<string, ParsedColumn[]>();
+
+  /** The columns of a table or view defined earlier in the script, by (optionally schema-qualified) name. */
+  private relationColumns(ref: string): ParsedColumn[] | undefined {
+    const dot = ref.lastIndexOf('.');
+    const name = ref.slice(dot + 1);
+    const t = this.findTable(name, dot === -1 ? undefined : ref.slice(0, dot));
+    return t?.columns ?? this.viewColumns.get(name.toLowerCase());
+  }
+
+  /**
+   * Read a SELECT at the cursor (up to the end of the statement, not consumed)
+   * and return one column per select-list item.
+   *
+   * A column's type is, in order: the type of the source column it copies (a
+   * table or view defined earlier in the script), else whatever its expression
+   * pins down (`::type`, CAST, coalesce / CASE branches, comparisons, literals,
+   * count / row_number), else `text` with a warning.
+   */
+  private deriveColumns(owner: string, renamed: string[]): ParsedColumn[] {
+    const sel = this.expectWord('SELECT');
     this.acceptWord('DISTINCT', 'ALL');
 
     // 1. split the select list on top-level commas
@@ -871,7 +917,7 @@ class Parser {
       items[items.length - 1].push(this.next());
     }
 
-    // 2. the rest of the statement: which tables it reads, under which aliases
+    // 2. the rest of the statement: which relations it reads, under which aliases
     const sources: string[] = [];
     const aliases = new Map<string, string>();
     depth = 0;
@@ -895,30 +941,27 @@ class Parser {
       }
       this.next();
     }
-    this.skipStatement();
 
-    const sourceTables = sources.map((s) => this.findTable(s.split('.').pop()!, s.includes('.') ? s.split('.')[0] : undefined)).filter((x): x is ParsedTable => !!x);
-    const scopeOf = (qualifier: string | undefined): ParsedTable[] => {
-      if (!qualifier) return sourceTables;
-      const ref = aliases.get(qualifier.toLowerCase()) ?? qualifier;
-      const dot = ref.lastIndexOf('.');
-      const t = this.findTable(ref.slice(dot + 1), dot === -1 ? undefined : ref.slice(0, dot));
-      return t ? [t] : [];
+    const sourceCols = sources.map((s) => this.relationColumns(s)).filter((x): x is ParsedColumn[] => !!x);
+    const scopeOf = (qualifier: string | undefined): ParsedColumn[][] => {
+      if (!qualifier) return sourceCols;
+      const cols = this.relationColumns(aliases.get(qualifier.toLowerCase()) ?? qualifier);
+      return cols ? [cols] : [];
     };
     const lookup = (qualifier: string | undefined, col: string): ParsedColumn | undefined => {
-      const scope = scopeOf(qualifier);
-      for (const st of scope) {
-        const c = st.columns.find((x) => x.name.toLowerCase() === col.toLowerCase());
+      for (const cols of scopeOf(qualifier)) {
+        const c = cols.find((x) => x.name.toLowerCase() === col.toLowerCase());
         if (c) return c;
       }
       return undefined;
     };
 
     // 3. one column per select item
+    const out: ParsedColumn[] = [];
     const guessed: string[] = [];
     const push = (col: ParsedColumn) => {
-      if (table.columns.some((c) => c.name === col.name)) this.warn(`CREATE TABLE ${table.name}: column ${col.name} appears twice in the select list`, sel);
-      else table.columns.push(col);
+      if (out.some((c) => c.name === col.name)) this.warn(`${owner}: column ${col.name} appears twice in the select list`, sel);
+      else out.push(col);
     };
     for (const item of items) {
       if (item.length === 0) continue;
@@ -930,28 +973,34 @@ class Parser {
       if (before && before.type === 'word' && before.upper === 'AS' && this.isIdent(last)) {
         alias = this.identText(last);
         expr = item.slice(0, -2);
-      } else if (item.length >= 2 && this.isIdent(last) && !(last.type === 'word' && Parser.NOT_A_TABLE.has(last.upper) || last.upper === 'END' || last.upper === 'NULL') && !(before.type === 'punct' && (before.value === '.' || before.value === '::')) && !(before.type === 'word' && ['DISTINCT', 'NOT', 'IS', 'AND', 'OR', 'THEN', 'ELSE', 'WHEN', 'BY', 'DESC', 'ASC'].includes(before.upper)) && !(before.type === 'punct' && before.value !== ')' && before.value !== ']')) {
+      } else if (
+        item.length >= 2 &&
+        this.isIdent(last) &&
+        !(last.type === 'word' && (Parser.NOT_A_TABLE.has(last.upper) || last.upper === 'END' || last.upper === 'NULL')) &&
+        !(before.type === 'punct' && (before.value === '.' || before.value === '::')) &&
+        !(before.type === 'word' && ['DISTINCT', 'NOT', 'IS', 'AND', 'OR', 'THEN', 'ELSE', 'WHEN', 'BY', 'DESC', 'ASC'].includes(before.upper)) &&
+        !(before.type === 'punct' && before.value !== ')' && before.value !== ']')
+      ) {
         alias = this.identText(last);
         expr = item.slice(0, -1);
       }
       // plain [qualifier.]column, or `*` / `q.*`
-      const isRef = expr.length >= 1 && expr.every((t, i) => (i % 2 === 0 ? this.isIdent(t) || (t.type === 'punct' && t.value === '*') : t.type === 'punct' && t.value === '.'));
+      const isRef = expr.every((t, i) => (i % 2 === 0 ? this.isIdent(t) || (t.type === 'punct' && t.value === '*') : t.type === 'punct' && t.value === '.'));
       const refName = isRef ? expr[expr.length - 1] : undefined;
       if (refName && refName.type === 'punct') {
-        const q = expr.length === 3 ? this.identText(expr[0]) : undefined;
-        const scope = scopeOf(q);
-        if (scope.length === 0) this.warn(`CREATE TABLE ${table.name}: SELECT * from a table that is not defined in this script; columns not imported`, sel);
-        for (const st of scope) for (const c of st.columns) push({ ...c, primaryKey: false, unique: false, autoIncrement: false, references: undefined, check: undefined });
+        const scope = scopeOf(expr.length === 3 ? this.identText(expr[0]) : undefined);
+        if (scope.length === 0) this.warn(`${owner}: SELECT * from a relation that is not defined in this script; columns not imported`, sel);
+        for (const cols of scope) for (const c of cols) push({ ...c, primaryKey: false, unique: false, autoIncrement: false, references: undefined, check: undefined });
         continue;
       }
       const qualifier = isRef && expr.length === 3 ? this.identText(expr[0]) : undefined;
       const name = alias ?? (refName ? this.identText(refName) : undefined);
       if (!name) {
-        this.warn(`CREATE TABLE ${table.name}: a select-list expression has no alias, so it was skipped`, item[0]);
+        this.warn(`${owner}: a select-list expression has no alias, so it was skipped`, item[0]);
         continue;
       }
       const src = refName ? lookup(qualifier, this.identText(refName)) : undefined;
-      let type = src?.type ?? this.castType(expr);
+      let type = src?.type ?? this.inferType(expr, lookup);
       if (!type) {
         type = 'text';
         guessed.push(name);
@@ -959,60 +1008,147 @@ class Parser {
       push({ name, type, nullable: src ? src.nullable : true, primaryKey: false, unique: false, autoIncrement: false });
     }
     renamed.forEach((n, i) => {
-      if (table.columns[i]) table.columns[i].name = n;
+      if (out[i]) out[i].name = n;
     });
-    if (guessed.length) this.warn(`CREATE TABLE ${table.name} AS SELECT: could not infer a type for ${guessed.join(', ')}; using text`, sel);
-
-    const existing = this.findTable(table.name, table.schema);
-    if (existing) {
-      this.warn(`Table ${table.name} is defined more than once; the later definition replaces the earlier one`);
-      this.result.tables.splice(this.result.tables.indexOf(existing), 1);
-    }
-    this.result.tables.push(table);
+    if (guessed.length) this.warn(`${owner}: could not infer a type for ${guessed.join(', ')}; using text`, sel);
+    return out;
   }
 
   private identText(t: Token): string {
     return t.type === 'word' && this.dialect === 'postgresql' ? t.value.toLowerCase() : t.value;
   }
 
-  /** The type named by the first top-level `::type` or a leading CAST(… AS type) in an expression. */
-  private castType(expr: Token[]): string | undefined {
-    const readType = (from: number, stop: (t: Token) => boolean): string | undefined => {
+  /** Split tokens on top-level commas. */
+  private static splitArgs(toks: Token[]): Token[][] {
+    const args: Token[][] = [[]];
+    let d = 0;
+    for (const t of toks) {
+      if (t.type === 'punct' && t.value === '(') d++;
+      else if (t.type === 'punct' && t.value === ')') d--;
+      if (d === 0 && t.type === 'punct' && t.value === ',') args.push([]);
+      else args[args.length - 1].push(t);
+    }
+    return args;
+  }
+
+  /** The type of a select-list expression, when its shape pins one down. */
+  private inferType(expr: Token[], lookup: (q: string | undefined, col: string) => ParsedColumn | undefined): string | undefined {
+    if (expr.length === 0) return undefined;
+    const isP = (t: Token | undefined, v: string) => t?.type === 'punct' && t.value === v;
+
+    // The type named by a `::type` (first top-level one) or CAST(… AS type).
+    const readType = (from: number): string | undefined => {
       const words: string[] = [];
-      let i = from;
-      for (; i < expr.length && !stop(expr[i]); i++) {
+      for (let i = from; i < expr.length; i++) {
         const t = expr[i];
         if (t.type === 'word') words.push(t.upper);
-        else if (t.type === 'punct' && t.value === '(') {
+        else if (isP(t, '(') && words.length) {
           let d = 0;
-          const start = expr[i].start;
-          for (; i < expr.length; i++) {
-            if (expr[i].type === 'punct' && expr[i].value === '(') d++;
-            if (expr[i].type === 'punct' && expr[i].value === ')' && --d === 0) break;
+          let j = i;
+          for (; j < expr.length; j++) {
+            if (isP(expr[j], '(')) d++;
+            if (isP(expr[j], ')') && --d === 0) break;
           }
-          if (words.length) words[words.length - 1] += this.sql.slice(start, expr[Math.min(i, expr.length - 1)].end);
-          continue;
+          words[words.length - 1] += this.sql.slice(t.start, expr[Math.min(j, expr.length - 1)].end);
+          i = j;
         } else break;
       }
       return words.length ? words.join(' ') : undefined;
     };
     let depth = 0;
     for (let i = 0; i < expr.length; i++) {
-      const t = expr[i];
-      if (t.type === 'punct' && t.value === '(') depth++;
-      else if (t.type === 'punct' && t.value === ')') depth--;
-      else if (depth === 0 && t.type === 'punct' && t.value === '::') {
-        // the type is the run of words (and one paren group) directly after the cast
-        return readType(i + 1, (x) => x.type !== 'word' && !(x.type === 'punct' && x.value === '('));
-      }
+      if (isP(expr[i], '(')) depth++;
+      else if (isP(expr[i], ')')) depth--;
+      else if (depth === 0 && isP(expr[i], '::')) return readType(i + 1);
     }
-    if (expr[0]?.type === 'word' && expr[0].upper === 'CAST' && expr[1]?.value === '(') {
+    const head = expr[0].type === 'word' ? expr[0].upper : '';
+    if (head === 'CAST' && isP(expr[1], '(')) {
       let d = 0;
       for (let i = 1; i < expr.length; i++) {
-        if (expr[i].type === 'punct' && expr[i].value === '(') d++;
-        else if (expr[i].type === 'punct' && expr[i].value === ')') d--;
-        else if (d === 1 && expr[i].type === 'word' && expr[i].upper === 'AS') return readType(i + 1, () => false);
+        if (isP(expr[i], '(')) d++;
+        else if (isP(expr[i], ')')) d--;
+        else if (d === 1 && expr[i].type === 'word' && expr[i].upper === 'AS') return readType(i + 1);
       }
+      return undefined;
+    }
+
+    // Whole expression is one function call: f( … )
+    if (expr[0].type === 'word' && isP(expr[1], '(')) {
+      let d = 0;
+      let close = -1;
+      for (let i = 1; i < expr.length; i++) {
+        if (isP(expr[i], '(')) d++;
+        else if (isP(expr[i], ')') && --d === 0) {
+          close = i;
+          break;
+        }
+      }
+      const wholeCall = close === expr.length - 1 || (expr[close + 1]?.type === 'word' && expr[close + 1].upper === 'OVER');
+      if (close !== -1 && wholeCall) {
+        if (['COUNT', 'ROW_NUMBER', 'RANK', 'DENSE_RANK', 'NTILE'].includes(head)) return 'BIGINT';
+        if (['COALESCE', 'NULLIF', 'IFNULL', 'GREATEST', 'LEAST'].includes(head)) {
+          for (const arg of Parser.splitArgs(expr.slice(2, close))) {
+            const ty = this.inferType(arg, lookup);
+            if (ty) return ty;
+          }
+        }
+        if (['EXISTS'].includes(head)) return 'BOOLEAN';
+        return undefined;
+      }
+    }
+    // A parenthesised whole expression
+    if (isP(expr[0], '(') && isP(expr[expr.length - 1], ')')) {
+      let d = 0;
+      let wraps = true;
+      for (let i = 0; i < expr.length - 1; i++) {
+        if (isP(expr[i], '(')) d++;
+        else if (isP(expr[i], ')') && --d === 0) wraps = false;
+      }
+      if (wraps) return this.inferType(expr.slice(1, -1), lookup);
+    }
+
+    // CASE: the type of the first THEN / ELSE branch that has one
+    if (head === 'CASE') {
+      const branches: Token[][] = [];
+      let d = 0;
+      let cur: Token[] | null = null;
+      for (let i = 1; i < expr.length; i++) {
+        const t = expr[i];
+        if (isP(t, '(')) d++;
+        else if (isP(t, ')')) d--;
+        const kw = d === 0 && t.type === 'word' ? t.upper : '';
+        if (kw === 'THEN' || kw === 'ELSE') {
+          cur = [];
+          branches.push(cur);
+        } else if (kw === 'WHEN' || kw === 'END') cur = null;
+        else if (cur) cur.push(t);
+      }
+      for (const b of branches) {
+        const ty = this.inferType(b, lookup);
+        if (ty) return ty;
+      }
+      return undefined;
+    }
+
+    // A single literal, or a reference to a column we know
+    if (expr.length === 1) {
+      const t = expr[0];
+      if (t.type === 'string') return 'TEXT';
+      if (t.type === 'number') return /[.eE]/.test(t.value) ? 'NUMERIC' : 'INT';
+      if (t.type === 'word' && (t.upper === 'TRUE' || t.upper === 'FALSE')) return 'BOOLEAN';
+    }
+    if ((expr.length === 1 && this.isIdent(expr[0])) || (expr.length === 3 && this.isIdent(expr[0]) && isP(expr[1], '.') && this.isIdent(expr[2]))) {
+      const known = lookup(expr.length === 3 ? this.identText(expr[0]) : undefined, this.identText(expr[expr.length - 1]));
+      if (known) return known.type;
+    }
+
+    // A top-level comparison / logical operator makes the whole expression a boolean
+    depth = 0;
+    for (const t of expr) {
+      if (isP(t, '(')) depth++;
+      else if (isP(t, ')')) depth--;
+      else if (depth === 0 && t.type === 'punct' && ['=', '<>', '!=', '<', '>', '<=', '>='].includes(t.value)) return 'BOOLEAN';
+      else if (depth === 0 && t.type === 'word' && ['AND', 'OR', 'NOT', 'IS', 'IN', 'LIKE', 'ILIKE', 'BETWEEN'].includes(t.upper)) return 'BOOLEAN';
     }
     return undefined;
   }

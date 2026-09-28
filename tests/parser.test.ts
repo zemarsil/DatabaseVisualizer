@@ -263,3 +263,39 @@ describe('CREATE TABLE ... AS SELECT', () => {
     expect(r.warnings).toEqual([]);
   });
 });
+
+describe('CREATE TABLE ... AS SELECT from a view', () => {
+  it("infers the view's column types and warns about nothing", () => {
+    const r = parseSql(
+      `CREATE TABLE Track_List (track_id int, source_id int);
+       CREATE TABLE Sources (source_id int, source_type int);
+       CREATE TABLE Source_Type (id int, type text);
+       CREATE VIEW assoc_source_sets AS
+         SELECT DISTINCT s.track_id AS set_id,
+                coalesce(st.type = 'my_type', false) AS is_ref
+         FROM Track_List s
+         JOIN Sources src ON s.source_id = src.source_id
+         JOIN Source_Type st ON src.source_type = st.id
+         WHERE s.track_id IS NOT NULL;
+       CREATE TABLE assoc_sets AS
+         SELECT (row_number() OVER (ORDER BY set_id))::int - 1 AS set_idx,
+                set_id, is_ref,
+                CASE WHEN is_ref THEN (row_number() OVER (PARTITION BY is_ref ORDER BY set_id))::int - 1 END AS ref_rank
+         FROM assoc_source_sets;
+       ALTER TABLE assoc_sets ADD PRIMARY KEY (set_idx);
+       CREATE UNIQUE INDEX ON assoc_sets (set_id);`,
+      'postgresql',
+    );
+    expect(r.errors).toEqual([]);
+    expect(r.warnings).toEqual([]);
+    expect(r.views.map((v) => v.name)).toEqual(['assoc_source_sets']);
+    const t = r.tables.find((x) => x.name === 'assoc_sets')!;
+    expect(t.columns.map((c) => [c.name, c.type])).toEqual([
+      ['set_idx', 'INT'],
+      ['set_id', 'INT'],
+      ['is_ref', 'BOOLEAN'],
+      ['ref_rank', 'INT'],
+    ]);
+    expect(t.primaryKey).toEqual(['set_idx']);
+  });
+});
