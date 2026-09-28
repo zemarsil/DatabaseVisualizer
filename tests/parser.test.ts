@@ -299,3 +299,70 @@ describe('CREATE TABLE ... AS SELECT from a view', () => {
     expect(t.primaryKey).toEqual(['set_idx']);
   });
 });
+
+describe('CREATE TEMP TABLE ... ON COMMIT ... AS SELECT', () => {
+  const src = `CREATE TABLE assoc_pairs (
+       pair_id int NOT NULL, pair_set_idx int, pair_t_ms bigint, ref_set_idx int, ndist double precision
+     );`;
+  const rp = `CREATE TEMP TABLE rp ON COMMIT DROP AS
+     SELECT
+         pair_id AS nd_id,
+         pair_set_idx AS nd_set,
+         pair_t_ms AS nd_t,
+         ref_set_idx AS d_set,
+         count(*) AS n,
+         avg(ndist) AS mean_nd
+     FROM
+         assoc_pairs
+     GROUP BY
+         1, 2, 3, 4;`;
+
+  it('is imported, with types taken from the source table', () => {
+    const r = parseSql(`${src}\n${rp}`, 'postgresql');
+    expect(r.errors).toEqual([]);
+    expect(r.warnings).toEqual([]);
+    const t = r.tables.find((x) => x.name === 'rp')!;
+    expect(t.columns.map((c) => [c.name, c.type])).toEqual([
+      ['nd_id', 'INT'],
+      ['nd_set', 'INT'],
+      ['nd_t', 'BIGINT'],
+      ['d_set', 'INT'],
+      ['n', 'BIGINT'],
+      ['mean_nd', 'DOUBLE PRECISION'],
+    ]);
+  });
+
+  it('is still imported when assoc_pairs is not in the script (types fall back to text, with a warning)', () => {
+    const r = parseSql(rp, 'postgresql');
+    expect(r.errors).toEqual([]);
+    const t = r.tables.find((x) => x.name === 'rp')!;
+    expect(t.columns.map((c) => c.name)).toEqual(['nd_id', 'nd_set', 'nd_t', 'd_set', 'n', 'mean_nd']);
+    expect(r.warnings.some((w) => /could not infer a type for nd_id/.test(w.message))).toBe(true);
+  });
+
+  it.each([
+    ['ON COMMIT PRESERVE ROWS', 'ON COMMIT PRESERVE ROWS'],
+    ['ON COMMIT DELETE ROWS', 'ON COMMIT DELETE ROWS'],
+    ['USING heap', 'USING heap'],
+    ['WITH (fillfactor = 70)', 'WITH (fillfactor = 70)'],
+    ['several options', 'USING heap WITH (fillfactor = 70) ON COMMIT DROP TABLESPACE fast'],
+  ])('skips the storage option %s', (_label, opts) => {
+    const r = parseSql(`${src}\nCREATE TEMPORARY TABLE rp ${opts} AS SELECT pair_id, sum(pair_set_idx) AS s FROM assoc_pairs GROUP BY 1;`, 'postgresql');
+    expect(r.errors).toEqual([]);
+    expect(r.warnings).toEqual([]);
+    const t = r.tables.find((x) => x.name === 'rp')!;
+    expect(t.columns.map((c) => [c.name, c.type])).toEqual([
+      ['pair_id', 'INT'],
+      ['s', 'BIGINT'],
+    ]);
+  });
+
+  it('accepts a renaming column list before the options', () => {
+    const r = parseSql(`${src}\nCREATE TEMP TABLE rp (a, b) ON COMMIT DROP AS SELECT pair_id, max(pair_t_ms) AS m FROM assoc_pairs GROUP BY 1;`, 'postgresql');
+    const t = r.tables.find((x) => x.name === 'rp')!;
+    expect(t.columns.map((c) => [c.name, c.type])).toEqual([
+      ['a', 'INT'],
+      ['b', 'BIGINT'],
+    ]);
+  });
+});

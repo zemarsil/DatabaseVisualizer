@@ -765,13 +765,13 @@ class Parser {
     const { schema, name } = this.parseQualifiedName();
     const table: ParsedTable = { schema, name, columns: [], primaryKey: [], uniques: [], indexes: [], checks: [], foreignKeys: [] };
 
-    if (this.isWord('AS') || (this.isPunct('(') && this.isColumnListThenAs())) {
+    if (this.isWord('AS') || this.isCtasOptionsThenAs(0) || (this.isPunct('(') && this.isColumnListThenAs())) {
       this.parseCreateTableAs(table);
       return;
     }
 
     if (!this.isPunct('(')) {
-      this.warn(`Skipped CREATE TABLE ${name}: only column-list definitions are supported (not AS SELECT / PARTITION OF / LIKE)`);
+      this.warn(`Skipped CREATE TABLE ${name}: only column-list definitions and AS SELECT are supported (not PARTITION OF / LIKE)`);
       this.skipStatement();
       return;
     }
@@ -840,8 +840,7 @@ class Parser {
       if (t.type === 'eof') return false;
       if (t.type === 'punct' && t.value === '(') depth++;
       else if (t.type === 'punct' && t.value === ')' && --depth === 0) {
-        const n = this.peek(k + 1);
-        return n.type === 'word' && n.upper === 'AS';
+        return this.isCtasOptionsThenAs(k + 1);
       } else if (depth === 1 && t.type === 'word' && k > 0 && this.peek(k - 1).type === 'word' && !(this.peek(k - 1).upper === 'AS')) {
         return false; // "name type" – a real column definition
       }
@@ -849,11 +848,53 @@ class Parser {
   }
 
   /**
-   * CREATE TABLE name [(cols)] AS SELECT … : the columns come from the select list.
+   * Offset just past the storage options PostgreSQL allows between a CTAS's
+   * name / column list and its AS: `USING method`, `WITH (…)`, `WITHOUT OIDS`,
+   * `ON COMMIT {PRESERVE ROWS | DELETE ROWS | DROP}`, `TABLESPACE name`.
+   * Returns `from` itself when there are none.
+   */
+  private ctasOptionsEnd(from: number): number {
+    const word = (k: number, ...w: string[]) => {
+      const t = this.peek(k);
+      return t.type === 'word' && (w.length === 0 || w.includes(t.upper));
+    };
+    let k = from;
+    for (;;) {
+      if (word(k, 'ON') && word(k + 1, 'COMMIT')) {
+        if (word(k + 2, 'DROP')) k += 3;
+        else if (word(k + 2, 'PRESERVE', 'DELETE') && word(k + 3, 'ROWS')) k += 4;
+        else return k;
+      } else if (word(k, 'USING', 'TABLESPACE') && this.peek(k + 1).type !== 'eof' && this.peek(k + 1).type !== 'punct') {
+        k += 2;
+      } else if (word(k, 'WITH') && this.isPunct('(', k + 1)) {
+        let depth = 0;
+        for (k += 1; ; k++) {
+          const t = this.peek(k);
+          if (t.type === 'eof') return from;
+          if (t.type === 'punct' && t.value === '(') depth++;
+          else if (t.type === 'punct' && t.value === ')' && --depth === 0) break;
+        }
+        k += 1;
+      } else if (word(k, 'WITHOUT') && word(k + 1, 'OIDS')) {
+        k += 2;
+      } else return k;
+    }
+  }
+
+  /** Are the tokens from offset `k` some CTAS storage options (or none) followed by AS? */
+  private isCtasOptionsThenAs(k: number): boolean {
+    const end = this.ctasOptionsEnd(k);
+    const t = this.peek(end);
+    return t.type === 'word' && t.upper === 'AS';
+  }
+
+  /**
+   * CREATE TABLE name [(cols)] [options] AS SELECT … : the columns come from the select list.
    * See `deriveColumns` for how each column's type is found.
    */
   private parseCreateTableAs(table: ParsedTable): void {
     const renamed = this.isPunct('(') ? this.parseColumnList() : [];
+    this.pos += this.ctasOptionsEnd(0);
     this.expectWord('AS');
     const sel = this.peek();
     if (!(sel.type === 'word' && sel.upper === 'SELECT')) {
@@ -1031,6 +1072,25 @@ class Parser {
     return args;
   }
 
+  /** Result type of MIN / MAX / AVG / SUM over a column of `argType` (PostgreSQL's rules); undefined when not numeric. */
+  private static aggregateType(fn: string, argType: string): string | undefined {
+    if (fn === 'MIN' || fn === 'MAX') return argType;
+    const base = argType.replace(/\(.*$/, '').trim().toUpperCase();
+    if (/\[/.test(argType)) return undefined;
+    const family = /^(SMALLINT|INT2|TINYINT|MEDIUMINT|INT|INT4|INTEGER)$/.test(base)
+      ? 'int'
+      : /^(BIGINT|INT8)$/.test(base)
+        ? 'bigint'
+        : /^(NUMERIC|DECIMAL|DEC|NUMBER)$/.test(base)
+          ? 'decimal'
+          : /^(REAL|FLOAT4|FLOAT|FLOAT8|DOUBLE|DOUBLE PRECISION)$/.test(base)
+            ? 'float'
+            : undefined;
+    if (!family) return undefined;
+    if (fn === 'AVG') return family === 'float' ? 'DOUBLE PRECISION' : 'NUMERIC';
+    return family === 'int' ? 'BIGINT' : family === 'float' ? argType : 'NUMERIC';
+  }
+
   /** The type of a select-list expression, when its shape pins one down. */
   private inferType(expr: Token[], lookup: (q: string | undefined, col: string) => ParsedColumn | undefined): string | undefined {
     if (expr.length === 0) return undefined;
@@ -1093,6 +1153,13 @@ class Parser {
           }
         }
         if (['EXISTS'].includes(head)) return 'BOOLEAN';
+        if (['MIN', 'MAX', 'AVG', 'SUM'].includes(head)) {
+          const args = Parser.splitArgs(expr.slice(2, close));
+          let argToks = args[0];
+          if (argToks[0]?.type === 'word' && (argToks[0].upper === 'DISTINCT' || argToks[0].upper === 'ALL')) argToks = argToks.slice(1);
+          const argType = args.length === 1 ? this.inferType(argToks, lookup) : undefined;
+          return argType && Parser.aggregateType(head, argType);
+        }
         return undefined;
       }
     }
