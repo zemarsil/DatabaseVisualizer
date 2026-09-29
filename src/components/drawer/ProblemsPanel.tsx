@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { AlertCircle, AlertTriangle, CheckCircle2, Info, Link2, Plus, Wand2 } from 'lucide-react';
-import { useStore } from '@/store/useStore';
+import { selectDiagramContent, useStore } from '@/store/useStore';
 import { emptySelection } from '@/lib/selection';
 import { lintDiagram, summarizeFindings, type LintFinding, type LintSeverity } from '@/lib/lint';
 import { suggestForeignKeys, type FkSuggestion } from '@/lib/suggest';
@@ -17,7 +17,7 @@ const LABELS: Record<LintSeverity, string> = { error: 'Errors', warning: 'Warnin
 const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 export function ProblemsPanel() {
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const mutate = useStore((s) => s.mutate);
   const toast = useStore((s) => s.toast);
   const selectTable = useStore((s) => s.selectTable);

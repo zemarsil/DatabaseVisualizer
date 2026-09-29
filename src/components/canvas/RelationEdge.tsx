@@ -1,9 +1,10 @@
 import { memo, useEffect, useRef } from 'react';
-import { BaseEdge, EdgeLabelRenderer, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
 import { Braces, Code2, GitBranch, Sigma, Waypoints } from 'lucide-react';
 import { DEFAULT_VERBS, relationshipVerb, type Relationship, type RelationshipKind, type Table } from '@shared/types';
 import { derivationSummaries, flowDerivations } from '@/lib/derivation';
 import { HEADER_HEIGHT, estimateNodeSize, rowCenterY } from '@/lib/geometry';
+import { EdgeLabelPortal } from './EdgeLabelPortal';
 
 export interface RelationEdgeData extends Record<string, unknown> {
   relationship: Relationship;
@@ -331,7 +332,7 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
         </>
       )}
       {showLabel && (
-        <EdgeLabelRenderer>
+        <EdgeLabelPortal>
           <div
             className={labelClasses.join(' ')}
             style={{ transform: `translate(-50%, -50%) translate(${g.labelX}px, ${g.labelY}px)` }}
@@ -346,10 +347,10 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
               </span>
             )}
           </div>
-        </EdgeLabelRenderer>
+        </EdgeLabelPortal>
       )}
       {showInverseLabel && (
-        <EdgeLabelRenderer>
+        <EdgeLabelPortal>
           <div
             className={[...labelClasses, 'edge-label--inverse'].join(' ')}
             style={{ transform: `translate(-50%, -50%) translate(${inverseLabelX}px, ${inverseLabelY}px)` }}
@@ -357,7 +358,7 @@ function RelationEdgeInner({ id, source, target, data, selected }: EdgeProps<Rel
           >
             <span>{inverseText}</span>
           </div>
-        </EdgeLabelRenderer>
+        </EdgeLabelPortal>
       )}
     </>
   );

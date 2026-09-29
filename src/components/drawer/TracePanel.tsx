@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { ArrowRight, Copy, Crosshair, Play, Route, X } from 'lucide-react';
 import { kindMeta } from '@shared/types';
-import { useStore } from '@/store/useStore';
+import { selectDiagramContent, useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { codePath } from '@/lib/codemap';
 import { flowDerivations } from '@/lib/derivation';
@@ -10,7 +10,7 @@ import { diagramScope } from '@/lib/sqlScope';
 import { SqlCode } from '../ui/SqlEditor';
 
 export function TracePanel() {
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const trace = useStore((s) => s.trace);
   const setTraceEndpoints = useStore((s) => s.setTraceEndpoints);
   const runTrace = useStore((s) => s.runTrace);

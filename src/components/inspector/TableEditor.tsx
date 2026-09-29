@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ArrowDown, ArrowUp, Braces, ChevronDown, ChevronRight, Code2, Copy, Database, Eye, GitBranch, GripVertical, Link2, Plus, Sigma, Table2, Trash2, Waypoints } from 'lucide-react';
 import { engineName, verbLabel, type Column, type Index, type RelationshipKind, type Table, type TableStorage, type TempOnCommit } from '@shared/types';
-import { useStore } from '@/store/useStore';
+import { selectDiagramContent, useStore } from '@/store/useStore';
 import { ViewEditor } from './ViewEditor';
 import { flowDerivations } from '@/lib/derivation';
 import { buildLineage, columnOrigin, describeColumnOrigin, type ColumnOrigin } from '@/lib/lineage';
@@ -120,7 +120,7 @@ interface ColumnRowProps {
 }
 
 function ColumnRow({ table, column, index, fk, embed, origin, originText, register, focusField, drag, setDrag }: ColumnRowProps) {
-  const diagramForScope = useStore((s) => s.diagram);
+  const diagramForScope = useStore(selectDiagramContent);
   /** The default and check boxes colour and complete this table's own columns. */
   const scope = useMemo(() => tableScope(table), [table]);
   /** Functions an enabled extension adds (gen_random_uuid() once pgcrypto is on), offered in the default box. */
@@ -381,7 +381,7 @@ function IndexRow({ table, index }: { table: Table; index: Index }) {
 
 export function TableEditor({ table }: { table: Table }) {
   const scope = useMemo(() => tableScope(table), [table]);
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const updateTable = useStore((s) => s.updateTable);
   const addColumn = useStore((s) => s.addColumn);
   const addIndex = useStore((s) => s.addIndex);

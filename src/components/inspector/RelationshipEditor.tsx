@@ -28,7 +28,7 @@ import type { CompletionItem } from '@/lib/sql/complete';
 import type { SqlScope } from '@/lib/sql/highlight';
 import { diagramScope, flowScope, reachableTables, type ReachableTable } from '@/lib/sqlScope';
 import { SqlCode, SqlEditor, type SqlEditorHandle } from '@/components/ui/SqlEditor';
-import { useStore } from '@/store/useStore';
+import { selectDiagramContent, useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
 
@@ -147,7 +147,7 @@ function ReferenceChips({ src, reachable, onInsert }: { src: Table; reachable: R
 }
 
 export function RelationshipEditor({ relationship: r }: { relationship: Relationship }) {
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const tables = diagram.tables;
   const updateRelationship = useStore((s) => s.updateRelationship);
   const deleteRelationship = useStore((s) => s.deleteRelationship);

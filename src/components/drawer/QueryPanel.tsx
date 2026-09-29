@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, ClipboardCopy, Database, Play, Settings2 } from 'lucide-react';
 import type { QueryResult } from '@shared/types';
 import { dialectLabel, isServerDialect } from '@shared/types';
-import { useStore } from '@/store/useStore';
+import { selectDiagramContent, useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useConnection } from '@/store/useConnection';
 import { backendFor } from '@/lib/backend';
@@ -31,7 +31,7 @@ function csvCell(v: unknown): string {
 }
 
 export function QueryPanel() {
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const traceResult = useStore((s) => s.trace.result);
   const openDrawer = useStore((s) => s.openDrawer);
   const toast = useStore((s) => s.toast);

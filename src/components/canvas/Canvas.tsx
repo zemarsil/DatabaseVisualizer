@@ -17,7 +17,7 @@ import {
 } from '@xyflow/react';
 import { Crosshair, X } from 'lucide-react';
 import { isCodeStepOp, type Program } from '@shared/types';
-import { selectEmphasis, useStore } from '@/store/useStore';
+import { selectDiagramContent, selectEmphasis, useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { useSimulation } from '@/store/useSimulation';
 import { rowsAtStage } from '@/lib/simulate/engine';
@@ -46,6 +46,7 @@ import { isJoinTable, relationshipCardinality } from '@/lib/schemaInfo';
 import { buildLineage, derivedColumnIds, describeColumnOrigin, downstream, lineageReach, upstream } from '@/lib/lineage';
 import { reachableNodes } from '@/lib/trace';
 import { copiedMessage, cutSelection, openDroppedFiles, pasteFromEvent, writeSelectionToEvent } from '@/lib/canvasActions';
+import { reuseUnchanged } from '@/lib/stableList';
 import { TableNode, HEADER_HANDLE_SUFFIX, type TableNodeType } from './TableNode';
 import { NoteNode, type NoteNodeType } from './NoteNode';
 import { GroupNode, GROUP_DRAG_HANDLE, type GroupNodeType } from './GroupNode';
@@ -62,6 +63,18 @@ import '@/styles/canvas-extras.css';
 
 /** Below this zoom every table collapses to its header so a big schema stays legible. */
 const LOD_ZOOM = 0.35;
+
+/**
+ * The derived list with every unchanged item kept as the object React Flow
+ * already holds, so only what actually changed is re-adopted and re-rendered.
+ * See lib/stableList for why this matters on a big diagram.
+ */
+function useStableList<T extends { id: string }>(next: T[]): T[] {
+  const last = useRef<T[] | null>(null);
+  const stable = useMemo(() => reuseUnchanged(last.current, next), [next]);
+  last.current = stable;
+  return stable;
+}
 
 function isEditable(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
@@ -228,6 +241,15 @@ export function Canvas() {
 
   const tableMap = useMemo(() => new Map(diagram.tables.map((t) => [t.id, t])), [diagram.tables]);
   const codeMap = useMemo(() => new Map(diagram.programs.map((p) => [p.id, p])), [diagram.programs]);
+  // What the diagram says, as opposed to where it is drawn: the same object
+  // until something other than a position changes. The arrows, the columns a
+  // table shows and the lineage marks are all read from it, so a drag — which
+  // only moves things — does not re-derive a hundred arrows every frame to find
+  // that none of them changed. Anything placed on the canvas reads `diagram`.
+  const content = useStore(selectDiagramContent);
+  const contentTables = useMemo(() => new Map(content.tables.map((t) => [t.id, t])), [content.tables]);
+  const contentCode = useMemo(() => new Map(content.programs.map((p) => [p.id, p])), [content.programs]);
+  const linkVis = useMemo(() => codeVisibility(content), [content]);
   const fkColumnsByTable = useMemo(() => {
     const m = new Map<string, string[]>();
     for (const r of diagram.relationships) {
@@ -311,30 +333,30 @@ export function Canvas() {
 
   const shownColumns = useMemo(() => {
     const m = new Map<string, ReturnType<typeof visibleColumns>>();
-    for (const t of diagram.tables) m.set(t.id, visibleColumns(t, effectiveDisplay(t, lodCollapsed), new Set(fkColumnsByTable.get(t.id) ?? [])));
+    for (const t of content.tables) m.set(t.id, visibleColumns(t, effectiveDisplay(t, lodCollapsed), new Set(fkColumnsByTable.get(t.id) ?? [])));
     return m;
-  }, [diagram.tables, fkColumnsByTable, lodCollapsed]);
+  }, [content.tables, fkColumnsByTable, lodCollapsed]);
 
   // Neighborhood focus: nodes within N hops of the focused one, tables and
   // code alike; a trace or a simulation wins while it is active.
   const focusSet = useMemo(() => {
     if (!focus || tracing || simulating || (!tableMap.has(focus.nodeId) && !codeMap.has(focus.nodeId))) return null;
-    const dist = reachableNodes(diagram, focus.nodeId);
+    const dist = reachableNodes(content, focus.nodeId);
     return new Set([...dist.entries()].filter(([, d]) => d <= focus.hops).map(([id]) => id));
-  }, [focus, tracing, simulating, diagram, tableMap, codeMap]);
+  }, [focus, tracing, simulating, content, tableMap, codeMap]);
   // The same set as the canvas draws it: a focused function inside a folded module keeps the module lit.
   const focusVisible = useMemo(() => (focusSet ? new Set([...focusSet].map((id) => codeVis.standIn.get(id) ?? id)) : null), [focusSet, codeVis]);
 
-  const joinTables = useMemo(() => new Set(diagram.tables.filter((t) => isJoinTable(diagram, t)).map((t) => t.id)), [diagram]);
+  const joinTables = useMemo(() => new Set(content.tables.filter((t) => isJoinTable(content, t)).map((t) => t.id)), [content]);
 
   /* ---------- derived columns ---------- */
 
   // Always computed: the Σ mark on a column is part of reading the diagram, not
   // part of the lens. The lens only adds the source colouring and the dimming.
-  const lineage = useMemo(() => buildLineage(diagram), [diagram]);
+  const lineage = useMemo(() => buildLineage(content), [content]);
   const derivedColumns = useMemo(() => {
     const m = new Map<string, { ids: string[]; summaries: Record<string, string> }>();
-    for (const t of diagram.tables) {
+    for (const t of content.tables) {
       const ids = derivedColumnIds(lineage, t);
       const summaries: Record<string, string> = {};
       for (const id of ids) {
@@ -344,7 +366,7 @@ export function Canvas() {
       m.set(t.id, { ids, summaries });
     }
     return m;
-  }, [diagram.tables, lineage]);
+  }, [content.tables, lineage]);
 
   /**
    * What one column's chain reaches, when the lens is pointed at a column: the
@@ -378,7 +400,7 @@ export function Canvas() {
     [trace.result, traceNodes, codeVis],
   );
 
-  const nodes = useMemo<CanvasNode[]>(() => {
+  const derivedNodes = useMemo<CanvasNode[]>(() => {
     const tableNodes: TableNodeType[] = diagram.tables.map((t) => {
       return {
         id: t.id,
@@ -571,6 +593,7 @@ export function Canvas() {
     lensReach,
     derivedLens,
   ]);
+  const nodes = useStableList(derivedNodes);
 
   /**
    * The arrows between code and tables. Derived, never stored: a step that
@@ -579,21 +602,21 @@ export function Canvas() {
    * container is folded the arrows of everything inside it are gathered onto
    * the container, one per table and op, counted rather than numbered.
    */
-  const programEdges = useMemo<ProgramEdgeType[]>(() => {
-    if (!diagram.programs.length) return [];
-    const known = new Set(diagram.tables.map((t) => t.id));
+  const derivedProgramEdges = useMemo<ProgramEdgeType[]>(() => {
+    if (!content.programs.length) return [];
+    const known = new Set(content.tables.map((t) => t.id));
     const selected = new Set(selection.programIds);
     const roundTripKeys = new Set<string>();
-    for (const prg of diagram.programs) for (const id of programRoundTrips(prg)) roundTripKeys.add(`${prg.id}|${id}`);
-    return drawnTableLinks(diagram, codeVis, known).map((edge) => {
-      const table = tableMap.get(edge.tableId);
+    for (const prg of content.programs) for (const id of programRoundTrips(prg)) roundTripKeys.add(`${prg.id}|${id}`);
+    return drawnTableLinks(content, linkVis, known).map((edge) => {
+      const table = contentTables.get(edge.tableId);
       const shown = table ? (shownColumns.get(table.id) ?? table.columns) : [];
       const first = edge.links[0];
       const columnIds = [...new Set(edge.links.flatMap((l) => l.columnIds))];
       // Anchor on the first named column when it is actually drawn; otherwise
       // meet the header, exactly as a relationship does.
       const tableRow = columnIds.length ? shown.findIndex((c) => c.id === columnIds[0]) : -1;
-      const stepIndex = edge.direct ? (codeMap.get(edge.nodeId)?.steps ?? []).findIndex((s) => s.id === first.stepId) : -1;
+      const stepIndex = edge.direct ? (contentCode.get(edge.nodeId)?.steps ?? []).findIndex((s) => s.id === first.stepId) : -1;
       const inFocus = focusSet === null || (focusSet.has(edge.tableId) && edge.links.some((l) => focusSet.has(l.programId)));
       const traced = edge.links.some((l) => traceLinkIds.has(l.id));
       return {
@@ -620,15 +643,16 @@ export function Canvas() {
         },
       };
     });
-  }, [diagram, codeVis, tableMap, codeMap, shownColumns, selection.programIds, activeProgramStepId, tracing, traceLinkIds, simulating, lensing, focusSet]);
+  }, [content, linkVis, contentTables, contentCode, shownColumns, selection.programIds, activeProgramStepId, tracing, traceLinkIds, simulating, lensing, focusSet]);
+  const programEdges = useStableList(derivedProgramEdges);
 
   /** The arrows between code nodes, gathered the same way once a container is folded. */
-  const codeEdges = useMemo<CodeEdgeType[]>(() => {
-    if (!diagram.programs.length) return [];
+  const derivedCodeEdges = useMemo<CodeEdgeType[]>(() => {
+    if (!content.programs.length) return [];
     const selected = new Set(selection.programIds);
-    return drawnCodeEdges(diagram, codeVis).map((edge) => {
+    return drawnCodeEdges(content, linkVis).map((edge) => {
       const first = edge.links[0];
-      const stepIndex = edge.direct ? (codeMap.get(edge.fromId)?.steps ?? []).findIndex((s) => s.id === first.stepId) : -1;
+      const stepIndex = edge.direct ? (contentCode.get(edge.fromId)?.steps ?? []).findIndex((s) => s.id === first.stepId) : -1;
       const inFocus = focusSet === null || edge.links.some((l) => focusSet.has(l.fromId) && focusSet.has(l.toId));
       const traced = edge.links.some((l) => traceLinkIds.has(l.id));
       return {
@@ -644,19 +668,20 @@ export function Canvas() {
           count: edge.links.length,
           stepId: edge.direct ? first.stepId : null,
           stepIndex,
-          summary: edge.links.map((l) => `${codeMap.get(l.fromId)?.name ?? '?'} ${l.op}s ${codeMap.get(l.toId)?.name ?? '?'} (step ${l.step})`),
+          summary: edge.links.map((l) => `${contentCode.get(l.fromId)?.name ?? '?'} ${l.op}s ${contentCode.get(l.toId)?.name ?? '?'} (step ${l.step})`),
           dimmed: (tracing && !traced) || simulating || lensing || !inFocus,
           highlighted: selected.has(edge.fromId) || selected.has(edge.toId) || edge.links.some((l) => selected.has(l.fromId) || l.stepId === activeProgramStepId),
           traced,
         },
       };
     });
-  }, [diagram, codeVis, codeMap, selection.programIds, activeProgramStepId, tracing, traceLinkIds, simulating, lensing, focusSet]);
+  }, [content, linkVis, contentCode, selection.programIds, activeProgramStepId, tracing, traceLinkIds, simulating, lensing, focusSet]);
+  const codeEdges = useStableList(derivedCodeEdges);
 
-  const relationEdges = useMemo<RelationEdgeType[]>(() => {
-    const prepared = diagram.relationships.map((r) => {
-      const src = tableMap.get(r.sourceTableId);
-      const tgt = tableMap.get(r.targetTableId);
+  const derivedRelationEdges = useMemo<RelationEdgeType[]>(() => {
+    const prepared = content.relationships.map((r) => {
+      const src = contentTables.get(r.sourceTableId);
+      const tgt = contentTables.get(r.targetTableId);
       if (!src || !tgt) return null;
       // Rows are indexes into the columns actually drawn; a hidden column anchors the edge at the header.
       const srcShown = shownColumns.get(src.id) ?? src.columns;
@@ -684,7 +709,7 @@ export function Canvas() {
       const { r, src, sourceRow, targetRow, srcCol, anchorKey } = p;
       const siblingIndex = anchorSeen.get(anchorKey) ?? 0;
       anchorSeen.set(anchorKey, siblingIndex + 1);
-      const card = showCardinality && r.kind === 'fk' ? relationshipCardinality(diagram, r) : null;
+      const card = showCardinality && r.kind === 'fk' ? relationshipCardinality(content, r) : null;
       const inFocus = focusSet === null || (focusSet.has(r.sourceTableId) && focusSet.has(r.targetTableId));
       // A flow in the simulation is pending, in play or done; a foreign key the
       // stage in play reads through is a lookup; everything else fades.
@@ -739,7 +764,8 @@ export function Canvas() {
       }
     }
     return out;
-  }, [diagram, tableMap, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet, simResult, simFlowIndex, simStage, simNonce, simPlaying, simLookupRels, simulating, lensing, lensReach]);
+  }, [content, contentTables, selection.relationshipId, tracing, traceRels, selectedTableId, shownColumns, showCardinality, focusSet, simResult, simFlowIndex, simStage, simNonce, simPlaying, simLookupRels, simulating, lensing, lensReach]);
+  const relationEdges = useStableList(derivedRelationEdges);
 
   const edges = useMemo<CanvasEdge[]>(() => [...codeEdges, ...programEdges, ...relationEdges], [codeEdges, programEdges, relationEdges]);
 

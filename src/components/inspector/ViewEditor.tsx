@@ -1,14 +1,14 @@
 import { useMemo } from 'react';
 import { Database, ScanSearch } from 'lucide-react';
 import { engineName, type Table } from '@shared/types';
-import { useStore } from '@/store/useStore';
+import { selectDiagramContent, useStore } from '@/store/useStore';
 import { viewSourcesFromSql } from '@/lib/sql/views';
 import { diagramScope } from '@/lib/sqlScope';
 import { SqlEditor } from '@/components/ui/SqlEditor';
 
 /** The SELECT behind a view and the tables that feed it. */
 export function ViewEditor({ table }: { table: Table }) {
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const updateTable = useStore((s) => s.updateTable);
   const addRelationship = useStore((s) => s.addRelationship);
   const setSelection = useStore((s) => s.setSelection);
