@@ -65,6 +65,7 @@ import { PALETTE } from '@/lib/palette';
 import { translateType } from '@/lib/sql/dialect';
 import { translateProcedureTypes } from '@/lib/procedures';
 import { findPath, type TraceResult } from '@/lib/trace';
+import { onlyMoved } from '@/lib/moves';
 import { parseWorkspaceFile, serializeWorkspace } from '@/lib/io';
 import { getCurrentWorkspaceId } from '@/lib/currentId';
 import { applyEdgeSelectionChanges, applyNodeSelectionChanges, emptySelection, type Selection, type SelectionChange } from '@/lib/selection';
@@ -2025,17 +2026,36 @@ useStore.subscribe((state, prev) => {
 });
 
 /* ---------------- selectors ---------------- */
+
+let lastContent: Diagram | null = null;
+/**
+ * The diagram for readers of what it says rather than where it is drawn: the
+ * same object until something other than a position changes (see lib/moves).
+ * A drag moves things every frame, and the linter, the SQL editors' scope and
+ * the inspector's forms have no use for any of those frames. Anything that
+ * draws, lays out or exports the canvas must read `s.diagram` instead, since
+ * the positions in this one may be stale.
+ */
+export const selectDiagramContent = (s: Store): Diagram => {
+  const d = s.diagram;
+  if (lastContent && lastContent !== d && onlyMoved(lastContent, d)) return lastContent;
+  lastContent = d;
+  return d;
+};
+
+// The inspector's selections read the content diagram: its forms never show
+// where a table or a node sits, so dragging one should not re-render them.
 export const selectSelectedTable = (s: Store): Table | undefined =>
-  s.selection.tableIds.length === 1 && s.selection.noteIds.length === 0 ? s.diagram.tables.find((t) => t.id === s.selection.tableIds[0]) : undefined;
+  s.selection.tableIds.length === 1 && s.selection.noteIds.length === 0 ? selectDiagramContent(s).tables.find((t) => t.id === s.selection.tableIds[0]) : undefined;
 export const selectSelectedRelationship = (s: Store): Relationship | undefined =>
   s.selection.relationshipId ? s.diagram.relationships.find((r) => r.id === s.selection.relationshipId) : undefined;
 export const selectSelectedNote = (s: Store): Note | undefined =>
-  s.selection.noteIds.length === 1 && s.selection.tableIds.length === 0 ? s.diagram.notes.find((n) => n.id === s.selection.noteIds[0]) : undefined;
+  s.selection.noteIds.length === 1 && s.selection.tableIds.length === 0 ? selectDiagramContent(s).notes.find((n) => n.id === s.selection.noteIds[0]) : undefined;
 export const selectSelectedGroup = (s: Store): Group | undefined =>
-  s.selection.groupId ? s.diagram.groups.find((g) => g.id === s.selection.groupId) : undefined;
+  s.selection.groupId ? selectDiagramContent(s).groups.find((g) => g.id === s.selection.groupId) : undefined;
 export const selectSelectedProgram = (s: Store): Program | undefined =>
   s.selection.programIds.length === 1 && s.selection.tableIds.length === 0 && s.selection.noteIds.length === 0
-    ? s.diagram.programs.find((p) => p.id === s.selection.programIds[0])
+    ? selectDiagramContent(s).programs.find((p) => p.id === s.selection.programIds[0])
     : undefined;
 
 /**

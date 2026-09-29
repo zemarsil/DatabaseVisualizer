@@ -1,5 +1,5 @@
 import { BookOpen, ChevronDown, ChevronUp, Code2, Database, FileDown, Play, Route, Shapes, ShieldAlert, Sigma, Terminal } from 'lucide-react';
-import { selectShowsDatabaseTools, useStore, type DrawerTab } from '@/store/useStore';
+import { selectDiagramContent, selectShowsDatabaseTools, useStore, type DrawerTab } from '@/store/useStore';
 import { SqlPanel } from './SqlPanel';
 import { ImportPanel } from './ImportPanel';
 import { DatabasePanel } from './DatabasePanel';
@@ -49,7 +49,7 @@ export function Drawer() {
   // The Types tab holds custom types and extensions, so the badge counts both.
   const typeCount = useStore((s) => s.diagram.customTypes.length + s.diagram.extensions.length);
   const activeWalkthroughSlug = useStore((s) => s.activeWalkthroughSlug);
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const errorCount = useMemo(() => lintDiagram(diagram).filter((f) => f.severity === 'error').length, [diagram]);
   const derivedCount = useMemo(() => lineageTotals(buildLineage(diagram), diagram).derived, [diagram]);
   const lensOn = useUi((s) => s.derived !== null);

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { ChevronsDownUp, ChevronsUpDown, ClipboardCopy, Code2, Copy, Plus, ScanSearch, Trash2, WandSparkles } from 'lucide-react';
 import { PROCEDURE_PARAM_MODES, PROGRAM_STEP_OPS, engineName, programStepOpMeta, stepOpsForKind, type Program, type ProcedureParam, type ProcedureParamMode } from '@shared/types';
-import { useStore } from '@/store/useStore';
+import { selectDiagramContent, useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { diagramScope } from '@/lib/sqlScope';
 import { describeProgram } from '@/lib/programs';
@@ -28,7 +28,7 @@ import '@/styles/programs.css';
  * "Detect from SQL" does for a view.
  */
 export function ProcedureEditor({ program }: { program: Program }) {
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const updateProgram = useStore((s) => s.updateProgram);
   const deleteProgram = useStore((s) => s.deleteProgram);
   const duplicateProgram = useStore((s) => s.duplicateProgram);

@@ -19,7 +19,7 @@ import {
   type ProgramStep,
   type ProgramStepOp,
 } from '@shared/types';
-import { useStore } from '@/store/useStore';
+import { selectDiagramContent, useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
 import { diagramScope } from '@/lib/sqlScope';
 import { describeProgram } from '@/lib/programs';
@@ -44,7 +44,7 @@ import '@/styles/programs.css';
  * carrying the SQL it issues and the code around it.
  */
 export function ProgramEditor({ program }: { program: Program }) {
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const noTables = diagram.tables.length === 0;
   const updateProgram = useStore((s) => s.updateProgram);
   const deleteProgram = useStore((s) => s.deleteProgram);
@@ -508,7 +508,7 @@ export function ProgramEditor({ program }: { program: Program }) {
  * the host-language code box gives way to SQL editors there.
  */
 export function StepRow({ program, step, index, open }: { program: Program; step: ProgramStep; index: number; open: boolean }) {
-  const diagram = useStore((s) => s.diagram);
+  const diagram = useStore(selectDiagramContent);
   const updateProgramStep = useStore((s) => s.updateProgramStep);
   const removeProgramStep = useStore((s) => s.removeProgramStep);
   const moveProgramStep = useStore((s) => s.moveProgramStep);

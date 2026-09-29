@@ -1,8 +1,10 @@
 import { memo } from 'react';
-import { BaseEdge, EdgeLabelRenderer, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
 import type { Program } from '@shared/types';
 import type { CodeLinkOp } from '@/lib/codemap';
 import { estimateProgramSize, isFoldedProcedure, PROGRAM_HEADER_HEIGHT, stepCenterY } from '@/lib/programs';
+import { EdgeLabelPortal } from './EdgeLabelPortal';
+import { stepHandle } from './stepHandle';
 
 /**
  * The arrow between two code nodes: a call, an import or an extends, one per
@@ -78,8 +80,7 @@ function CodeEdgeInner({ id, source, target, data, selected }: EdgeProps<CodeEdg
   // A direct arrow leaves its own step row; a gathered one, or one from an
   // expanded container's region, leaves the header. Both arrive at the header
   // of whatever they reach: a callee is named as a whole.
-  const handles = sourceNode.internals.handleBounds?.source ?? [];
-  const handle = data.stepId ? handles.find((h) => h.id === `${data.stepId}|l` || h.id === `${data.stepId}|r`) : undefined;
+  const handle = stepHandle(sourceNode.internals.handleBounds?.source ?? undefined, data.stepId);
   const srcProgram = (sourceNode.data as { program?: Program }).program;
   const ay = a.y + (handle ? handle.y + handle.height / 2 : data.stepIndex >= 0 && !(srcProgram && isFoldedProcedure(srcProgram)) ? Math.min(stepCenterY(data.stepIndex), a.h - 8) : PROGRAM_HEADER_HEIGHT / 2);
   const by = b.y + PROGRAM_HEADER_HEIGHT / 2;
@@ -109,12 +110,12 @@ function CodeEdgeInner({ id, source, target, data, selected }: EdgeProps<CodeEdg
     <>
       <BaseEdge id={id} path={g.path} style={{ stroke: color, strokeWidth: width, opacity, strokeDasharray: dash }} interactionWidth={16} />
       <path d={head} style={{ stroke: color, strokeWidth: width, fill: data.op === 'extends' ? 'var(--node-bg)' : 'none', opacity }} />
-      <EdgeLabelRenderer>
+      <EdgeLabelPortal>
         <div className={labelClasses.join(' ')} title={tooltip} style={{ transform: `translate(-50%, -50%) translate(${g.labelX}px, ${g.labelY}px)` }}>
           {data.step !== null ? <span className="program-edge__step">{data.step}</span> : <span className="program-edge__step program-edge__step--count">×{data.count}</span>}
           <span className="program-edge__op">{data.op}</span>
         </div>
-      </EdgeLabelRenderer>
+      </EdgeLabelPortal>
     </>
   );
 }

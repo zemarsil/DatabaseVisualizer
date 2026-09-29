@@ -13,8 +13,8 @@ import {
   Trash2,
 } from 'lucide-react';
 import { alignTables, distributeTables, type AlignMode } from '@/lib/canvasOps';
-import { codeKindMeta, codeKindOf, isProcedure, kindMeta } from '@shared/types';
-import { selectSelectedGroup, selectSelectedNote, selectSelectedProgram, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
+import { codeKindMeta, codeKindOf, isProcedure, kindMeta, type Table } from '@shared/types';
+import { selectDiagramContent, selectSelectedGroup, selectSelectedNote, selectSelectedProgram, selectSelectedRelationship, selectSelectedTable, useStore } from '@/store/useStore';
 import { TableEditor } from './TableEditor';
 import { RelationshipEditor } from './RelationshipEditor';
 import { NoteEditor } from './NoteEditor';
@@ -33,9 +33,10 @@ export function Inspector() {
   const selectedTableIds = useStore((s) => s.selection.tableIds);
   const selectedNoteIds = useStore((s) => s.selection.noteIds);
   const selectedProgramIds = useStore((s) => s.selection.programIds);
-  const tables = useStore((s) => s.diagram.tables);
-  const notes = useStore((s) => s.diagram.notes);
-  const programs = useStore((s) => s.diagram.programs);
+  // Names and counts only, so dragging does not re-render the forms; see selectDiagramContent.
+  const tables = useStore((s) => selectDiagramContent(s).tables);
+  const notes = useStore((s) => selectDiagramContent(s).notes);
+  const programs = useStore((s) => selectDiagramContent(s).programs);
   const setInspectorOpen = useStore((s) => s.setInspectorOpen);
   const resizePanel = useStore((s) => s.resizePanel);
   const removeElements = useStore((s) => s.removeElements);
@@ -48,7 +49,9 @@ export function Inspector() {
   const endDrag = useStore((s) => s.endDrag);
   const count = selectedTableIds.length + selectedNoteIds.length + selectedProgramIds.length;
   const selectedTables = tables.filter((t) => selectedTableIds.includes(t.id));
-  const arrange = (moves: { id: string; position: { x: number; y: number } }[]) => {
+  /** Arranging works from where the tables are now, which `tables` above may not say. */
+  const arrange = (plan: (live: Table[]) => { id: string; position: { x: number; y: number } }[]) => {
+    const moves = plan(useStore.getState().diagram.tables.filter((t) => selectedTableIds.includes(t.id)));
     if (!moves.length) return;
     beginDrag();
     moveItems(moves);
@@ -106,14 +109,14 @@ export function Inspector() {
             <span className="field__label">Arrange</span>
             <div className="arrange-row">
               {alignButtons.map((b) => (
-                <button key={b.mode} className="btn btn--sm btn--icon" title={b.title} onClick={() => arrange(alignTables(selectedTables, placementSizes(), b.mode))}>
+                <button key={b.mode} className="btn btn--sm btn--icon" title={b.title} onClick={() => arrange((live) => alignTables(live, placementSizes(), b.mode))}>
                   {b.icon}
                 </button>
               ))}
-              <button className="btn btn--sm btn--icon" title="Distribute horizontally (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange(distributeTables(selectedTables, placementSizes(), 'x'))}>
+              <button className="btn btn--sm btn--icon" title="Distribute horizontally (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange((live) => distributeTables(live, placementSizes(), 'x'))}>
                 <AlignHorizontalDistributeCenter />
               </button>
-              <button className="btn btn--sm btn--icon" title="Distribute vertically (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange(distributeTables(selectedTables, placementSizes(), 'y'))}>
+              <button className="btn btn--sm btn--icon" title="Distribute vertically (3 or more)" disabled={selectedTables.length < 3} onClick={() => arrange((live) => distributeTables(live, placementSizes(), 'y'))}>
                 <AlignVerticalDistributeCenter />
               </button>
             </div>

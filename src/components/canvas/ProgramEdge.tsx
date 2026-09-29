@@ -1,8 +1,10 @@
 import { memo } from 'react';
-import { BaseEdge, EdgeLabelRenderer, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
+import { BaseEdge, useInternalNode, type Edge, type EdgeProps } from '@xyflow/react';
 import type { Program, Table } from '@shared/types';
 import { estimateNodeSize, HEADER_HEIGHT, rowCenterY } from '@/lib/geometry';
 import { estimateProgramSize, isFoldedProcedure, PROGRAM_HEADER_HEIGHT, stepCenterY } from '@/lib/programs';
+import { EdgeLabelPortal } from './EdgeLabelPortal';
+import { stepHandle } from './stepHandle';
 
 /**
  * The arrow between a program and a table, one per step that names one.
@@ -94,8 +96,7 @@ function ProgramEdgeInner({ id, source, target, data, selected }: EdgeProps<Prog
   // React Flow measures the handle on each step row, so ask it where the row
   // actually is rather than re-deriving it from the CSS. The estimate is only
   // the fallback for the frame before the node has been measured.
-  const handles = sourceNode.internals.handleBounds?.source ?? [];
-  const handle = data.stepId ? handles.find((h) => h.id === `${data.stepId}|l` || h.id === `${data.stepId}|r`) : undefined;
+  const handle = stepHandle(sourceNode.internals.handleBounds?.source ?? undefined, data.stepId);
   // A gathered arrow, or one whose step row is folded away, leaves the header.
   const py = p.y + (handle ? handle.y + handle.height / 2 : data.stepIndex >= 0 && !(prg && isFoldedProcedure(prg)) ? Math.min(stepCenterY(data.stepIndex), p.h - 8) : PROGRAM_HEADER_HEIGHT / 2);
   const ty = t.y + (data.tableRow >= 0 ? rowCenterY(data.tableRow) : HEADER_HEIGHT / 2);
@@ -126,7 +127,7 @@ function ProgramEdgeInner({ id, source, target, data, selected }: EdgeProps<Prog
     <>
       <BaseEdge id={id} path={g.path} style={{ stroke: color, strokeWidth: width, opacity, strokeDasharray: '6 4' }} interactionWidth={16} />
       <path d={arrow} style={{ stroke: color, strokeWidth: width, fill: 'none', opacity }} />
-      <EdgeLabelRenderer>
+      <EdgeLabelPortal>
         <div
           className={labelClasses.join(' ')}
           title={tooltip}
@@ -135,7 +136,7 @@ function ProgramEdgeInner({ id, source, target, data, selected }: EdgeProps<Prog
           {data.step !== null ? <span className="program-edge__step">{data.step}</span> : <span className="program-edge__step program-edge__step--count">×{data.count}</span>}
           <span className="program-edge__op">{data.op}</span>
         </div>
-      </EdgeLabelRenderer>
+      </EdgeLabelPortal>
     </>
   );
 }

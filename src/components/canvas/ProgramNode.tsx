@@ -3,6 +3,7 @@ import { Handle, Position, type Node, type NodeProps } from '@xyflow/react';
 import { ArrowDownToLine, ArrowUpFromLine, ArrowUpRight, Box, Braces, ChevronDown, ChevronUp, ChevronsUpDown, Cpu, DatabaseZap, FileCode, FileInput, Import, Layers, SquareFunction, Terminal, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { codeKindMeta, codeKindOf, programLanguageMeta, programRoleMeta, type CodeKind, type Program, type ProgramStepOp } from '@shared/types';
 import { paletteHue } from '@/lib/palette';
+import { sameData } from '@/lib/stableList';
 import { procedureSignature } from '@/lib/procedures';
 import { useStore } from '@/store/useStore';
 import { useUi } from '@/store/useUi';
@@ -65,6 +66,57 @@ const OP_ICON: Record<ProgramStepOp, LucideIcon> = {
   load: FileInput,
 };
 
+interface StepRowProps {
+  step: ProgramStepView;
+  /** 0-based position in the node, shown 1-based. */
+  index: number;
+  active: boolean;
+  procedure: boolean;
+}
+
+/**
+ * One step row. Memoized on what it shows, because a node re-renders on every
+ * frame it is dragged and a long procedure has a hundred of these: rebuilding
+ * all of them to move the box they sit in was most of the cost of the drag.
+ */
+function StepRowInner({ step: s, index, active, procedure }: StepRowProps) {
+  const Icon = OP_ICON[s.op];
+  const rowClasses = ['program-node__step', `program-node__step--${s.op}`];
+  if (active) rowClasses.push('program-node__step--active');
+  if (s.missing) rowClasses.push('program-node__step--missing');
+  const label = s.op === 'compute' ? s.note || 'compute' : (s.target ?? (s.op === 'read' || s.op === 'write' ? '(missing table)' : '(missing code)'));
+  const tip = [
+    s.op === 'compute' ? (procedure ? 'Procedural work inside the database' : 'Work the database never sees') : `${s.op} ${s.target ?? '?'}`,
+    s.columns.length ? s.columns.join(', ') : '',
+    s.note && s.op !== 'compute' ? s.note : '',
+    s.missing ? 'What this step names is no longer in the diagram.' : '',
+    s.hasCode ? 'Carries code.' : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  return (
+    <div
+      className={rowClasses.join(' ')}
+      title={tip}
+      // Clicking a step hands the inspector the one to open on, so the
+      // canvas and the editor stay pointed at the same thing.
+      onClick={() => useUi.getState().setActiveProgramStepId(s.id)}
+    >
+      <span className="program-node__num">{index + 1}</span>
+      <Icon className="program-node__op" />
+      <span className="program-node__label">{label}</span>
+      {s.columns.length > 0 && <span className="program-node__cols">{s.columns.join(', ')}</span>}
+      {s.missing && <TriangleAlert className="program-node__warn" />}
+      <Handle type="source" position={Position.Left} id={`${s.id}|l`} className="program-node__step-handle program-node__step-handle--left" />
+      <Handle type="source" position={Position.Right} id={`${s.id}|r`} className="program-node__step-handle program-node__step-handle--right" />
+    </div>
+  );
+}
+
+// The canvas derives the step views afresh whenever the node changes, so they
+// are compared by what they say rather than by identity.
+const StepRow = memo(StepRowInner, (a, b) => a.index === b.index && a.active === b.active && a.procedure === b.procedure && sameData(a.step, b.step));
+
 /** The in-place rename box, the same one a table header gets. */
 function RenameInput({ program }: { program: Program }) {
   const [value, setValue] = useState(program.name);
@@ -101,7 +153,6 @@ function RenameInput({ program }: { program: Program }) {
 
 function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
   const { program, steps, roundTrips, path, hiddenMembers, lod, dimmed, traceRole, picking, renaming } = data;
-  const setActiveStep = useUi((s) => s.setActiveProgramStepId);
   const activeStepId = useUi((s) => s.activeProgramStepId);
   const lang = programLanguageMeta(program.language);
   const kind = codeKindOf(program);
@@ -200,40 +251,9 @@ function ProgramNodeInner({ data, selected }: NodeProps<ProgramNodeType>) {
               </span>
             </div>
           )}
-          {(folded ? [] : steps).map((s, i) => {
-            const Icon = OP_ICON[s.op];
-            const rowClasses = ['program-node__step', `program-node__step--${s.op}`];
-            if (s.id === activeStepId) rowClasses.push('program-node__step--active');
-            if (s.missing) rowClasses.push('program-node__step--missing');
-            const label = s.op === 'compute' ? s.note || 'compute' : (s.target ?? (s.op === 'read' || s.op === 'write' ? '(missing table)' : '(missing code)'));
-            const tip = [
-              s.op === 'compute' ? (procedure ? 'Procedural work inside the database' : 'Work the database never sees') : `${s.op} ${s.target ?? '?'}`,
-              s.columns.length ? s.columns.join(', ') : '',
-              s.note && s.op !== 'compute' ? s.note : '',
-              s.missing ? 'What this step names is no longer in the diagram.' : '',
-              s.hasCode ? 'Carries code.' : '',
-            ]
-              .filter(Boolean)
-              .join('\n');
-            return (
-              <div
-                key={s.id}
-                className={rowClasses.join(' ')}
-                title={tip}
-                // Clicking a step hands the inspector the one to open on, so the
-                // canvas and the editor stay pointed at the same thing.
-                onClick={() => setActiveStep(s.id)}
-              >
-                <span className="program-node__num">{i + 1}</span>
-                <Icon className="program-node__op" />
-                <span className="program-node__label">{label}</span>
-                {s.columns.length > 0 && <span className="program-node__cols">{s.columns.join(', ')}</span>}
-                {s.missing && <TriangleAlert className="program-node__warn" />}
-                <Handle type="source" position={Position.Left} id={`${s.id}|l`} className="program-node__step-handle program-node__step-handle--left" />
-                <Handle type="source" position={Position.Right} id={`${s.id}|r`} className="program-node__step-handle program-node__step-handle--right" />
-              </div>
-            );
-          })}
+          {(folded ? [] : steps).map((s, i) => (
+            <StepRow key={s.id} step={s} index={i} active={s.id === activeStepId} procedure={procedure} />
+          ))}
           {hiddenMembers > 0 && (
             <div
               className="program-node__step program-node__step--folded"
